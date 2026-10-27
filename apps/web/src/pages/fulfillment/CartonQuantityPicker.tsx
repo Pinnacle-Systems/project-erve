@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
 import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import type { PackingListLineView } from './types.js';
@@ -35,6 +36,24 @@ export interface CartonQuantityPickerProps {
 
 /** A destination's authorized lines adapted to the shared Style × Size editor. */
 export function CartonQuantityPicker({ lines, quantities, originalQuantities = {}, onChange, onValidationChange }: CartonQuantityPickerProps) {
+  const [invalidDrafts, setInvalidDrafts] = useState<Record<string, string>>({});
+  const validateDraft = (line: PackingListLineView, raw: string) => {
+    const draft = raw.trim();
+    const available = cartonLineCapacity(line, originalQuantities);
+    const quantity = Number(draft);
+    const error = draft && (!Number.isInteger(quantity) || quantity < 0)
+      ? `Size ${line.sizeCode}: enter a non-negative whole number.`
+      : draft && quantity > available
+        ? `Size ${line.sizeCode}: only ${available} available; you entered ${draft}.`
+        : '';
+    setInvalidDrafts((current) => {
+      if (!error && !current[line.saleOrderLineId]) return current;
+      const updated = { ...current };
+      if (error) updated[line.saleOrderLineId] = error;
+      else delete updated[line.saleOrderLineId];
+      return updated;
+    });
+  };
   const visible = lines.filter((line) => cartonLineCapacity(line, originalQuantities) > 0 || line.saleOrderLineId in quantities);
   const byCell = new Map(visible.map((line) => [JSON.stringify([line.styleId, line.sizeId]), line]));
   const imageByStyle = new Map(lines.map((line) => [line.styleId, line.primaryImage]));
@@ -52,8 +71,16 @@ export function CartonQuantityPicker({ lines, quantities, originalQuantities = {
       const line = findLine(styleId, sizeId);
       if (!line) return {};
       const capacity = cartonLineCapacity(line, originalQuantities);
-      return { max: capacity, helpText: `${capacity} available`, ariaLabel: `Quantity for ${line.styleNumber} ${line.sizeLabel}` };
+      return {
+        max: capacity,
+        helpText: `${capacity} available`,
+        ariaLabel: `Quantity for ${line.styleNumber} ${line.sizeLabel}`,
+        inlineError: invalidDrafts[line.saleOrderLineId],
+        onBlur: (draft: string) => validateDraft(line, draft),
+      };
     }}
+    showRowTotals={Object.keys(invalidDrafts).length === 0}
+    showColumnTotals={Object.keys(invalidDrafts).length === 0}
     onCellChange={(styleId, sizeId, quantity) => onChange(findLine(styleId, sizeId).saleOrderLineId, quantity)}
     onCellValidationChange={(styleId, sizeId, valid) => onValidationChange(findLine(styleId, sizeId).saleOrderLineId, valid)}
   />;
