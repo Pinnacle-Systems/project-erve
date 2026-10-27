@@ -106,7 +106,11 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
       qualityStartBatchPendingRef.current = false;
       setQualityBatchErrors((current) => ({
         ...current,
-        [variables.activityId]: finalBatchStartError(error),
+        [variables.activityId]: finalBatchStartError(
+          error,
+          jobOrder.qualityActivities.find((activity) => activity.processFlowVersionStageId === variables.activityId)?.coverage,
+          qualityBatchAllocations[variables.activityId],
+        ),
       }));
     },
   });
@@ -131,22 +135,27 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
   const startQualityBatch = (activityId: string, coverage: QualityCoverageView | null) => {
     if (qualityStartBatchPendingRef.current || qualityStartMutation.isPending) return;
     const values = qualityBatchAllocations[activityId] ?? {};
-    const allocations = (coverage?.availableBySize ?? []).flatMap((size) => {
-      const quantity = Number(values[size.jobOrderLineSizeId] || 0);
-      return quantity > 0 ? [{ jobOrderLineSizeId: size.jobOrderLineSizeId, quantity }] : [];
-    });
-    const invalid = allocations.some((allocation) => {
-      const capacity = coverage?.availableBySize?.find(
-        (size) => size.jobOrderLineSizeId === allocation.jobOrderLineSizeId,
-      )?.availableQuantity;
-      return !Number.isInteger(allocation.quantity) || capacity == null || allocation.quantity > capacity;
-    });
-    if (!allocations.length || invalid) {
+    const allocations: Array<{ jobOrderLineSizeId: string; quantity: number }> = [];
+    let validationError = '';
+    for (const size of coverage?.availableBySize ?? []) {
+      const raw = (values[size.jobOrderLineSizeId] ?? '').trim();
+      if (!raw) continue;
+      const quantity = Number(raw);
+      const sizeLabel = size.sizeCode || size.sizeLabel;
+      if (!Number.isFinite(quantity) || !Number.isInteger(quantity) || quantity < 0) {
+        validationError = `${sizeLabel}: Enter a non-negative whole number for This batch.`;
+        break;
+      }
+      if (quantity > size.availableQuantity) {
+        validationError = `${sizeLabel}: You entered ${quantity}; only ${size.availableQuantity} available.`;
+        break;
+      }
+      if (quantity > 0) allocations.push({ jobOrderLineSizeId: size.jobOrderLineSizeId, quantity });
+    }
+    if (validationError || !allocations.length) {
       setQualityBatchErrors((current) => ({
         ...current,
-        [activityId]: !allocations.length
-          ? 'Allocate at least one prepared unit to this Final batch.'
-          : 'Each batch allocation must be a whole number within the available size quantity.',
+        [activityId]: validationError || 'Allocate at least one prepared unit to this Final batch.',
       }));
       return;
     }
