@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
-import { AuditTrail, ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
+import { ConfirmDialog, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
@@ -220,10 +220,6 @@ export function PurchaseOrderDetailPage() {
             </Panel>
           );
         })}
-      </Panel>
-
-      <Panel title="Audit Log">
-        <AuditTrail items={[]} emptyState="Audit log panel will be available in a future update." />
       </Panel>
 
       <ConfirmDialog

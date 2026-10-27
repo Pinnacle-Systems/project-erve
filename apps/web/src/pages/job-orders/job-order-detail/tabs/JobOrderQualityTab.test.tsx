@@ -41,6 +41,32 @@ async function renderQuality(status: string, overrides: Record<string, unknown> 
   act(() => switchJobOrderTab(container, 'Quality'));
 }
 
+describe('JobOrderQualityTab PP Sample start alignment', () => {
+  it('aligns Sample Size, Sample Quantity and Start Inspection in a responsive row', async () => {
+    authState.roles = ['QA_USER'];
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [
+        finalQualityActivity({
+          name: 'PP Sample',
+          qualityForm: { id: 'pp-form', code: 'PP_SAMPLE', name: 'PP Sample Report', executionScope: 'SIZE' },
+          executionMultiplicity: 'SINGLE',
+          executionMode: 'SEQUENTIAL_GATE',
+          coverage: null,
+        }),
+      ],
+    });
+    const start = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start Inspection',
+    );
+    expect(start).toBeDefined();
+    const controls = start!.parentElement!;
+    expect(controls.className).toContain('grid-cols-1');
+    expect(controls.className).toContain('items-end');
+    expect(controls.textContent).toContain('Sample Size');
+    expect(controls.textContent).toContain('Sample Quantity');
+  });
+});
+
 describe('JobOrderQualityTab Final batch allocation', () => {
   it('validates a Final size allocation, clears the error, and starts once', async () => {
     authState.roles = ['QA_USER'];
