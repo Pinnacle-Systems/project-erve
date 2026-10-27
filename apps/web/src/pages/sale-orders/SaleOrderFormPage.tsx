@@ -742,7 +742,7 @@ export function SaleOrderFormPage() {
                                     return (
                                       <Panel key={line.key} className="bg-surface-muted">
                                         <div className="space-y-2">
-                                          <div className="flex items-end gap-2">
+                                          <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[minmax(0,1fr)_9rem_auto]">
                                             <DispatchOrderStyleField
                                               id={`line-${line.key}-style`}
                                               value={line.style}

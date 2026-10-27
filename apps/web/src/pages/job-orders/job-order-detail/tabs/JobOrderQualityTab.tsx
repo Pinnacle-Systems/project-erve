@@ -503,7 +503,14 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                               : 'Reinspection required'
                           }
                         >
-                          <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
+                          <div
+                            className={
+                              activity.qualityForm.executionScope === 'SIZE'
+                                ? 'grid grid-cols-1 items-end gap-3 md:grid-cols-[minmax(0,1fr)_10rem_auto]'
+                                : 'flex flex-wrap items-end gap-3'
+                            }
+                            onKeyDown={createEnterToNextHandler()}
+                          >
                             {activity.qualityForm.executionScope === 'SIZE' && (
                               <>
                                 <SelectField
@@ -596,7 +603,14 @@ export function JobOrderQualityTab({ jobOrderId, jobOrder, user, flatSizes }: Jo
                   </div>
                 ) : activity.status === 'AVAILABLE' &&
                   user?.roles.some((role) => role === 'ADMIN' || role === 'QA_USER') ? (
-                  <div className="mt-4 flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
+                  <div
+                    className={
+                      activity.qualityForm.executionScope === 'SIZE'
+                        ? 'mt-4 grid grid-cols-1 items-end gap-3 md:grid-cols-[minmax(0,1fr)_10rem_auto]'
+                        : 'mt-4 flex flex-wrap items-end gap-3'
+                    }
+                    onKeyDown={createEnterToNextHandler()}
+                  >
                     {activity.qualityForm.executionScope === 'SIZE' && (
                       <>
                         <SelectField

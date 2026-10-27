@@ -497,7 +497,9 @@ describe('JobOrderProductionTab manual Production Complete (Correction 3)', () =
     authState.roles = ['FACTORY_USER'];
     await renderProduction('IN_PRODUCTION');
     const panel = getActiveTabPanel(container);
-    expect(panel.textContent).toContain('Production Completion');
+    expect(panel.textContent).toContain('Production In Progress');
+    expect(panel.textContent).toContain('Check the current stage above for the next action.');
+    expect(panel.textContent).not.toContain('This is independent of Dispatch');
     expect(
       Array.from(panel.querySelectorAll('button')).some((button) => button.textContent === 'Mark Production Complete'),
     ).toBe(false);

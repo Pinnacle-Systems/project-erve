@@ -176,6 +176,19 @@ async function renderCreateForm() {
 }
 
 describe('SaleOrderFormPage destination/line repeater', () => {
+  it('aligns the Style lookup, Total Quantity and Remove controls in a responsive row', async () => {
+    await renderCreateForm();
+    await selectOption('Factory', 'Factory One');
+    await act(async () => clickButtonByText('+ Add Style'));
+    const remove = [...container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Remove');
+    expect(remove).toBeDefined();
+    const controls = remove!.parentElement!;
+    expect(controls.className).toContain('grid-cols-1');
+    expect(controls.className).toContain('items-end');
+    expect(controls.textContent).toContain('Style');
+    expect(controls.textContent).toContain('Total Quantity');
+  });
+
   it('never loads a full Factory pool and deduplicates selected Style hydration across destinations', async () => {
     await renderCreateForm();
     await selectOption('Factory', 'Factory One'); await flush();

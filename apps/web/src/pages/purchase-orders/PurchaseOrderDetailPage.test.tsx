@@ -169,6 +169,14 @@ function cancelButton(): HTMLButtonElement | null {
 }
 
 describe('PurchaseOrderDetailPage Style and Size-wise Quantities', () => {
+  it('shows the Order Sheet creator without a placeholder Audit Log', async () => {
+    await renderPage();
+    expect(content()).toContain('Created By');
+    expect(content()).toContain('Merch One');
+    expect(content()).not.toContain('Audit Log');
+    expect(content()).not.toContain('future update');
+  });
+
   it('does not present the dead Job Ordered/Dispatched/Delivered columns as lifecycle information', async () => {
     await renderPage();
     const headers = Array.from(container.querySelectorAll('th')).map((th) => th.textContent);

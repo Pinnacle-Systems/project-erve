@@ -562,13 +562,20 @@ export function JobOrderProductionTab({
 
 
       {jobOrder.status === 'IN_PRODUCTION' && (
-        <Panel title="Production Completion">
+        <Panel title={canManageJobOrders ? 'Production Completion' : 'Production In Progress'}>
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              Production completes automatically once the entire planned quantity has been produced and
-              carried through Final QA to a resolved outcome (Released or Permanently Rejected). This is
-              independent of Dispatch — no Dispatch Order or delivery activity is required.
-            </p>
+            {canManageJobOrders ? (
+              <p className="text-sm text-muted-foreground">
+                Production completes automatically once the entire planned quantity has been produced and
+                carried through Final QA to a resolved outcome (Released or Permanently Rejected). This is
+                independent of Dispatch — no Dispatch Order or delivery activity is required.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Production is in progress. Check the current stage above for the next action.
+                Record prepared quantities below when that section becomes available.
+              </p>
+            )}
             {canManageJobOrders && (
               <>
                 <p className="text-sm text-muted-foreground">
