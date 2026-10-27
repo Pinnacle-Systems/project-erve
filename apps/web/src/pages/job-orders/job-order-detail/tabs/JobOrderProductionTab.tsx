@@ -308,6 +308,7 @@ export function JobOrderProductionTab({
     if (rowKey !== 'prepared') return;
     const flatSize = flatSizeBySizeId.get(sizeId);
     if (!flatSize) return;
+    preparedMutation.reset();
     setPreparedQuantities((current) => ({ ...current, [flatSize.id]: value }));
   }
 
@@ -315,6 +316,7 @@ export function JobOrderProductionTab({
     if (rowKey !== 'prepared') return;
     const flatSize = flatSizeBySizeId.get(sizeId);
     if (!flatSize) return;
+    if (!isValid) preparedMutation.reset();
     setInvalidPreparedRows((current) => ({ ...current, [flatSize.id]: !isValid }));
   }
 
@@ -620,7 +622,16 @@ export function JobOrderProductionTab({
           }
           footer={
             canUpdatePrepared && (
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <span role={preparedMutation.isError ? 'alert' : 'status'} aria-live="polite" className={preparedMutation.isError ? 'text-sm text-danger' : 'text-sm text-muted-foreground'}>
+                  {preparedMutation.isPending
+                    ? 'Saving prepared quantities…'
+                    : preparedMutation.isSuccess
+                      ? 'Saved'
+                      : preparedMutation.isError
+                        ? mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')
+                        : null}
+                </span>
                 <Button
                   onClick={() => {
                     if (!hasInvalidPrepared && !preparedMutation.isPending) {
@@ -630,7 +641,7 @@ export function JobOrderProductionTab({
                   disabled={!canUpdatePrepared || hasInvalidPrepared || preparedMutation.isPending}
                   loading={preparedMutation.isPending}
                 >
-                  Save Prepared Quantity
+                  {preparedMutation.isPending ? 'Saving…' : 'Save Prepared Quantity'}
                 </Button>
               </div>
             )
@@ -645,11 +656,6 @@ export function JobOrderProductionTab({
               {hasInvalidPrepared && (
                 <ValidationMessage tone="error">
                   Enter a prepared quantity for every size (0 is allowed), within its ordered quantity.
-                </ValidationMessage>
-              )}
-              {preparedMutation.isError && (
-                <ValidationMessage tone="error">
-                  {mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')}
                 </ValidationMessage>
               )}
               <QuantityMeasureGrid
@@ -670,11 +676,6 @@ export function JobOrderProductionTab({
                 'the configured Production activity'}{' '}
               satisfies the Process Flow rule.
             </div>
-          )}
-          {preparedMutation.isError && (
-            <ValidationMessage tone="error">
-              {mutationErrorMessage(preparedMutation.error, 'Unable to save prepared quantities.')}
-            </ValidationMessage>
           )}
         </Panel>
       )}
