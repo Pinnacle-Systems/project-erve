@@ -225,7 +225,7 @@ export function QualityChecklistRow({
   return (
     <div
       data-quality-checklist-row="true"
-      className={`grid min-w-0 grid-cols-1 gap-1.5 border-b border-border-subtle py-2.5 last:border-b-0 md:items-center md:gap-4 ${
+      className={`grid min-w-0 grid-cols-1 gap-1.5 border-b border-border-subtle py-2.5 last:border-b-0 items-start md:gap-4 ${
         supplementary
           ? 'lg:grid-cols-[minmax(0,1fr)_14rem_minmax(12rem,18rem)]'
           : 'md:grid-cols-[minmax(0,1fr)_14rem]'

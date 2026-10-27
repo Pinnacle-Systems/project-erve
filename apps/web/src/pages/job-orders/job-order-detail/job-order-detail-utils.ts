@@ -1,5 +1,5 @@
 import { isAxiosError } from 'axios';
-import type { ApiErrorResponse } from '@erve/types';
+import type { ApiErrorResponse, QualityCoverageView } from '@erve/types';
 import type { JobOrderLine, JobOrderLineSize } from '../types.js';
 
 export type FlatSize = JobOrderLineSize & {
@@ -49,11 +49,29 @@ export function mutationErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export function finalBatchStartError(error: unknown): string {
-  if (!isAxiosError<ApiErrorResponse>(error))
-    return 'Unable to create the Final batch. Review its size allocation and try again.';
-  const response = error.response?.data.error;
-  return response?.message ?? 'Unable to create the Final batch. Review its size allocation.';
+export function finalBatchStartError(
+  error: unknown,
+  coverage?: QualityCoverageView | null,
+  enteredValues: Record<string, string> = {},
+): string {
+  const fallback = 'Unable to create the Final batch. Review its size allocation and try again.';
+  if (!isAxiosError<ApiErrorResponse>(error)) return fallback;
+  const message = error.response?.data.error?.message;
+  if (!message) return fallback;
+
+  // A concurrent Final batch can reduce availability after this screen loaded.
+  // Use the authoritative remaining count in the server response, never the
+  // older amount from the displayed coverage, when explaining this conflict.
+  const shortage = /^Final batch allocation for size (\S+) exceeds available prepared quantity (\d+)$/.exec(message);
+  if (shortage) {
+    const size = coverage?.availableBySize?.find((row) => row.jobOrderLineSizeId === shortage[1]);
+    const entered = enteredValues[shortage[1]!];
+    if (size && entered !== undefined) {
+      return `${size.sizeCode || size.sizeLabel}: You entered ${entered}; only ${shortage[2]} available. Reload to review the latest quantities.`;
+    }
+    return 'The available quantity changed. Reload this Job Order to review the latest size-wise availability.';
+  }
+  return message;
 }
 
 // A Job Order's source Order Sheets (and the Job Order itself) are required

@@ -123,5 +123,7 @@ describe('quality checklist presentation', () => {
     expect(row.className).toContain('grid-cols-1');
     expect(row.className).toContain('lg:grid-cols-');
     expect(row.className).toContain('py-2.5');
+    expect(row.className).toContain('items-start');
+    expect(row.className).not.toContain('md:items-center');
   });
 });
