@@ -620,13 +620,128 @@ describe('PackingListPage carton edit (Phase 4)', () => {
   });
 });
 
+describe('Batch 4 Factory Packing readiness (ISS-098 / ISS-099)', () => {
+  it('disables Finalize with an adjacent audit reason for three unaudited cartons', async () => {
+    const list = buildPackingList();
+    const destination = list.destinations[0]!;
+    destination.lines[0]!.requiredQuantity = 30;
+    destination.lines[0]!.packedQuantity = 30;
+    destination.cartons = [1, 2, 3].map((number) => buildCarton({
+      id: `carton-${number}`,
+      cartonNumber: String(number),
+      totalQuantity: 10,
+      lines: [{ ...buildCarton().lines[0]!, quantity: 10 }],
+      auditState: 'NOT_INSPECTED',
+    }));
+    await renderPage(list);
+    const finalize = buttonByText('Finalize (Ready for Erve)')!;
+    expect(finalize.disabled).toBe(true);
+    expect(finalize.parentElement?.textContent).toContain('Waiting for Packing Audit: 3 cartons');
+    expect(finalize.parentElement?.textContent).toContain('Ask QA to complete the audit');
+    const post = vi.spyOn(apiClient, 'post');
+    act(() => finalize.click());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('enables Finalize only when packing, audit, and metadata visible in the refreshed data are complete', async () => {
+    const initial = buildPackingList();
+    const client = await renderPage(initial);
+    expect(buttonByText('Finalize (Ready for Erve)')!.disabled).toBe(true);
+
+    const inspected = structuredClone(initial);
+    inspected.destinations[0]!.cartons[0]!.auditState = 'INSPECTED';
+    act(() => client.setQueryData(['packing-list', 'so-1'], inspected));
+    await flush();
+
+    const finalize = buttonByText('Finalize (Ready for Erve)')!;
+    expect(finalize.disabled).toBe(false);
+    expect(finalize.parentElement?.textContent).not.toContain('Waiting for Packing Audit');
+    // The server still decides whether finalization is allowed.
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: inspected } } as never);
+    act(() => finalize.click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith(
+      '/factory-dispatches/fd-1/actions/finalize', { expectedVersion: 1 },
+    ));
+  });
+
+  it('disables Finalize for known incomplete packing and missing required carton metadata', async () => {
+    const partial = buildPackingList();
+    partial.destinations[0]!.cartons[0]!.auditState = 'INSPECTED';
+    partial.destinations[0]!.lines[0]!.packedQuantity = 8;
+    partial.destinations[0]!.cartons[0]!.dimensions = null;
+    const client = await renderPage(partial);
+    const finalize = buttonByText('Finalize (Ready for Erve)')!;
+    expect(finalize.disabled).toBe(true);
+    expect(finalize.parentElement?.textContent).toContain('Packing incomplete: 1 Size quantity');
+    expect(finalize.parentElement?.textContent).toContain('Complete Net Weight, Gross Weight and Dimensions for 1 carton');
+
+    const ready = structuredClone(partial);
+    ready.destinations[0]!.lines[0]!.packedQuantity = 10;
+    ready.destinations[0]!.cartons[0]!.dimensions = '60 x 40 x 35 cm';
+    act(() => client.setQueryData(['packing-list', 'so-1'], ready));
+    await flush();
+    expect(buttonByText('Finalize (Ready for Erve)')!.disabled).toBe(false);
+  });
+
+  it('hides the empty Add Carton action for a fully packed destination but retains carton Edit and Delete', async () => {
+    const list = buildPackingList();
+    await renderPage(list);
+    expect(buttonByText('Add Carton')).toBeNull();
+    expect(content()).toContain('All required quantities for this destination are packed.');
+    expect(buttonByText('Edit')).not.toBeNull();
+    expect(buttonByText('Delete')).not.toBeNull();
+
+    act(() => buttonByText('Edit')!.click());
+    await flush();
+    expect(buttonByText('Save Changes')).not.toBeNull();
+  });
+
+  it('still permits Add Carton for another destination that has open capacity', async () => {
+    const list = buildPackingList();
+    const second = structuredClone(list.destinations[0]!);
+    second.id = 'dest-2';
+    second.label = 'Second destination';
+    second.cartons = [];
+    second.lines[0]!.saleOrderLineId = 'second-line';
+    second.lines[0]!.packedQuantity = 0;
+    list.destinations.push(second);
+    await renderPage(list);
+
+    expect(container.querySelectorAll('button')).toBeTruthy();
+    expect([...container.querySelectorAll('button')].filter((button) => button.textContent === 'Add Carton')).toHaveLength(1);
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    expect(triggerByLabel('Carton Number')).not.toBeNull();
+    expect(container.querySelector('input[aria-label="Quantity for ST-001 Medium"]')).not.toBeNull();
+  });
+
+  it('closes an already open Add Carton form when refreshed packing data reaches full capacity', async () => {
+    const initial = buildPackingList();
+    initial.destinations[0]!.lines[0]!.packedQuantity = 9;
+    const client = await renderPage(initial);
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    expect(triggerByLabel('Carton Number')).not.toBeNull();
+
+    const completed = structuredClone(initial);
+    completed.destinations[0]!.lines[0]!.packedQuantity = 10;
+    act(() => client.setQueryData(['packing-list', 'so-1'], completed));
+    await flush();
+    expect(buttonByText('Add Carton')).toBeNull();
+    expect(content()).toContain('All required quantities for this destination are packed.');
+    expect(container.querySelector('input[id="field-carton-number"]')).toBeNull();
+  });
+});
+
 // DEMO-018: carton Net Weight / Gross Weight / Dimensions are captured but
 // never required to save packing progress; they are only enforced at
 // Factory Packing List finalization, where the API returns a dedicated
 // cartonsMissingPackingMetadata blocker this page must render.
 describe('PackingListPage carton packing metadata (DEMO-018)', () => {
   it('labels packing metadata clearly as required before finalization but optional during draft save', async () => {
-    await renderPage(buildPackingList());
+    const list = buildPackingList();
+    list.destinations[0]!.lines[0]!.packedQuantity = 9;
+    await renderPage(list);
     buttonByText('Add Carton')!.click();
     await flush();
 
