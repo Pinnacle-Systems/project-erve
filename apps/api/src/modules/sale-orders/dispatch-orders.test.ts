@@ -140,7 +140,7 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     expect(message).toContain(styleB.styleNumber);
     expect(message).toContain(sizeA.label);
     expect(message).toContain(sizeB.label);
-    expect(message.match(/short by 9 unit\\(s\\)/g)).toHaveLength(2);
+    expect(message.split('short by 9 unit(s)')).toHaveLength(3);
     expect(message).not.toContain(first.styleId);
     expect(message).not.toContain(second.styleId);
     expect(await prisma.saleOrder.count()).toBe(0);
