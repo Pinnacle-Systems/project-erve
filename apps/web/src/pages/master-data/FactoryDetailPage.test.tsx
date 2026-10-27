@@ -394,7 +394,12 @@ describe('FactoryDetailPage PDF actions', () => {
       (b) => b.textContent === 'Download PDF',
     )!;
     act(() => downloadBtn.click());
-    await waitFor(() => container.querySelector('[role="alert"]') !== null);
+    // Rendering the PDF module is asynchronous and may exceed the old
+    // 40 zero-delay polling attempts on a busy CI worker.
+    await vi.waitFor(
+      () => expect(container.querySelector('[role="alert"]')).not.toBeNull(),
+      { timeout: 3000 },
+    );
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'PDF generation failed. Please try again.',
