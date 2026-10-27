@@ -97,7 +97,7 @@ describe('JobOrderQualityTab Final batch allocation', () => {
     await act(async () => changeInput(quantity, '1.5'));
     act(() => start.click());
     expect(content(container)).toContain(
-      'Each batch allocation must be a whole number within the available size quantity.',
+      'M: Enter a non-negative whole number for This batch.',
     );
 
     await act(async () => changeInput(quantity, '25'));
@@ -113,6 +113,49 @@ describe('JobOrderQualityTab Final batch allocation', () => {
     });
   });
 
+  it('identifies an over-allocated Size and its remaining available quantity', async () => {
+    authState.roles = ['QA_USER'];
+    const final = finalQualityActivity();
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'execution-8y', jobOrderId: 'jo-1', ppSample: null } },
+    });
+    await renderQuality('IN_PRODUCTION', {
+      qualityActivities: [finalQualityActivity({
+        coverage: {
+          ...final.coverage,
+          availableBySize: [
+            {
+              jobOrderLineSizeId: 'line-size-8y',
+              sizeCode: '8Y',
+              sizeLabel: '8Y',
+              preparedQuantity: 10,
+              allocatedQuantity: 7,
+              availableQuantity: 3,
+            },
+          ],
+        },
+      })],
+    });
+    const quantity = container.querySelector(
+      'input[aria-label="Final batch quantity for size 8Y"]',
+    ) as HTMLInputElement;
+    const start = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Start Inspection',
+    ) as HTMLButtonElement;
+
+    await act(async () => changeInput(quantity, '5'));
+    act(() => start.click());
+    expect(content(container)).toContain('8Y: You entered 5; only 3 available.');
+    expect(post).not.toHaveBeenCalled();
+
+    await act(async () => changeInput(quantity, '3'));
+    await act(async () => start.click());
+    expect(post).toHaveBeenCalledWith(
+      '/job-orders/jo-1/quality-activities/final-quality/executions',
+      { allocations: [{ jobOrderLineSizeId: 'line-size-8y', quantity: 3 }] },
+    );
+  });
+
   it('surfaces a Final allocation conflict returned by the API', async () => {
     authState.roles = ['QA_USER'];
     await renderQuality('IN_PRODUCTION', { qualityActivities: [finalQualityActivity()] });
@@ -122,7 +165,7 @@ describe('JobOrderQualityTab Final batch allocation', () => {
         data: {
           error: {
             code: 'VALIDATION_ERROR',
-            message: 'Final batch allocation exceeds available prepared quantity',
+            message: 'Final batch allocation for size line-size-m exceeds available prepared quantity 2',
           },
         },
       },
@@ -137,7 +180,7 @@ describe('JobOrderQualityTab Final batch allocation', () => {
 
     await act(async () => start.click());
     await vi.waitFor(() =>
-      expect(content(container)).toContain('Final batch allocation exceeds available prepared quantity'),
+      expect(content(container)).toContain('M: You entered 25; only 2 available. Reload to review the latest quantities.'),
     );
 
     expect(quantity.value).toBe('25');
