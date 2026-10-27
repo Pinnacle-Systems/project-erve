@@ -106,6 +106,8 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const canMutate = canMutateFactoryDispatches(user);
 
   const [cartonNumber, setCartonNumber] = useState('');
+  const [cartonNumberError, setCartonNumberError] = useState('');
+  const cartonNumberInputRef = useRef<HTMLInputElement>(null);
   const [packageDetails, setPackageDetails] = useState('');
   const [netWeight, setNetWeight] = useState('');
   const [grossWeight, setGrossWeight] = useState('');
@@ -154,6 +156,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   }
 
   function resetAdd() {
+    setCartonNumberError('');
     cartonQtyRef.current = {};
     setCartonLineQty({});
     addInvalidRef.current.clear();
@@ -215,7 +218,16 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
       resetAdd();
       return invalidate();
     },
-    onError: (caught) => setFormError(getApiErrorMessage(caught, 'Unable to add the carton.')),
+    onError: (caught) => {
+      const message = getApiErrorMessage(caught, 'Unable to add the carton.');
+      if (/carton number.+already exists/i.test(message)) {
+        setCartonNumberError(message);
+        setFormError('');
+        cartonNumberInputRef.current?.focus();
+      } else {
+        setFormError(message);
+      }
+    },
     onSettled: () => { savingCartonRef.current = false; },
   });
 
@@ -585,7 +597,16 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                     <div className="space-y-3" onKeyDown={createEnterToNextHandler()}>
                       <p className="text-xs text-muted-foreground">Net Weight, Gross Weight, and Dimensions can be entered later, but are required before finalizing the Factory Packing List.</p>
                       <div className="flex flex-wrap gap-3">
-                        <TextField label="Carton Number" value={cartonNumber} onChange={(e) => setCartonNumber(e.target.value)} />
+                        <TextField
+                          ref={cartonNumberInputRef}
+                          label="Carton Number"
+                          value={cartonNumber}
+                          errorMessage={cartonNumberError || undefined}
+                          onChange={(e) => {
+                            setCartonNumber(e.target.value);
+                            if (cartonNumberError) setCartonNumberError('');
+                          }}
+                        />
                         <TextField label="Package Details (optional)" value={packageDetails} onChange={(e) => setPackageDetails(e.target.value)} />
                         <TextField label="Net Weight, kg" type="number" min={0} value={netWeight} onChange={(e) => setNetWeight(e.target.value)} />
                         <TextField label="Gross Weight, kg" type="number" min={0} value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} />
@@ -598,6 +619,11 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                         onChange={changeQuantity}
                         onValidationChange={changeValidity}
                       />
+                      {addInvalid.size > 0 && (
+                        <ValidationMessage tone="error">
+                          Correct the highlighted Size quantities above before adding this carton.
+                        </ValidationMessage>
+                      )}
                       <div className="flex gap-2">
                         <Button
                           onClick={() => submitCarton(destination.id)}
