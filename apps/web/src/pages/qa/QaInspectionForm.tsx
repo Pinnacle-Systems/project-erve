@@ -731,10 +731,11 @@ export function QaInspectionForm({
                       readonly ? (
                         <QualityChecklistRemark value={check.remarks} />
                       ) : (
-                        <TextField
+                        <Textarea
                           aria-label={`${item.label} remarks`}
                           density="compact"
-                          width="full"
+                          rows={2}
+                          resize="vertical"
                           value={check.remarks}
                           onChange={(event) =>
                             update({
