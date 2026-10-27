@@ -11,7 +11,7 @@ export interface StyleSizeGridProps {
   /** Required when variant === 'editable'. Never called for 'computed'/'readOnly' grids — there is nothing to edit. */
   onCellChange?: (styleId: string, sizeId: string, value: number | null) => void;
   /** Optional domain constraints and visible guidance for individual editable cells. */
-  cellOptions?: (styleId: string, sizeId: string) => { max?: number; helpText?: ReactNode; ariaLabel?: string };
+  cellOptions?: (styleId: string, sizeId: string) => { max?: number; helpText?: ReactNode; ariaLabel?: string; inlineError?: string; onBlur?: (draft: string) => void };
   onCellValidationChange?: (styleId: string, sizeId: string, isValid: boolean) => void;
   min?: number;
   max?: number;
@@ -105,7 +105,11 @@ export function StyleSizeGrid({
                           aria-label={options?.ariaLabel ?? `${row.styleNumber} ${column.sizeCode} quantity`}
                           onChange={(next) => onCellChange?.(row.styleId, column.sizeId, next)}
                           onValidationChange={(valid) => onCellValidationChange?.(row.styleId, column.sizeId, valid)}
+                          onBlur={(event) => options?.onBlur?.(event.currentTarget.value)}
                         />
+                        {options?.inlineError && (
+                          <div role="alert" className="mt-1 text-xs leading-snug text-danger">{options.inlineError}</div>
+                        )}
                         {options?.helpText && <div className="mt-1 text-right text-xs text-muted-foreground">{options.helpText}</div>}
                       </>
                     ) : (

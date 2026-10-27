@@ -213,6 +213,14 @@ describe('ISS-003 Factory confirmation on each unconfirmed Job Order visit', () 
     expect(dialog).not.toBeNull();
     expect(dialog?.textContent).toContain('Factory confirmation required');
     expect(dialog?.textContent).toContain('Production terms require acknowledgement.');
+    // ISS-085: only the dialog body may scroll; the disclaimer must not
+    // create a second nested scrollbar on long commercial terms.
+    expect(dialog?.className).toContain('overflow-y-auto');
+    const terms = dialog?.querySelector('pre') as HTMLElement;
+    expect(terms).not.toBeNull();
+    expect(terms.className).not.toContain('overflow-y-auto');
+    expect(terms.className).not.toContain('max-h-40');
+    expect(terms.className).toContain('whitespace-pre-wrap');
     expect(dialog?.textContent).toContain('ST-1 Style One');
     expect(dialog?.textContent).toContain('10');
     const confirm = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent === 'Confirm Job Order');

@@ -217,6 +217,39 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     });
   });
 
+  it('shows Saving beside Save, then Saved only after the server responds, clearing on the next edit', async () => {
+    await openPrepared();
+    const input = preparedInput();
+    act(() => {
+      input.focus();
+      changeInput(input, '4');
+      input.blur();
+    });
+    let resolveSave!: (value: never) => void;
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve; }));
+    act(() => saveButton().click());
+    // React Query starts the mutation asynchronously; wait for the pending
+    // render rather than assuming it commits in the click event's act().
+    await vi.waitFor(() => {
+      expect(post).toHaveBeenCalledOnce();
+      expect(getActiveTabPanel(container).querySelector('[role="status"]')?.textContent).toContain('Saving prepared quantities…');
+    });
+    expect(getActiveTabPanel(container).textContent).not.toContain('Saved');
+
+    await act(async () => resolveSave({ data: { data: mockJobOrder('PRODUCTION_COMPLETE') } } as never));
+    await vi.waitFor(() =>
+      expect(getActiveTabPanel(container).querySelector('[role="status"]')?.textContent).toContain('Saved'),
+    );
+
+    act(() => {
+      const updated = preparedInput();
+      updated.focus();
+      changeInput(updated, '5');
+      updated.blur();
+    });
+    expect(getActiveTabPanel(container).querySelector('[role="status"]')?.textContent).not.toContain('Saved');
+  });
+
   it('preserves the edited quantity and shows feedback when Save fails', async () => {
     await openPrepared();
     const input = preparedInput();
@@ -227,7 +260,8 @@ describe('ISS-020 Prepared Quantity editing and saving', () => {
     });
     vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('offline'));
     act(() => saveButton().click());
-    await vi.waitFor(() => expect(getActiveTabPanel(container).textContent).toContain('offline'));
+    await vi.waitFor(() => expect(getActiveTabPanel(container).querySelector('[role="alert"]')?.textContent).toContain('offline'));
+    expect(getActiveTabPanel(container).querySelector('[role="alert"]')?.closest('div')?.textContent).toContain('Save Prepared Quantity');
     expect(preparedInput().value).toBe('7');
     expect(saveButton().disabled).toBe(false);
   });

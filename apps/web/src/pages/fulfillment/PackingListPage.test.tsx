@@ -188,6 +188,82 @@ function enterQuantity(label: string, value: string) {
   return input;
 }
 
+describe('Batch 3 Factory Packing error feedback', () => {
+  function draftDestination(sizeCode = 'M') {
+    const source = buildPackingList();
+    return buildPackingList({
+      destinations: [{
+        ...source.destinations[0]!,
+        cartons: [],
+        lines: [{
+          ...source.destinations[0]!.lines[0]!,
+          sizeCode,
+          sizeLabel: sizeCode === 'M' ? 'Medium' : sizeCode,
+          packedQuantity: 9,
+        }],
+      }],
+    });
+  }
+
+  it('keeps over-allocation errors visible after focus leaves the Size input and blocks Add Carton', async () => {
+    await renderPage(draftDestination('6'));
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    const number = triggerByLabel('Carton Number') as unknown as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(number, 'C2');
+      number.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const input = enterQuantity('Quantity for ST-001 6', '11');
+    expect(document.activeElement).not.toBe(input);
+    expect(content()).toContain('Size 6: only 1 available; you entered 11.');
+    expect(content()).toContain('Correct the highlighted Size quantities above before adding this carton.');
+    expect(buttonByText('Add Carton')!.disabled).toBe(true);
+    // A previously committed quantity must not produce a misleading total while a draft is invalid.
+    expect(input.closest('table')!.querySelector('tfoot')).toBeNull();
+
+    enterQuantity('Quantity for ST-001 6', '1');
+    expect(content()).not.toContain('Size 6: only 1 available; you entered 11.');
+    expect(content()).not.toContain('Correct the highlighted Size quantities above');
+    expect(buttonByText('Add Carton')!.disabled).toBe(false);
+  });
+
+  it('shows duplicate Carton Number server errors beside the field, retains values and focuses correction', async () => {
+    await renderPage(draftDestination());
+    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 400,
+        data: { error: { code: 'VALIDATION_ERROR', message: 'Carton number 1 already exists on this Factory Dispatch' } },
+      },
+    });
+    act(() => buttonByText('Add Carton')!.click());
+    await flush();
+    const number = triggerByLabel('Carton Number') as unknown as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(number, '1');
+      number.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    enterQuantity('Quantity for ST-001 Medium', '1');
+    act(() => buttonByText('Add Carton')!.click());
+    await vi.waitFor(() => expect(number.getAttribute('aria-invalid')).toBe('true'));
+    expect(post).toHaveBeenCalledOnce();
+    expect(number.value).toBe('1');
+    expect(document.activeElement).toBe(number);
+    expect(number.closest('[data-width]')?.textContent).toContain(
+      'Carton number 1 already exists on this Factory Dispatch',
+    );
+    expect(container.querySelector('input[aria-label="Quantity for ST-001 Medium"]')?.getAttribute('value')).toBe('1');
+
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(number, '2');
+      number.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(number.getAttribute('aria-invalid')).toBeNull();
+    expect(number.value).toBe('2');
+  });
+});
+
 describe('Carton quantity matrix', () => {
   it('commits a valid draft before Save click and prevents duplicate pending submissions', async () => {
     const list = buildPackingList();
