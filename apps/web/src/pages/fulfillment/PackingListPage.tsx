@@ -104,9 +104,13 @@ function packingFinalizeReadiness(packingList: PackingListView): string[] {
   const lines = packingList.destinations.flatMap((destination) => destination.lines);
   const notInspected = cartons.filter((carton) => carton.auditState === 'NOT_INSPECTED').length;
   const reinspection = cartons.filter((carton) => carton.auditState === 'NEEDS_REINSPECTION').length;
-  const missingMetadata = cartons.filter((carton) =>
-    carton.netWeight == null || carton.grossWeight == null || !carton.dimensions?.trim(),
-  ).length;
+  const missingMetadata = cartons.flatMap((carton) => {
+    const fields: string[] = [];
+    if (carton.netWeight == null) fields.push('Net Weight');
+    if (carton.grossWeight == null) fields.push('Gross Weight');
+    if (!carton.dimensions?.trim()) fields.push('Dimensions');
+    return fields.length > 0 ? [`Carton ${carton.cartonNumber}: ${fields.join(', ')}`] : [];
+  });
   const emptyCartons = cartons.filter((carton) => carton.lines.length === 0).length;
   const mismatchedCartons = cartons.filter((carton) => carton.destinationMismatch).length;
   const underPacked = lines.filter((line) => line.packedQuantity < line.requiredQuantity).length;
@@ -119,7 +123,9 @@ function packingFinalizeReadiness(packingList: PackingListView): string[] {
   }
   if (underPacked > 0) issues.push(`Packing incomplete: ${underPacked} Size ${underPacked === 1 ? 'quantity is' : 'quantities are'} below the required quantity.`);
   if (overPacked > 0) issues.push(`Packing exceeds the required quantity for ${overPacked} Size ${overPacked === 1 ? 'entry' : 'entries'}.`);
-  if (missingMetadata > 0) issues.push(`Complete Net Weight, Gross Weight and Dimensions for ${missingMetadata} carton${missingMetadata === 1 ? '' : 's'}.`);
+  if (missingMetadata.length > 0) {
+    issues.push(`Missing packing details: ${missingMetadata.slice(0, 3).join('; ')}${missingMetadata.length > 3 ? `; and ${missingMetadata.length - 3} more cartons` : ''}.`);
+  }
   if (emptyCartons > 0) issues.push(`${emptyCartons} carton${emptyCartons === 1 ? ' is' : 's are'} empty; add contents or remove the carton.`);
   if (mismatchedCartons > 0) issues.push(`${mismatchedCartons} carton${mismatchedCartons === 1 ? ' has' : 's have'} a destination mismatch.`);
   if (cartons.length === 0 && lines.some((line) => line.requiredQuantity > 0)) {
