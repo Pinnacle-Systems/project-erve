@@ -207,6 +207,69 @@ describe('SaleOrderFormPage destination/line repeater', () => {
     expect(textInput('Total Quantity').value).toBe('20');
   });
 
+  it('deducts the same pooled Sizes across destinations and restores stock after an edit (ISS-094)', async () => {
+    await renderCreateForm();
+    const originalGet = vi.mocked(apiClient.get).getMockImplementation()!;
+    vi.mocked(apiClient.get).mockImplementation(async (...args) => {
+      if (args[0] === '/job-orders/pooled-inventory') {
+        const response = await originalGet(...args) as { data: { data: Array<Record<string, unknown>> } };
+        const base = response.data.data[0]!;
+        return { data: { data: [
+          { ...base, availableQuantity: 8 },
+          { ...base, sizeId: 'size-2', sizeCode: 'L', sizeLabel: 'Large', sizeSortOrder: 2, availableQuantity: 8 },
+        ] } };
+      }
+      return originalGet(...args);
+    });
+    await selectOption('Factory', 'Factory One');
+    await act(async () => clickButtonByText('+ Add Style'));
+    await chooseStyle('Classic Tee');
+    await flush();
+    expect(container.textContent).toContain('Medium: 8 remaining (8 available; 0 in draft)');
+
+    await setNumericField('Total Quantity', '2');
+    await flush();
+    expect(container.textContent).toContain('Medium: 7 remaining (8 available; 1 in draft)');
+
+    await act(async () => clickButtonByText('+ Add Destination'));
+    await flush();
+    const add = [...container.querySelectorAll('button')].filter((b) => b.textContent?.trim() === '+ Add Style').at(-1)!;
+    await act(async () => add.click());
+    await chooseStyle('Classic Tee', 1);
+    await flush();
+
+    const quantityInputs = () => [...container.querySelectorAll<HTMLInputElement>('input[id$="-total-quantity"]')];
+    expect(quantityInputs()).toHaveLength(2);
+    const editSecond = async (value: string) => {
+      await act(async () => {
+        const input = quantityInputs()[1]!;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('focusout', { bubbles: true }));
+      });
+      await flush();
+    };
+
+    await editSecond('12');
+    // Each destination shows the SAME current shared pool, not a fresh 8.
+    expect(container.textContent).toContain('Medium: 1 remaining (8 available; 7 in draft)');
+    expect(container.textContent).toContain('Large: 1 remaining (8 available; 7 in draft)');
+
+    await editSecond('18');
+    expect(container.textContent).toContain('Size M: 10 requested, 8 available; reduce by 2.');
+    expect(container.textContent).toContain('short by 4 unit(s)');
+    const create = [...container.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Create Dispatch Order')!;
+    expect(create.disabled).toBe(true);
+
+    await editSecond('4');
+    expect(container.textContent).toContain('Medium: 5 remaining (8 available; 3 in draft)');
+    expect(create.disabled).toBe(false);
+
+    // Clearing the second destination gives the first one its stock back.
+    await editSecond('');
+    expect(container.textContent).toContain('Medium: 7 remaining (8 available; 1 in draft)');
+  });
+
   it('shows hydration failure as unknown availability with an actionable retry', async () => {
     await renderCreateForm();
     const original = vi.mocked(apiClient.get).getMockImplementation()!;
