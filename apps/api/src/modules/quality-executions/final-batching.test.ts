@@ -1114,7 +1114,10 @@ describe('Final Inspection batching and prepared coverage', () => {
       .set('Authorization', `Bearer ${f.qa.token}`)
       .send({ allocations: [{ jobOrderLineSizeId: preparedSize.id, quantity: 100 }] });
     const [decreased, allocated] = await Promise.all([decrease, allocation]);
-    expect([decreased.status, allocated.status].sort()).toEqual([200, 409]);
+    // Either operation may acquire the advisory lock first. Exactly one can
+    // succeed: a prepared decrease returns 200 or a new batch returns 201;
+    // the losing operation must return 409. Both preserve the capacity rule.
+    expect([[200, 409], [409, 201]]).toContainEqual([decreased.status, allocated.status]);
     const currentSize = await prisma.jobOrderLineSize.findUniqueOrThrow({
       where: { id: preparedSize.id },
     });
