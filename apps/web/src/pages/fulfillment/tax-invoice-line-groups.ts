@@ -1,10 +1,10 @@
 import type { TaxInvoiceArchivedImage, TaxInvoiceLineView, TaxInvoiceView } from '@erve/types';
-import { formatInvoiceMoney } from './tax-invoice-ui.js';
+import { exactInvoiceAmount } from './tax-invoice-ui.js';
 
 function decimal(value: string): string {
-  const text = formatInvoiceMoney(value);
-  if (text === 'Unavailable') throw new Error('Invalid authoritative monetary value');
-  return text.replace(/[₹,]/g, '').replace('−', '-');
+  const text = exactInvoiceAmount(value);
+  if (text === null) throw new Error('Invalid authoritative monetary value');
+  return text;
 }
 
 /** Adds authoritative amounts for display only. Never calculates rates, tax or rounding. */

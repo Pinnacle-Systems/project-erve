@@ -229,13 +229,15 @@ describe('saved GST component authority in actual PDF output', () => {
           expect(result.text).toContain('IGST');
           expect(result.text).not.toContain('CGST');
           expect(result.text).not.toContain('SGST');
-          expect(result.text).toContain('45.6789123');
+          // ISS-103: displayed rounded to exactly two decimals (45.6789123 -> 45.68).
+          expect(result.text).toContain('45.68');
         } else if (treatment === 'INTRA') {
           expect(result.text).toContain('CGST');
           expect(result.text).toContain('SGST');
           expect(result.text).not.toContain('IGST');
-          expect(result.text).toContain('12.3456789');
-          expect(result.text).toContain('98.7654321');
+          // ISS-103: displayed rounded to exactly two decimals.
+          expect(result.text).toContain('12.35');
+          expect(result.text).toContain('98.77');
         } else {
           expect(result.text).toContain('GST treatment is unresolved');
           for (const label of ['CGST', 'SGST', 'IGST']) expect(result.text).not.toContain(label);
@@ -308,16 +310,17 @@ it.each(['INTRA', 'INTER'] as const)(
     const original = structuredClone(invoice);
     const result = await rendered(invoice);
     expect(result.text).toContain('00000000');
-    expect(result.text).toContain('123.456789');
+    // ISS-103: displayed rounded to exactly two decimals (123.456789 -> 123.46).
+    expect(result.text).toContain('123.46');
     expect(result.text).toContain('0%');
     if (gstTreatment === 'INTRA') {
-      expect(result.text).toContain('12.123456');
-      expect(result.text).toContain('98.987654');
-      expect(result.text).not.toContain('45.456789');
+      expect(result.text).toContain('12.12');
+      expect(result.text).toContain('98.99');
+      expect(result.text).not.toContain('45.46');
     } else {
-      expect(result.text).toContain('45.456789');
-      expect(result.text).not.toContain('12.123456');
-      expect(result.text).not.toContain('98.987654');
+      expect(result.text).toContain('45.46');
+      expect(result.text).not.toContain('12.12');
+      expect(result.text).not.toContain('98.99');
     }
     expect(invoice).toEqual(original);
   },
@@ -404,7 +407,6 @@ it('centers the heading independently of a long issued number and vertically sta
     'Taxable value',
     'CGST',
     'SGST',
-    'Total GST',
     'Grand total (before round-off)',
     'Round-off adjustment',
     'Final payable',

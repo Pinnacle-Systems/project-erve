@@ -1,13 +1,13 @@
 import { buildTaxInvoiceLineGroups, sumInvoiceAmounts } from '../../tax-invoice-line-groups.js';
 import type { TaxInvoiceAddress, TaxInvoiceView } from '@erve/types';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
-import { formatInvoiceDate, formatInvoiceMoney } from '../../tax-invoice-ui.js';
+import { exactInvoiceAmount, formatInvoiceDate, formatInvoiceMoney } from '../../tax-invoice-ui.js';
 
 /** Lexical formatting only; monetary values never pass through floating point. */
 function decimal(value: string): string {
-  const text = formatInvoiceMoney(value);
-  if (text === 'Unavailable') throw new Error('Invalid frozen monetary value');
-  return text.replace(/[₹,]/g, '').replace('−', '-');
+  const text = exactInvoiceAmount(value);
+  if (text === null) throw new Error('Invalid frozen monetary value');
+  return text;
 }
 export function taxInvoicePdfMoney(value: string | null, currency = true): string {
   if (value === null) return 'Unavailable';

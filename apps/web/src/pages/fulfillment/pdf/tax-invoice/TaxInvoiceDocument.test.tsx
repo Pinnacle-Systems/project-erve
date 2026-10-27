@@ -46,13 +46,19 @@ async function render(invoice = issuedTaxInvoiceFixture(), imageDataUri?: string
   };
 }
 describe('issued Tax Invoice PDF document', () => {
-  it('prints issued number first, serials, comma-separated saved sizes and declarations', async () => {
+  it('shows the issued identity once in the header, serials, comma-separated saved sizes and declarations', async () => {
     const result = await render(iss032TaxInvoiceFixture(2));
-    expect(result.text.indexOf('Invoice Number:')).toBeLessThan(
-      result.text.indexOf('Dispatch Orders:'),
-    );
+    // ISS-030: the duplicate "Invoice Number:/Invoice Date:" row above the header is removed;
+    // the official invoice identity remains only in the header itself.
+    expect(result.text).not.toContain('Invoice Number:');
+    expect(result.text).not.toContain('Invoice Date:');
+    expect(result.text.match(/EI\/|SYNTHETIC\/ISS032/g)!.length).toBeGreaterThan(0);
     expect(result.text).toContain('S.No.');
-    expect(result.text).toContain('E.&O.E.');
+    // ISS-102: E.&O.E. now sits on its own line directly below the HSN summary, above Declarations.
+    expect(result.text.indexOf('HSN-wise tax summary')).toBeLessThan(
+      result.text.indexOf('E.&O.E.'),
+    );
+    expect(result.text.indexOf('E.&O.E.')).toBeLessThan(result.text.indexOf('Declarations'));
     expect(result.text).toMatch(/system-generated invoice\.[\s\S]*No signature required/);
     expect(result.text).not.toContain(' |\n');
   });
