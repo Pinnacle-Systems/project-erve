@@ -83,6 +83,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   unavailable: { fontSize: 8, color: '#555555', marginTop: 4 },
+  eoe: { fontSize: 8, textAlign: 'left', marginTop: 6 },
   cancelledWatermark: {
     position: 'absolute',
     top: 260,
@@ -325,12 +326,6 @@ export function TaxInvoiceDocument({
         </View>
       )}
       <View style={styles.references}>
-        <View style={styles.referenceRow}>
-          <Text style={[styles.referenceCell, styles.bold]}>
-            Invoice Number: {model.invoiceNumber}
-          </Text>
-          <Text style={styles.referenceCell}>Invoice Date: {model.invoiceDate}</Text>
-        </View>
         {model.references.replacesInvoiceNumber !== null && (
           <View style={styles.referenceRow}>
             <Text style={[styles.referenceCell, styles.bold]}>
@@ -422,7 +417,6 @@ export function TaxInvoiceDocument({
             ) : (
               <TotalRow label="Tax components" value="Unavailable: GST treatment is unresolved" />
             )}
-            <TotalRow label="Total GST" value={model.totals.gst} />
           </View>
           <View style={styles.totalColumn}>
             <TotalRow
@@ -459,6 +453,7 @@ export function TaxInvoiceDocument({
       ) : (
         <Text style={styles.unavailable}>Issued HSN summary unavailable.</Text>
       )}
+      <Text style={styles.eoe}>E.&amp;O.E.</Text>
       <View style={styles.declarations} wrap={false}>
         <View style={styles.declarationColumn}>
           <Text style={styles.bold}>Declarations</Text>
@@ -484,7 +479,6 @@ export function TaxInvoiceDocument({
         <Text>{model.bankDetails}</Text>
         <Text>This is a system-generated invoice.</Text>
         <Text>No signature required</Text>
-        <Text>E.&amp;O.E.</Text>
       </View>
       <PdfFooter />
     </PdfDocument>

@@ -53,7 +53,8 @@ describe('Grouped invoice review', () => {
     expect(container.querySelector('[role=region]')?.id).toBe(review.getAttribute('aria-controls'));
     expect(container.querySelectorAll('thead')[0]!.textContent).not.toContain('Review');
     expect(container.textContent).toContain('14');
-    expect(container.textContent).toContain('933.473338');
+    // ISS-103: displayed rounded to exactly two decimals (933.473338 -> 933.47).
+    expect(container.textContent).toContain('933.47');
     const overrides = [...container.querySelectorAll('button')].filter(
       (button) => button.textContent === 'Override',
     );

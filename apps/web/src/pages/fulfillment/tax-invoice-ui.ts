@@ -1,11 +1,9 @@
-/** Presentation only: preserve backend decimal strings without arithmetic. */
-export function formatInvoiceMoney(value: string | null | undefined): string {
-  if (value == null) return 'Unavailable';
+/** Expands backend decimal strings (including scientific notation) without passing through Number. */
+function parseInvoiceAmount(value: string): string | null {
   const scientific = /^(-?)(\d+)(?:\.(\d+))?e([+-]?\d+)$/i.exec(value);
   if (scientific) {
-    // Expand notation lexically. The amount never passes through Number.
     const exponent = Number(scientific[4]);
-    if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 100) return 'Unavailable';
+    if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 100) return null;
     const whole = scientific[2]!;
     const digits = whole + (scientific[3] ?? '');
     const point = whole.length + exponent;
@@ -17,11 +15,43 @@ export function formatInvoiceMoney(value: string | null | undefined): string {
           ? digits + '0'.repeat(point - digits.length)
           : `${digits.slice(0, point)}.${digits.slice(point)}`);
   }
-  if (!/^-?\d+(?:\.\d+)?$/.test(value)) return 'Unavailable';
-  const negative = value.startsWith('-');
-  const [whole, fraction = ''] = value.replace(/^-/, '').split('.');
-  const grouped = BigInt(whole!).toLocaleString('en-IN');
-  return `${negative ? '−' : ''}₹${grouped}.${fraction.padEnd(2, '0')}`;
+  return /^-?\d+(?:\.\d+)?$/.test(value) ? value : null;
+}
+
+/**
+ * Exact backend decimal string, sign-normalized and with no currency formatting or rounding.
+ * For internal summation/grouping use (sumInvoiceAmounts, line-identity keys) — never for display,
+ * since it must not lose precision before those exact computations run.
+ */
+export function exactInvoiceAmount(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const parsed = parseInvoiceAmount(value);
+  if (parsed === null) return null;
+  const negative = parsed.startsWith('-');
+  const [whole, fraction = ''] = parsed.replace(/^-/, '').split('.');
+  return `${negative ? '-' : ''}${whole}.${fraction.padEnd(2, '0')}`;
+}
+
+/** Decimal-safe round-half-up to exactly 2 fraction digits, via BigInt (never float). */
+function roundToTwoDecimals(whole: string, fraction: string): { whole: string; fraction: string } {
+  if (fraction.length <= 2) return { whole, fraction: fraction.padEnd(2, '0') };
+  const keep = fraction.slice(0, 2);
+  const roundUp = fraction.charCodeAt(2) >= 53; // charCode of '5'; only the next digit decides half-up
+  if (!roundUp) return { whole, fraction: keep };
+  const digits = (BigInt(whole + keep) + 1n).toString().padStart(whole.length + 2, '0');
+  return { whole: digits.slice(0, -2), fraction: digits.slice(-2) };
+}
+
+/** Presentation only: rounds to exactly two decimals for display; never used for arithmetic. */
+export function formatInvoiceMoney(value: string | null | undefined): string {
+  if (value == null) return 'Unavailable';
+  const parsed = parseInvoiceAmount(value);
+  if (parsed === null) return 'Unavailable';
+  const negative = parsed.startsWith('-');
+  const [whole, fraction = ''] = parsed.replace(/^-/, '').split('.');
+  const rounded = roundToTwoDecimals(whole!, fraction);
+  const grouped = BigInt(rounded.whole).toLocaleString('en-IN');
+  return `${negative ? '−' : ''}₹${grouped}.${rounded.fraction}`;
 }
 
 export function formatInvoiceAdjustment(value: string | null | undefined): string {

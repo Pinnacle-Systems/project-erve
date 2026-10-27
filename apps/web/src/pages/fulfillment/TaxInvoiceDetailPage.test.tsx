@@ -226,7 +226,8 @@ describe('Tax Invoice Accountant review and immutable presentation', () => {
   it('shows explicit draft preview, exact backend rate and read-only quantity', async () => {
     await render(taxInvoiceFixture());
     expect(text()).toContain('Preview');
-    expect(text()).toContain('₹66.676667');
+    // ISS-103: displayed rounded to exactly two decimals (66.676667 -> 66.68).
+    expect(text()).toContain('₹66.68');
     expect(text()).not.toContain('EI/26-27/');
     expect(document.querySelector('input[aria-label*="quantity"]')).toBeNull();
     expect(button('Finalize invoice')).toBeDefined();
@@ -262,7 +263,7 @@ describe('Tax Invoice Accountant review and immutable presentation', () => {
     );
     await vi.waitFor(() => expect(text()).toContain('Commercial correction'));
     expect(text()).toContain('Accountant One');
-    expect(text()).toContain('₹66.676667');
+    expect(text()).toContain('₹66.68');
   });
   it('distinguishes audit service failure from empty history', async () => {
     await render(taxInvoiceFixture(), 'ACCOUNTANT', true);

@@ -162,13 +162,13 @@ describe('issued Tax Invoice PDF data', () => {
     },
   );
 
-  it('preserves high precision without rounding line or GST components', () => {
+  it('rounds high-precision line and GST components to exactly two decimals for display (ISS-103)', () => {
     const invoice = issuedTaxInvoiceFixture();
     invoice.lines[0]!.taxableValue = '12.499999999999999999';
     invoice.totalCgst = '0.312499999999999999';
     const model = buildTaxInvoiceViewModel(invoice);
-    expect(model.groups[0]?.taxable).toBe('12.499999999999999999');
-    expect(model.totals.cgst).toBe('INR 0.312499999999999999');
+    expect(model.groups[0]?.taxable).toBe('12.50');
+    expect(model.totals.cgst).toBe('INR 0.31');
   });
 
   it('uses the frozen financial year/applicability for the declaration', () => {
