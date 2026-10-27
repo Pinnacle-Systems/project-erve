@@ -104,6 +104,49 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
     expect(res.body.error.message).toMatch(/short by 10 unit\(s\)/);
   });
 
+  it('reports the complete 66 requested vs 48 available shortage across all affected Sizes (ISS-095)', async () => {
+    const first = await createReleasedQaStock({ quantity: 24 });
+    const second = await createReleasedQaStock({
+      factoryId: first.factoryId,
+      distributorId: first.distributorId,
+      quantity: 24,
+    });
+    const merchToken = await roleToken(['MERCHANDISER']);
+    const res = await createDispatchOrder(merchToken, {
+      factoryId: first.factoryId,
+      soDate: '2026-06-30',
+      distributors: [
+        distributorGroup(first.distributorId, [
+          destination({ clientKey: 'd1', city: 'Chennai' }),
+          destination({ clientKey: 'd2', city: 'Erode' }),
+        ]),
+      ],
+      lines: [
+        { destinationClientKey: 'd1', styleId: first.styleId, totalQuantity: 33 },
+        { destinationClientKey: 'd2', styleId: second.styleId, totalQuantity: 33 },
+      ],
+    }).expect(409);
+
+    const [styleA, styleB, sizeA, sizeB] = await Promise.all([
+      prisma.style.findUniqueOrThrow({ where: { id: first.styleId } }),
+      prisma.style.findUniqueOrThrow({ where: { id: second.styleId } }),
+      prisma.size.findUniqueOrThrow({ where: { id: first.sizeId } }),
+      prisma.size.findUniqueOrThrow({ where: { id: second.sizeId } }),
+    ]);
+    const message = res.body.error.message as string;
+    expect(message).toContain('66 requested, 48 available');
+    expect(message).toContain('short by 18 unit(s) in total');
+    expect(message).toContain(styleA.styleNumber);
+    expect(message).toContain(styleB.styleNumber);
+    expect(message).toContain(sizeA.label);
+    expect(message).toContain(sizeB.label);
+    expect(message.split('short by 9 unit(s)')).toHaveLength(3);
+    expect(message).not.toContain(first.styleId);
+    expect(message).not.toContain(second.styleId);
+    expect(await prisma.saleOrder.count()).toBe(0);
+    expect(await prisma.stockAllocation.count()).toBe(0);
+  });
+
   it('supports multiple destinations and multiple styles in one Dispatch Order', async () => {
     const stockA = await createReleasedQaStock({ quantity: 50 });
     const stockB = await createReleasedQaStock({ distributorId: stockA.distributorId, factoryId: stockA.factoryId, quantity: 50 });

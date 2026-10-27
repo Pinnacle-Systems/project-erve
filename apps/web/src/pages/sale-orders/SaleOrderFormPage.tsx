@@ -25,6 +25,7 @@ import {
   type DispatchOrderStyleOption,
 } from './DispatchOrderStyleField.js';
 import { DispatchOrderQuantityGrid } from './DispatchOrderQuantityGrid.js';
+import { computeDraftStyleAvailability, type DraftStyleAvailability } from './dispatch-order-draft-stock.js';
 import type { Factory, PooledFactoryInventoryLine, SaleOrder } from './types.js';
 
 // DEMO-016: one total quantity per Style per destination — the server alone
@@ -319,6 +320,22 @@ export function SaleOrderFormPage() {
 
   const allDestinations = useMemo(() => distributorGroups.flatMap((g) => g.destinations), [distributorGroups]);
 
+  // ISS-094: pooled Factory+Style+Size stock is shared across all destination
+  // and Distributor rows. A draft does not gain fresh stock when a second
+  // destination is added; editing/removing quantities recalculates the pool.
+  const draftAvailabilityByStyle = new Map<string, DraftStyleAvailability>();
+  const draftLines = allDestinations.flatMap((destination) => destination.lines);
+  for (const [index, styleId] of selectedStyleIds.entries()) {
+    if (!selectedPoolQueries[index]?.isSuccess || !styleMasterQueries[index]?.isSuccess) continue;
+    const fallback = draftLines.find((line) => line.style?.styleId === styleId)?.style;
+    if (!fallback) continue;
+    const style = resolveStyleOption(fallback);
+    const totals = draftLines.filter((line) => line.style?.styleId === styleId)
+      .map((line) => line.totalQuantity);
+    draftAvailabilityByStyle.set(styleId, computeDraftStyleAvailability(style, totals));
+  }
+  const hasDraftShortfall = [...draftAvailabilityByStyle.values()].some((summary) => summary.totalShortfall > 0);
+
   function groupTotal(group: DistributorGroupDraft): number {
     return group.destinations.reduce(
       (sum, dest) => sum + dest.lines.reduce((lineSum, line) => lineSum + (line.totalQuantity ?? 0), 0),
@@ -561,6 +578,10 @@ export function SaleOrderFormPage() {
           onKeyDown={createEnterToNextHandler()}
           onSubmit={(e) => {
             e.preventDefault();
+            if (hasDraftShortfall) {
+              setError('Insufficient pooled stock across the selected destinations. Reduce the Size quantities highlighted above.');
+              return;
+            }
             mutation.mutate();
           }}
         >
@@ -776,7 +797,7 @@ export function SaleOrderFormPage() {
                                           )}
                                           {resolvedStyle && !availabilityError && !availabilityReady && <p role="status">Loading Style availability…</p>}
                                           {resolvedStyle && availabilityReady && !availabilityError && (
-                                            <DispatchOrderQuantityGrid style={resolvedStyle} totalQuantity={line.totalQuantity} />
+                                            <DispatchOrderQuantityGrid style={resolvedStyle} totalQuantity={line.totalQuantity} draftAvailability={draftAvailabilityByStyle.get(resolvedStyle.styleId)} />
                                           )}
                                         </div>
                                       </Panel>
@@ -853,7 +874,7 @@ export function SaleOrderFormPage() {
             <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button type="submit" loading={mutation.isPending}>
+            <Button type="submit" disabled={mutation.isPending || hasDraftShortfall} loading={mutation.isPending}>
               {isEdit ? 'Save Changes' : 'Create Dispatch Order'}
             </Button>
           </div>
