@@ -367,6 +367,10 @@ async function reserveAcrossPools(
   plannedReleaseByReleaseLine: Map<string, number>,
 ): Promise<PlannedAllocation[]> {
   const planned: PlannedAllocation[] = [];
+  const shortages: Array<{ styleId: string; sizeId: string; requested: number; available: number; shortfall: number }> = [];
+  let requestedTotal = 0;
+  let availableForRequestedSizes = 0;
+
   for (const [poolKey, demands] of demandByPoolKey) {
     const [styleId, sizeId] = poolKey.split(':') as [string, string];
     const candidates = await getEligibleQaReleaseLinesForPool(tx, factoryId, styleId, sizeId);
@@ -378,25 +382,39 @@ async function reserveAcrossPools(
       id: c.id,
       effectiveAvailable: (availability.get(c.id)?.available ?? 0) + (plannedReleaseByReleaseLine.get(c.id) ?? 0),
     }));
+    const requested = demands.reduce((sum, demand) => sum + demand.neededQuantity, 0);
+    const available = candidateAvailability.reduce((sum, c) => sum + c.effectiveAvailable, 0);
+    requestedTotal += requested;
+    availableForRequestedSizes += Math.min(requested, available);
+
     const { allocations, shortfall } = planPoolAllocation(demands, candidateAvailability);
     if (shortfall > 0) {
-      // Resolve to human-readable Style/Size identifiers for the error
-      // message — this is the exceptional (conflict) path only, so the
-      // extra lookup here doesn't cost anything on the common success path.
-      // Never surface the raw internal styleId/sizeId ULIDs to the user
-      // (see the Dispatch Order Phase 3 rule against leaking internal
-      // traceability ids into user-facing text).
-      const [style, size] = await Promise.all([
-        tx.style.findUnique({ where: { id: styleId }, select: { styleNumber: true, styleName: true } }),
-        tx.size.findUnique({ where: { id: sizeId }, select: { label: true, code: true } }),
-      ]);
-      const styleLabel = style ? `${style.styleNumber} — ${style.styleName}` : styleId;
-      const sizeLabel = size ? size.label || size.code : sizeId;
-      throw HttpError.conflict(
-        `Insufficient pooled stock for ${styleLabel} / ${sizeLabel} at the selected Factory: short by ${shortfall} unit(s)`,
-      );
+      // planPoolAllocation stops at the first unmet destination. Its shortfall
+      // is not necessarily the total demand still missing from this pool.
+      // Count ALL destinations and ALL Style+Size pools before reporting ISS-095.
+      shortages.push({ styleId, sizeId, requested, available, shortfall: Math.max(0, requested - available) });
+      continue;
     }
     planned.push(...allocations);
+  }
+
+  if (shortages.length > 0) {
+    // The transaction still rejects all over-allocation atomically. Build one
+    // complete, human-readable server-authoritative error rather than only
+    // reporting the first unsuccessful destination or leaking internal IDs.
+    const affected = await Promise.all(shortages.map(async (shortage) => {
+      const [style, size] = await Promise.all([
+        tx.style.findUnique({ where: { id: shortage.styleId }, select: { styleNumber: true, styleName: true } }),
+        tx.size.findUnique({ where: { id: shortage.sizeId }, select: { code: true, label: true } }),
+      ]);
+      const styleLabel = style ? `${style.styleNumber} — ${style.styleName}` : 'Unknown Style';
+      const sizeLabel = size ? size.label || size.code : 'Unknown Size';
+      return `${styleLabel} / ${sizeLabel}: ${shortage.requested} requested, ${shortage.available} available; short by ${shortage.shortfall} unit(s)`;
+    }));
+    const totalShortfall = shortages.reduce((sum, shortage) => sum + shortage.shortfall, 0);
+    throw HttpError.conflict(
+      `Insufficient pooled stock at the selected Factory: ${requestedTotal} requested, ${availableForRequestedSizes} available for the requested Sizes; short by ${totalShortfall} unit(s) in total. Affected Sizes: ${affected.join('; ')}`,
+    );
   }
   return planned;
 }
