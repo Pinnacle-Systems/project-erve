@@ -546,7 +546,22 @@ export interface EligibleErveCartonView {
   factoryDispatchNumber: string;
   saleOrder: { id: string; saleOrderNumber: string };
   distributor: { id: string; code: string; name: string };
-  destination: { id: string; label: string | null; city: string; state: string };
+  /**
+   * ISS-100: `destinationCompatibilityKey` is the server-derived, opaque
+   * destination-identity key (never a geographic grouping key) — the
+   * frontend must compare THIS (combined with `distributor.id`) to decide
+   * whether two cartons may be consolidated together, never city/state.
+   * Null only when the destination has no linked Retail Store, which the
+   * eligible-carton endpoints already exclude from results.
+   */
+  destination: {
+    id: string;
+    label: string | null;
+    storeCode: string | null;
+    city: string;
+    state: string;
+    destinationCompatibilityKey: string | null;
+  };
   packageDetails: string | null;
   weight: string | null;
   totalQuantity: number;

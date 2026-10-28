@@ -194,16 +194,18 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
     ).rejects.toThrow();
   });
 
-  it('keeps legacy destinations without Store references and distinct same-code Stores across Distributor groups', async () => {
+  // ISS-100: there is no manual/unlinked destination-entry workflow any
+  // more — every destination must identify a real Retail Store master row.
+  it('rejects creating a destination without a linked Retail Store', async () => {
     const f = await fixture();
-    const legacy = structuredClone(f.payload);
-    delete (legacy.distributors[0]!.destinations[0]! as { retailStoreId?: string }).retailStoreId;
-    const oldOrder = (await create(f.token, legacy).expect(201)).body.data;
-    expect(oldOrder.distributorGroups[0].destinations[0]!).toMatchObject({
-      retailStoreId: null,
-      storeCode: null,
-      addressLine1: 'Legacy Road',
-    });
+    const unlinked = structuredClone(f.payload);
+    delete (unlinked.distributors[0]!.destinations[0]! as { retailStoreId?: string }).retailStoreId;
+    await create(f.token, unlinked).expect(400);
+    expect(await prisma.saleOrder.count()).toBe(0);
+  });
+
+  it('distinguishes same-code Stores across Distributor groups and rejects moving a destination to a Store owned by a different Distributor', async () => {
+    const f = await fixture();
     const b = await createTestDistributor();
     const storeB = (
       await request(app)

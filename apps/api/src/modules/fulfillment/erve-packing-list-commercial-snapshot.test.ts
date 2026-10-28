@@ -230,6 +230,7 @@ describe('Erve Packing List — commercial snapshot (INV-004)', () => {
       distributorId: fixtureA.stock.distributorId,
       factoryId: fixtureA.stock.factoryId,
       quantity: 15,
+      retailStoreId: fixtureA.saleOrder.destinations[0].retailStoreId,
     });
     const factoryToken = await createFactoryUserToken(fixtureA.stock.factoryId);
 
@@ -295,6 +296,7 @@ describe('Erve Packing List — commercial snapshot (INV-004)', () => {
       distributorId: fixtureA.stock.distributorId,
       factoryId: fixtureA.stock.factoryId,
       quantity: 15,
+      retailStoreId: fixtureA.saleOrder.destinations[0].retailStoreId,
     });
     const factoryToken = await createFactoryUserToken(fixtureA.stock.factoryId);
 

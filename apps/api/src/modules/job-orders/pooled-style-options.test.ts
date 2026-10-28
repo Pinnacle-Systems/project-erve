@@ -12,6 +12,7 @@ import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 import { getPooledInventoryStyleOptions } from './pooled-style-options.service.js';
 import {
   createReleasedQaStock,
+  createTestRetailStore,
   createTestUserAndToken,
   resetDatabase,
 } from '../../test/helpers.js';
@@ -49,6 +50,7 @@ beforeAll(async () => {
     where: { id: stock.styleId },
     data: { styleNumber: 'A-CONSUMED', styleName: 'Repeated Name' },
   });
+  const retailStore = await createTestRetailStore(stock.distributorId);
   const created = await request(app)
     .post('/sale-orders')
     .set('Authorization', `Bearer ${token}`)
@@ -63,6 +65,7 @@ beforeAll(async () => {
           destinations: [
             {
               clientKey: 'd',
+              retailStoreId: retailStore.id,
               addressLine1: 'Test',
               city: 'Chennai',
               state: 'TN',

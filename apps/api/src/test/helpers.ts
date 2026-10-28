@@ -271,6 +271,45 @@ export async function createTestDistributor(overrides?: {
   return { id, code, name };
 }
 
+// ISS-100: every Dispatch Order destination must now link to a real Retail
+// Store master row (no more manual/unlinked destinations) — fixtures across
+// the suite that build destinations need a store belonging to the correct
+// Distributor, so this is the one shared, direct-Prisma way to get one.
+export async function createTestRetailStore(
+  distributorId: string,
+  overrides?: {
+    code?: string;
+    name?: string;
+    addressLine1?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    postalCode?: string;
+    gstin?: string;
+    status?: 'ACTIVE' | 'INACTIVE';
+  },
+): Promise<{ id: string; code: string; name: string }> {
+  const id = createId();
+  const code = overrides?.code ?? `STORE-${id}`;
+  const name = overrides?.name ?? `Test Retail Store ${id}`;
+  await prisma.retailStore.create({
+    data: {
+      id,
+      distributorId,
+      code,
+      name,
+      addressLine1: overrides?.addressLine1 ?? '1 Test Store Road',
+      city: overrides?.city ?? 'Chennai',
+      state: overrides?.state ?? 'Tamil Nadu',
+      country: overrides?.country ?? 'India',
+      postalCode: overrides?.postalCode ?? '600001',
+      gstin: overrides?.gstin,
+      status: overrides?.status ?? 'ACTIVE',
+    },
+  });
+  return { id, code, name };
+}
+
 export async function createTestSellerRegistration(overrides?: {
   branchCode?: string;
   legalName?: string;

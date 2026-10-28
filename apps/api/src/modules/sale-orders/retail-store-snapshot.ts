@@ -12,8 +12,12 @@ interface ExistingDestination {
   distributorId: string;
 }
 
-// Only a new reference captures master values. An ordinary round-trip of an
-// existing Store keeps its historical snapshot, including an inactive Store.
+// ISS-100: retailStoreId is now mandatory on every destination (validated by
+// sale-orders.validation.ts before this ever runs) — there is no manual/
+// unlinked destination any more, so a missing store id is an internal-bug
+// level failure, not a user-correctable 400. Only a new reference captures
+// master values; an ordinary round-trip of an existing Store keeps its
+// historical snapshot, including an inactive Store.
 export async function resolveRetailStoreSnapshots(
   tx: Prisma.TransactionClient,
   groups: DispatchOrderDistributorGroupInput[],
@@ -22,9 +26,7 @@ export async function resolveRetailStoreSnapshots(
 ): Promise<void> {
   const originalById = new Map(existing.map((d) => [d.id, d]));
   const ownerByKey = new Map(groups.map((g) => [g.clientKey, g.distributorId]));
-  const storeIds = destinations
-    .map((d) => d.retailStoreId ?? (d.id ? originalById.get(d.id)?.retailStoreId : null))
-    .filter((id): id is string => Boolean(id));
+  const storeIds = destinations.map((d) => d.retailStoreId);
   // Same lock as master edits/status changes, sorted to avoid deadlocks.
   for (const id of [...new Set(storeIds)].sort()) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`retail-store-${id}`}))`;
@@ -33,11 +35,10 @@ export async function resolveRetailStoreSnapshots(
     (await tx.retailStore.findMany({ where: { id: { in: storeIds } } })).map((s) => [s.id, s]),
   );
   for (const d of destinations) {
+    const storeId = d.retailStoreId;
+    if (!storeId) throw HttpError.internal('Destination is missing its required Retail Store id');
     const old = d.id ? originalById.get(d.id) : undefined;
-    const storeId = d.retailStoreId === undefined ? (old?.retailStoreId ?? null) : d.retailStoreId;
-    d.retailStoreId = storeId;
     d.storeCode = null;
-    if (!storeId) continue; // Legacy/manual destination: never match by text.
     const store = stores.get(storeId);
     if (!store) throw HttpError.badRequest('Retail Store not found');
     const distributorId = ownerByKey.get(d.groupClientKey);

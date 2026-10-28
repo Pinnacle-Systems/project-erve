@@ -120,7 +120,11 @@ describe('computeDispatchOrderFulfillment (FUL-P1-01)', () => {
 
   it('B: two Dispatch Orders consolidated into one Erve Dispatch (saleOrderId null) both derive ERVE_DISPATCHED', async () => {
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { distributorId: orderA.stock.distributorId, quantity: 15 });
+    const orderB = await createApprovedSaleOrder(app, {
+      distributorId: orderA.stock.distributorId,
+      quantity: 15,
+      retailStoreId: orderA.saleOrder.destinations[0].retailStoreId,
+    });
 
     const factoryTokenA = await createFactoryUserToken(orderA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(orderB.stock.factoryId);
@@ -136,7 +140,11 @@ describe('computeDispatchOrderFulfillment (FUL-P1-01)', () => {
 
   it('C: the same consolidated (null saleOrderId) dispatch delivered derives DELIVERED for both contributing Dispatch Orders', async () => {
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { distributorId: orderA.stock.distributorId, quantity: 15 });
+    const orderB = await createApprovedSaleOrder(app, {
+      distributorId: orderA.stock.distributorId,
+      quantity: 15,
+      retailStoreId: orderA.saleOrder.destinations[0].retailStoreId,
+    });
 
     const factoryTokenA = await createFactoryUserToken(orderA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(orderB.stock.factoryId);
@@ -220,7 +228,11 @@ describe('computeDispatchOrderFulfillment (FUL-P1-01)', () => {
 
   it('G: cross-DO isolation — an undispatched extra carton on DO-B must not affect DO-A, and must not overstate DO-B', async () => {
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { distributorId: orderA.stock.distributorId, quantity: 25 });
+    const orderB = await createApprovedSaleOrder(app, {
+      distributorId: orderA.stock.distributorId,
+      quantity: 25,
+      retailStoreId: orderA.saleOrder.destinations[0].retailStoreId,
+    });
 
     const factoryTokenA = await createFactoryUserToken(orderA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(orderB.stock.factoryId);

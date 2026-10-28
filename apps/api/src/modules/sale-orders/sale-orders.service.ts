@@ -437,7 +437,9 @@ async function lockPoolKeys(tx: Tx, factoryId: string, poolKeys: Iterable<string
 // ---------------------------------------------------------------------------
 
 export interface DispatchOrderDestinationInput {
-  retailStoreId?: string | null;
+  // ISS-100: mandatory — every destination must identify a real Retail
+  // Store master row; see retail-store-snapshot.ts.
+  retailStoreId: string;
   refreshStoreSnapshot?: boolean;
   storeCode?: string | null;
   clientKey: string;
@@ -1042,7 +1044,7 @@ export async function createDispatchOrder(
         id: destinationIdByClientKey.get(d.clientKey)!,
         saleOrderId: soId,
         saleOrderDistributorId: groupIdByClientKey.get(d.groupClientKey)!,
-        retailStoreId: d.retailStoreId ?? null,
+        retailStoreId: d.retailStoreId,
         storeCode: d.storeCode ?? null,
         label: d.label ?? null,
         contactName: d.contactName ?? null,
@@ -1561,7 +1563,7 @@ export async function updateDispatchOrder(
             const existing = existingDestById.get(d.id);
             if (!existing) continue;
             const changed =
-              (d.retailStoreId ?? null) !== existing.retailStoreId ||
+              d.retailStoreId !== existing.retailStoreId ||
               (d.storeCode ?? null) !== existing.storeCode ||
               (d.label ?? null) !== existing.label ||
               (d.contactName ?? null) !== existing.contactName ||
@@ -1785,7 +1787,7 @@ async function createOrMergeAllocations(tx: Tx, actorId: string, allocations: Pl
 }
 
 interface DestinationFields {
-  retailStoreId: string | null;
+  retailStoreId: string;
   storeCode: string | null;
   label: string | null;
   contactName: string | null;
@@ -1802,7 +1804,7 @@ interface DestinationFields {
 
 function toDestinationFields(d: DispatchOrderDestinationInput): DestinationFields {
   return {
-    retailStoreId: d.retailStoreId ?? null,
+    retailStoreId: d.retailStoreId,
     storeCode: d.storeCode ?? null,
     label: d.label ?? null,
     contactName: d.contactName ?? null,

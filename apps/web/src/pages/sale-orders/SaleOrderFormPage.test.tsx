@@ -434,7 +434,9 @@ async function prepareInline() {
   await act(async () => clickButtonByText('+ Add Style'));
   await chooseStyle('Classic Tee');
   await setNumericField('Total Quantity', '7');
-  // Keep a real parent validation error while creating the missing Store.
+  // ISS-100: no Retail Store has been selected yet, so submitting here hits
+  // the client-side "Retail Store required" validation — keep that real
+  // parent validation error showing while creating the missing Store.
   await act(async () =>
     container
       .querySelector('form')!
@@ -459,7 +461,11 @@ async function fillInline() {
 describe('DEMO-014 Store selection and inline creation context', () => {
   it('ignores a canceled creation that completes after another creation dialog opens', async () => {
     const pending = deferred<{ data: { data: unknown } }>();
-    vi.spyOn(apiClient, 'post').mockRejectedValueOnce(new Error('Destination address is required')).mockImplementationOnce(() => pending.promise);
+    // ISS-100: the initial submit inside prepareInline() is now blocked by
+    // client-side "Retail Store required" validation before any network
+    // call happens — the first real apiClient.post call is the inline Store
+    // creation itself.
+    vi.spyOn(apiClient, 'post').mockImplementationOnce(() => pending.promise);
     await prepareInline();
     const dialog = await fillInline();
     await act(async () => dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
@@ -506,27 +512,28 @@ describe('DEMO-014 Store selection and inline creation context', () => {
   });
 
   it('creates inline, refreshes lookup and selects the new Store without resetting allocations, notes or errors', async () => {
-    const post = vi
-      .spyOn(apiClient, 'post')
-      .mockResolvedValue({
+    // ISS-100: the initial submit inside prepareInline() never reaches
+    // /sale-orders any more — it's blocked client-side by "Retail Store
+    // required" validation before any network call happens.
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
         data: {
-          data: {
-            id: 'new',
-            distributorId: 'dist-1',
-            code: 'NEW',
-            name: 'New Store',
-            addressLine1: 'New Address',
-            city: 'Chennai',
-            state: 'TN',
-            country: 'India',
-            postalCode: '600002',
-            status: 'ACTIVE',
-          },
+          id: 'new',
+          distributorId: 'dist-1',
+          code: 'NEW',
+          name: 'New Store',
+          addressLine1: 'New Address',
+          city: 'Chennai',
+          state: 'TN',
+          country: 'India',
+          postalCode: '600002',
+          status: 'ACTIVE',
         },
-      }).mockRejectedValueOnce(new Error('Destination address is required'));
+      },
+    });
     await prepareInline();
     const parent = container.querySelector('form')!;
-    expect(container.textContent).toContain('Destination address is required');
+    expect(container.textContent).toContain('Select a Retail Store for every destination before saving');
     const dialog = await fillInline();
     await act(async () =>
       dialog
@@ -540,9 +547,9 @@ describe('DEMO-014 Store selection and inline creation context', () => {
     expect(textInput('Total Quantity').value).toBe('7');
     expect(textInput('Retail Store').value).toContain('New Store');
     expect(textInput('Address Line 1').value).toBe('New Address');
-    expect(container.textContent).toContain('Destination address is required');
-    expect(post.mock.calls).toHaveLength(2);
-    expect(post.mock.calls.filter(([url]) => url === '/sale-orders')).toHaveLength(1);
+    expect(container.textContent).toContain('Select a Retail Store for every destination before saving');
+    expect(post.mock.calls).toHaveLength(1);
+    expect(post.mock.calls.filter(([url]) => url === '/sale-orders')).toHaveLength(0);
     expect(post).toHaveBeenCalledWith(
       '/retail-stores',
       expect.objectContaining({ distributorId: 'dist-1' }),

@@ -439,6 +439,16 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
                     render: (r) => r.saleOrder.saleOrderNumber,
                   },
                   {
+                    // ISS-100: the server already restricts this list to the
+                    // same Retail Store as the Packing List, but showing it
+                    // keeps the Merchandiser oriented on which store they're
+                    // preparing cartons for.
+                    key: 'retailStore',
+                    header: 'Retail Store',
+                    render: (r) =>
+                      `${r.destination.label ?? '—'}${r.destination.storeCode ? ` (${r.destination.storeCode})` : ''}`,
+                  },
+                  {
                     key: 'qty',
                     header: 'Pieces',
                     align: 'right',

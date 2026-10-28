@@ -36,7 +36,7 @@ describe('shared GSTIN compatibility', () => {
   it('preserves optional destination normalization and rejects malformed non-empty values', () => {
     const parse = (gstin?: string | null) => createDispatchOrderSchema.parse({
       factoryId: 'factory', soDate: '2026-10-20',
-      distributors: [{ clientKey: 'group', distributorId: 'buyer', destinations: [{ clientKey: 'destination', addressLine1: 'Street', city: 'City', state: 'State', country: 'India', ...(gstin === undefined ? {} : { gstin }) }] }],
+      distributors: [{ clientKey: 'group', distributorId: 'buyer', destinations: [{ clientKey: 'destination', retailStoreId: 'store', addressLine1: 'Street', city: 'City', state: 'State', country: 'India', ...(gstin === undefined ? {} : { gstin }) }] }],
       lines: [{ destinationClientKey: 'destination', styleId: 'style', totalQuantity: 1 }],
     }).distributors[0]!.destinations[0]!.gstin;
     expect(parse()).toBeUndefined();

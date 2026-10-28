@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId, FACTORY_DISPATCH_BROAD_READ_ROLES, FACTORY_DISPATCH_MUTATION_ROLES } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, resetDatabase } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestRetailStore, resetDatabase } from '../../test/helpers.js';
 import {
   consolidateAndDispatch,
   createFactoryUserToken,
@@ -986,6 +986,10 @@ describe('Factory Packing Cartons', () => {
   it('rejects a carton spanning two destinations', async () => {
     const stock = await createReleasedQaStock({ quantity: 50 });
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
+    const [store1, store2] = await Promise.all([
+      createTestRetailStore(stock.distributorId),
+      createTestRetailStore(stock.distributorId),
+    ]);
     const created = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${merchToken}`)
@@ -996,8 +1000,8 @@ describe('Factory Packing Cartons', () => {
             clientKey: 'dg1',
             distributorId: stock.distributorId,
             destinations: [
-              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+              { clientKey: 'd1', retailStoreId: store1.id, addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', retailStoreId: store2.id, addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
             ],
           },
         ],
@@ -1638,6 +1642,10 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
   async function twoDestinationFixture(qtyA: number, qtyB: number) {
     const stock = await createReleasedQaStock({ quantity: qtyA + qtyB });
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
+    const [store1, store2] = await Promise.all([
+      createTestRetailStore(stock.distributorId),
+      createTestRetailStore(stock.distributorId),
+    ]);
     const created = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${merchToken}`)
@@ -1648,8 +1656,8 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
             clientKey: 'dg1',
             distributorId: stock.distributorId,
             destinations: [
-              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+              { clientKey: 'd1', retailStoreId: store1.id, addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', retailStoreId: store2.id, addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
             ],
           },
         ],
@@ -1742,6 +1750,10 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
       factoryId: stockA.factoryId,
     });
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
+    const [store1, store2] = await Promise.all([
+      createTestRetailStore(stockA.distributorId),
+      createTestRetailStore(stockA.distributorId),
+    ]);
     const created = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${merchToken}`)
@@ -1752,8 +1764,8 @@ describe('Dispatch Order edit — carton invalidation and mismatch (Phase 4)', (
             clientKey: 'dg1',
             distributorId: stockA.distributorId,
             destinations: [
-              { clientKey: 'd1', addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
-              { clientKey: 'd2', addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
+              { clientKey: 'd1', retailStoreId: store1.id, addressLine1: 'Addr 1', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', retailStoreId: store2.id, addressLine1: 'Addr 2', city: 'Mumbai', state: 'MH', country: 'India' },
             ],
           },
         ],

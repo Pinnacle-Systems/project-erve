@@ -88,29 +88,32 @@ async function generateErveDispatchNumber(client: Tx, financialYear: { id: strin
 }
 
 // ---------------------------------------------------------------------------
-// Destination identity (Phase 6 plan §6/§15) — normalized on the structured
-// physical-location fields only (never the free-text `label`), so two
-// SaleOrderDestination rows from DIFFERENT Dispatch Orders that describe the
-// same real-world address compare equal, while still never being confused
-// with a display string. This is deliberately NOT a comparison of live
-// SaleOrderDestination row identity — every Dispatch Order owns its own
-// destination rows even for an identical physical address, so ID equality
-// would make the required cross-Dispatch-Order consolidation impossible.
-// Matching a "same destination" never implies "same Distributor" — that is
-// enforced as a fully independent, non-negotiable check everywhere this key
-// is used (see assertSameCommercialOwner).
+// Destination identity (ISS-100) — one retail store is one delivery
+// destination. The authoritative compatibility key is built from the
+// destination's linked RetailStore id ALONE, never address text — two
+// SaleOrderDestination rows from DIFFERENT Dispatch Orders that reference
+// the SAME RetailStore compare equal (enabling the required cross-Dispatch-
+// Order/cross-Factory consolidation for that one real store), while two
+// destinations that merely share an identical address never do. A
+// destination with no linked Retail Store has no valid identity at all and
+// is never eligible for Erve consolidation (see destinationIdentityKeyOf).
+// The "STORE:" prefix carries only an opaque id — deliberately never a
+// geographic grouping key. Matching a "same destination" never implies "same
+// Distributor" — that is enforced as a fully independent, non-negotiable
+// check everywhere this key is used (see assertSameCommercialOwner).
 // ---------------------------------------------------------------------------
 
-interface DestinationAddressFields {
+interface DestinationIdentityFields {
+  retailStoreId: string | null;
+}
+
+type DestinationSnapshotFields = {
   addressLine1: string;
   addressLine2: string | null;
   city: string;
   state: string;
   country: string;
   postalCode: string | null;
-}
-
-type DestinationSnapshotFields = DestinationAddressFields & {
   label: string | null;
   contactName: string | null;
   contactEmail: string | null;
@@ -119,19 +122,12 @@ type DestinationSnapshotFields = DestinationAddressFields & {
   gstin: string | null;
 };
 
-function normalizeAddressField(value: string | null | undefined): string {
-  return (value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
-}
-
-function destinationMatchKeyOf(destination: DestinationAddressFields): string {
-  return [
-    normalizeAddressField(destination.addressLine1),
-    normalizeAddressField(destination.addressLine2),
-    normalizeAddressField(destination.city),
-    normalizeAddressField(destination.state),
-    normalizeAddressField(destination.country),
-    normalizeAddressField(destination.postalCode),
-  ].join('|');
+// Returns null when the destination has no linked Retail Store — callers in
+// the read/filter paths treat that as "never matches, never eligible";
+// callers in the selection/mutation paths turn it into an explicit rejection
+// (see assertCartonEligibleForConsolidation) rather than silently excluding.
+function destinationIdentityKeyOf(destination: DestinationIdentityFields): string | null {
+  return destination.retailStoreId ? `STORE:${destination.retailStoreId}` : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +178,15 @@ function assertCartonEligibleForConsolidation(carton: EligibilityCarton): void {
   if (!currentAudit || currentAudit.cartonVersion !== carton.version) {
     throw HttpError.badRequest(`Carton ${carton.cartonNumber} does not have a current Packing Audit`);
   }
+  // ISS-100: a destination with no linked Retail Store has no valid identity
+  // and can never be used for Erve consolidation — this is a defense-in-depth
+  // re-check (the eligible-carton listings already exclude these), not the
+  // primary gate.
+  if (!carton.destination.retailStoreId) {
+    throw HttpError.badRequest(
+      `Carton ${carton.cartonNumber}'s destination has no linked Retail Store and cannot be used for Erve consolidation`,
+    );
+  }
 }
 
 function assertSameCommercialOwner(carton: EligibilityCarton, distributorId: string, cartonMatchKey: string, ervePackingListMatchKey: string): void {
@@ -216,8 +221,15 @@ function toEligibleCartonView(carton: EligibilityCarton) {
     destination: {
       id: carton.destination.id,
       label: carton.destination.label,
+      storeCode: carton.destination.storeCode,
       city: carton.destination.city,
       state: carton.destination.state,
+      // ISS-100: the authoritative, server-derived compatibility key — the
+      // frontend must compare THIS (never city/state/distributor) to decide
+      // whether two cartons may be combined. Null only when the destination
+      // has no linked Retail Store, which the eligible-carton listings below
+      // already exclude from results; kept nullable here defensively.
+      destinationCompatibilityKey: destinationIdentityKeyOf(carton.destination),
     },
     packageDetails: carton.packageDetails,
     // DEMO-018: the underlying FactoryPackingCarton column was renamed
@@ -269,7 +281,15 @@ export async function getEligibleErveCartons(actor: CurrentUser, filters: { erve
     for (const candidate of candidates) {
       if (examined === ELIGIBLE_CARTON_SCAN_BUDGET || ids.length === limit) break;
       examined += 1;
-      if (!matchKey || destinationMatchKeyOf(candidate) === matchKey) ids.push(candidate.id);
+      // ISS-100: a candidate with no linked Retail Store has no valid
+      // identity (destinationIdentityKeyOf returns null) and can never match
+      // a real "STORE:…" matchKey, so it is naturally excluded whenever
+      // ervePackingListId scopes this to one destination. When browsing
+      // without a target EIPL (matchKey undefined), still exclude it — such
+      // a carton can never be used to start a new consolidation either.
+      const candidateKey = destinationIdentityKeyOf(candidate);
+      if (!candidateKey) continue;
+      if (!matchKey || candidateKey === matchKey) ids.push(candidate.id);
     }
     const hydrated = ids.length ? await prisma.factoryPackingCarton.findMany({ where: { id: { in: ids } }, include: eligibilityCartonInclude }) : [];
     const byId = new Map(hydrated.map((carton) => [carton.id, carton]));
@@ -277,10 +297,12 @@ export async function getEligibleErveCartons(actor: CurrentUser, filters: { erve
       const carton = byId.get(id);
       // Inventory is live: claims, edits, retirement or audit changes may occur
       // between selection and hydration. Mutation endpoints remain authoritative.
+      const cartonKey = carton ? destinationIdentityKeyOf(carton.destination) : null;
       if (!carton || carton.retiredAt || carton.ervePackingListId || carton.factoryDispatch.status !== 'READY_FOR_ERVE'
         || !carton.lines.length || carton.audits[0]?.cartonVersion !== carton.version
         || (distributorId && carton.destination.saleOrderDistributor.distributorId !== distributorId)
-        || (matchKey && destinationMatchKeyOf(carton.destination) !== matchKey)) return [];
+        || !cartonKey
+        || (matchKey && cartonKey !== matchKey)) return [];
       return [toEligibleCartonView(carton)];
     });
     const hasMore = examined < candidates.length;
@@ -298,7 +320,9 @@ export async function getEligibleErveCartons(actor: CurrentUser, filters: { erve
     const currentAudit = carton.audits[0];
     if (!currentAudit || currentAudit.cartonVersion !== carton.version) return false;
     if (distributorId && carton.destination.saleOrderDistributor.distributorId !== distributorId) return false;
-    if (matchKey && destinationMatchKeyOf(carton.destination) !== matchKey) return false;
+    const cartonKey = destinationIdentityKeyOf(carton.destination);
+    if (!cartonKey) return false;
+    if (matchKey && cartonKey !== matchKey) return false;
     return true;
   });
 
@@ -569,7 +593,9 @@ async function loadAndValidateCartonsForConsolidation(
     }
     assertCartonEligibleForConsolidation(carton);
 
-    const cartonKey = destinationMatchKeyOf(carton.destination);
+    // assertCartonEligibleForConsolidation already rejected a missing Retail
+    // Store link above, so this is always non-null here.
+    const cartonKey = destinationIdentityKeyOf(carton.destination)!;
     const cartonDistributorId = carton.destination.saleOrderDistributor.distributorId;
     if (distributorId === null || matchKey === null) {
       distributorId = cartonDistributorId;
@@ -869,8 +895,23 @@ export async function finalizeErvePackingList(actor: CurrentUser, ervePackingLis
     }
     // Re-validate every carton is still current — guards against a concurrent
     // change (e.g. a stale audit) landing between selection and finalize.
+    // ISS-100: also re-derive and cross-check every member carton's Retail
+    // Store identity — add-time already enforced this for cartons added
+    // under the current rule, but a legacy OPEN EIPL assembled before this
+    // rule existed could still hold cartons for genuinely different stores
+    // that merely shared an address; finalize must never let that through.
+    let finalizeDistributorId: string | null = null;
+    let finalizeMatchKey: string | null = null;
     for (const carton of packingList.cartons) {
       assertCartonEligibleForConsolidation(carton);
+      const cartonKey = destinationIdentityKeyOf(carton.destination)!;
+      const cartonDistributorId = carton.destination.saleOrderDistributor.distributorId;
+      if (finalizeDistributorId === null || finalizeMatchKey === null) {
+        finalizeDistributorId = cartonDistributorId;
+        finalizeMatchKey = cartonKey;
+      } else {
+        assertSameCommercialOwner(carton, finalizeDistributorId, cartonKey, finalizeMatchKey);
+      }
     }
 
     const finalizedAt = new Date();
