@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { resetDatabase } from '../../test/helpers.js';
+import { createTestRetailStore, resetDatabase } from '../../test/helpers.js';
 import {
   createFactoryUserToken,
   createRoleToken,
@@ -186,8 +186,11 @@ describe('bounded eligible-carton discovery', () => {
     const destination = await prisma.saleOrderDestination.findUniqueOrThrow({
       where: { id: f.original.destinationId },
     });
+    // ISS-100: "non-matching" now means a different Retail Store, not a
+    // different address — same city/distributor, genuinely different store.
+    const otherStore = await createTestRetailStore(f.stock.distributorId);
     const other = await prisma.saleOrderDestination.create({
-      data: { ...destination, id: createId(), addressLine1: 'Other address, same city' },
+      data: { ...destination, id: createId(), retailStoreId: otherStore.id, storeCode: otherStore.code, addressLine1: 'Other address, same city' },
     });
     await prisma.factoryPackingCarton.updateMany({
       where: { id: { in: f.ids.slice(1, 401) } },
@@ -254,12 +257,14 @@ describe('bounded eligible-carton discovery', () => {
     await f.get({ limit: 25, ervePackingListId: 'missing' }).expect(404);
   });
 
-  it('keeps JavaScript Unicode normalization and Distributor identity authoritative; preserves null legacy fields', async () => {
+  it('keeps Retail Store identity (never address text) and Distributor identity authoritative; preserves null legacy fields', async () => {
     const f = await fixture(5);
     const listId = await f.createList();
     const destination = await prisma.saleOrderDestination.findUniqueOrThrow({
       where: { id: f.original.destinationId },
     });
+    // ISS-100: same Retail Store, wildly different address wording \u2014 still
+    // the same destination identity, since address text is never compared.
     const equivalent = await prisma.saleOrderDestination.create({
       data: {
         ...destination,
@@ -269,8 +274,11 @@ describe('bounded eligible-carton discovery', () => {
         country: 'india',
       },
     });
+    // A genuinely different Retail Store (same Distributor, same address
+    // text) \u2014 must be excluded on store identity alone.
+    const differentStore = await createTestRetailStore(f.stock.distributorId);
     const different = await prisma.saleOrderDestination.create({
-      data: { ...destination, id: createId(), addressLine1: 'Different street' },
+      data: { ...destination, id: createId(), retailStoreId: differentStore.id, storeCode: differentStore.code },
     });
     await prisma.factoryPackingCarton.update({
       where: { id: f.ids[1] },
@@ -293,16 +301,18 @@ describe('bounded eligible-carton discovery', () => {
         (c: { id: string }) => c.id,
       ),
     ).toEqual([f.ids[1], f.ids[4]]);
-    const established = await prisma.ervePackingList.findUniqueOrThrow({ where: { id: listId } });
-    await prisma.ervePackingList.update({ where: { id: listId }, data: { distributorId: null } });
-    expect(
-      (await f.get({ limit: 25, ervePackingListId: listId }).expect(200)).body.data.items.map(
-        (c: { id: string }) => c.id,
-      ),
-    ).toEqual([f.ids[1], f.ids[3], f.ids[4]]);
+    // ISS-100: a Retail Store belongs to exactly one Distributor, so unlike
+    // the old address-based key, a matching destinationMatchKey now always
+    // implies a matching distributorId — there is no longer a constructible
+    // "same key, different Distributor" case to show the distributorId
+    // filter alone widening results. What's still meaningful: with ONLY
+    // destinationMatchKey cleared (distributorId still active), the
+    // Distributor-only filter admits a different Store under the SAME
+    // Distributor (f.ids[2]) while still excluding a different Distributor
+    // entirely (f.ids[3]).
     await prisma.ervePackingList.update({
       where: { id: listId },
-      data: { distributorId: established.distributorId, destinationMatchKey: null },
+      data: { destinationMatchKey: null },
     });
     expect(
       (await f.get({ limit: 25, ervePackingListId: listId }).expect(200)).body.data.items.map(

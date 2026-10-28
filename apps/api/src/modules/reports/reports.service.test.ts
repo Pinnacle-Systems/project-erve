@@ -8,6 +8,7 @@ import {
   createReleasedQaStock,
   createTestFactory,
   createTestFinancialYear,
+  createTestRetailStore,
   createTestUser,
   createTestUserAndToken,
   allocateTestDocumentSerial,
@@ -241,6 +242,7 @@ describe('QA-passed available stock (RPT1 6.4) — no join multiplication', () =
       password: 'pass',
       roles: ['MERCHANDISER'],
     });
+    const retailStore = await createTestRetailStore(stockA.distributorId);
     const created = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${merchTokenResult.token}`)
@@ -251,7 +253,7 @@ describe('QA-passed available stock (RPT1 6.4) — no join multiplication', () =
             clientKey: 'dg1',
             distributorId: stockA.distributorId,
             destinations: [
-              { clientKey: 'd1', addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd1', retailStoreId: retailStore.id, addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' },
             ],
           },
         ],

@@ -3,7 +3,25 @@ import { createId } from '@erve/shared';
 import type { Role } from '@erve/types';
 import type { Express } from 'express';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestUserAndToken, type ReleasedQaStock } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestRetailStore, createTestUserAndToken, type ReleasedQaStock } from '../../test/helpers.js';
+
+// ISS-100: every destination must link to a real Retail Store master row —
+// these fixtures previously built destinations from free address text alone,
+// so every one of them now needs a Retail Store belonging to the same
+// Distributor. A fresh Store per call is simplest and avoids any risk of
+// code collisions across fixtures within the same test.
+async function defaultDestination(distributorId: string, overrides: Record<string, unknown> = {}) {
+  const retailStoreId = overrides.retailStoreId ?? (await createTestRetailStore(distributorId)).id;
+  return {
+    clientKey: 'd1',
+    addressLine1: 'Test Address',
+    city: 'Chennai',
+    state: 'TN',
+    country: 'India',
+    ...overrides,
+    retailStoreId,
+  };
+}
 
 export async function createRoleToken(role: Role) {
   const { userId, token } = await createTestUserAndToken({
@@ -94,9 +112,7 @@ export async function createSingleFactoryApprovedSaleOrder(
         {
           clientKey: 'dg1',
           distributorId: stock.distributorId,
-          destinations: [
-            { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-          ],
+          destinations: [await defaultDestination(stock.distributorId)],
         },
       ],
       factoryId: stock.factoryId,
@@ -275,6 +291,10 @@ export interface ApprovedSaleOrderOptions {
   factoryId?: string;
   quantity?: number;
   purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
+  // ISS-100: pass the SAME retailStoreId across two calls (sharing
+  // distributorId) to build the "two Dispatch Orders, same Retail Store"
+  // scenario; omit it to get a fresh, distinct Store each call.
+  retailStoreId?: string;
   destination?: {
     addressLine1?: string;
     addressLine2?: string;
@@ -302,12 +322,14 @@ export async function createApprovedSaleOrder(app: Express, options: ApprovedSal
     purchaseMode: options.purchaseMode,
   });
   const { token: merchToken } = await createRoleToken('MERCHANDISER');
+  const retailStoreId = options.retailStoreId ?? (await createTestRetailStore(stock.distributorId)).id;
   const destination = {
     addressLine1: 'Test Address',
     city: 'Chennai',
     state: 'TN',
     country: 'India',
     ...options.destination,
+    retailStoreId,
   };
   const created = await request(app)
     .post('/sale-orders')
@@ -392,9 +414,7 @@ export async function createTwoBatchApprovedSaleOrder(
         {
           clientKey: 'dg1',
           distributorId: stockA.distributorId,
-          destinations: [
-            { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-          ],
+          destinations: [await defaultDestination(stockA.distributorId)],
         },
       ],
       factoryId: stockA.factoryId,

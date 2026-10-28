@@ -5,6 +5,7 @@ import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
   createReleasedQaStock,
+  createTestRetailStore,
   createTestSeason,
   createTestUserAndToken,
   resetDatabase,
@@ -36,6 +37,7 @@ async function allocate(
     password: 'pass',
     roles: ['ADMIN'],
   });
+  const retailStore = await createTestRetailStore(stock.distributorId);
   const result = await request(app)
     .post('/sale-orders')
     .set('Authorization', `Bearer ${token}`)
@@ -50,6 +52,7 @@ async function allocate(
           destinations: [
             {
               clientKey: 'd',
+              retailStoreId: retailStore.id,
               addressLine1: 'Test Street',
               city: 'Chennai',
               state: 'TN',
@@ -190,6 +193,7 @@ describe('PAG-P1-08 old/new pooled inventory parity', () => {
       (await getPooledFactoryInventory(prisma, filters)).find((r) => r.sizeId === a.sizeId),
     ).toMatchObject({ releasedQuantity: 20, committedQuantity: 20, availableQuantity: 0 });
     // The exhausted inactive Size must still divide a new Style total by two.
+    const invalidSplitStore = await createTestRetailStore(a.distributorId);
     const invalidSplit = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${own.token}`)
@@ -204,6 +208,7 @@ describe('PAG-P1-08 old/new pooled inventory parity', () => {
             destinations: [
               {
                 clientKey: 'd',
+                retailStoreId: invalidSplitStore.id,
                 addressLine1: 'Test',
                 city: 'Chennai',
                 state: 'TN',

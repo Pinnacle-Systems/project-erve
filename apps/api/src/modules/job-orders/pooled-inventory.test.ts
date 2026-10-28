@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, createTestDistributor, createTestSeason, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestDistributor, createTestRetailStore, createTestSeason, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { getPooledFactoryInventory } from './pooled-inventory.service.js';
 
 const app = createApp();
@@ -37,6 +37,7 @@ async function createAndAllocate(
   merchToken: string,
   quantity: number,
 ) {
+  const retailStore = await createTestRetailStore(stock.distributorId);
   const created = await request(app)
     .post('/sale-orders')
     .set('Authorization', `Bearer ${merchToken}`)
@@ -46,7 +47,7 @@ async function createAndAllocate(
         {
           clientKey: 'dg1',
           distributorId: stock.distributorId,
-          destinations: [{ clientKey: 'd1', addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' }],
+          destinations: [{ clientKey: 'd1', retailStoreId: retailStore.id, addressLine1: 'Test Street', city: 'Chennai', state: 'TN', country: 'India' }],
         },
       ],
       factoryId: stock.factoryId,

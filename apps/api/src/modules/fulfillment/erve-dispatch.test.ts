@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
-import { createReleasedQaStock, resetDatabase } from '../../test/helpers.js';
+import { createReleasedQaStock, createTestRetailStore, resetDatabase } from '../../test/helpers.js';
 import {
   consolidateAndDispatch,
   createApprovedSaleOrder,
@@ -154,9 +154,17 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
     expect(res.body.data.distributor.id).toBe(fixture.stock.distributorId);
   });
 
-  it('consolidates cartons from two different Dispatch Orders and two different Factories at the same destination/Distributor', async () => {
+  it('consolidates cartons from two different Dispatch Orders and two different Factories at the same Retail Store/Distributor', async () => {
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { distributorId: orderA.stock.distributorId, quantity: 15 });
+    // ISS-100: cross-Dispatch-Order consolidation is legitimate only when
+    // both destinations resolve to the SAME Retail Store master row — not
+    // merely matching address text — so orderB deliberately reuses orderA's
+    // retailStoreId (and therefore its Distributor, a Store's immutable owner).
+    const orderB = await createApprovedSaleOrder(app, {
+      distributorId: orderA.stock.distributorId,
+      retailStoreId: orderA.saleOrder.destinations[0].retailStoreId,
+      quantity: 15,
+    });
     expect(orderB.stock.factoryId).not.toBe(orderA.stock.factoryId);
 
     const factoryTokenA = await createFactoryUserToken(orderA.stock.factoryId);
@@ -202,10 +210,16 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
     // Build ONE Dispatch Order with TWO genuinely different destinations —
     // one carton per destination — using createReleasedQaStock directly
     // (not createApprovedSaleOrder, which would itself consume the stock
-    // into a separate Sale Order).
+    // into a separate Sale Order). ISS-100: the two destinations must link
+    // to two DIFFERENT Retail Stores — that is the actual rejection reason
+    // now, address text alone is never checked.
     const stock = await createReleasedQaStock({ quantity: 40 });
     const { token: merchToken } = await createRoleToken('MERCHANDISER');
     const factoryToken = await createFactoryUserToken(stock.factoryId);
+    const [store1, store2] = await Promise.all([
+      createTestRetailStore(stock.distributorId),
+      createTestRetailStore(stock.distributorId),
+    ]);
     const created = await request(app)
       .post('/sale-orders')
       .set('Authorization', `Bearer ${merchToken}`)
@@ -216,8 +230,8 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
             clientKey: 'dg1',
             distributorId: stock.distributorId,
             destinations: [
-              { clientKey: 'd1', addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
-              { clientKey: 'd2', addressLine1: 'Other Address', city: 'Mumbai', state: 'MH', country: 'India' },
+              { clientKey: 'd1', retailStoreId: store1.id, addressLine1: 'Test Address', city: 'Chennai', state: 'TN', country: 'India' },
+              { clientKey: 'd2', retailStoreId: store2.id, addressLine1: 'Other Address', city: 'Mumbai', state: 'MH', country: 'India' },
             ],
           },
         ],
@@ -279,9 +293,16 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
       .expect(400);
   });
 
-  it('rejects combining cartons for an identical address but different Distributors', async () => {
+  it('rejects combining cartons for an identical address but different Distributors/Retail Stores', async () => {
+    // ISS-100: a Retail Store belongs to exactly one Distributor by
+    // construction (DB-trigger-enforced), so two different Distributors can
+    // never reference the same Store — the rejection below is therefore
+    // always a destination-identity mismatch (400) first, never reaches the
+    // separate same-store-different-Distributor 409 branch (which stays in
+    // place as defense-in-depth but is no longer reachable through normal
+    // API flow). What matters for this test: combining is rejected either way.
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { quantity: 10 }); // default destination is identical text, but a fresh (different) Distributor
+    const orderB = await createApprovedSaleOrder(app, { quantity: 10 }); // default destination is identical text, but a fresh (different) Distributor and Retail Store
     expect(orderB.stock.distributorId).not.toBe(orderA.stock.distributorId);
 
     const factoryTokenA = await createFactoryUserToken(orderA.stock.factoryId);
@@ -293,7 +314,7 @@ describe('Erve Packing List — carton consolidation (Phase 6)', () => {
       .post('/erve-packing-lists')
       .set('Authorization', `Bearer ${orderA.merchToken}`)
       .send({ cartonIds: [dispatchA.cartonId, dispatchB.cartonId] })
-      .expect(409);
+      .expect(400);
   });
 
   it('rejects a carton already assigned to another Erve Packing List', async () => {
