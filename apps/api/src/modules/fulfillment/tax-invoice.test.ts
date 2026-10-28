@@ -172,7 +172,11 @@ describe('Tax Invoice — draft creation eligibility', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const fixtureA = await createApprovedSaleOrder(app, { quantity: 15 });
     const distributorId = fixtureA.stock.distributorId;
-    const fixtureB = await createApprovedSaleOrder(app, { distributorId, quantity: 25 });
+    const fixtureB = await createApprovedSaleOrder(app, {
+      distributorId,
+      quantity: 25,
+      retailStoreId: fixtureA.saleOrder.destinations[0].retailStoreId,
+    });
     const factoryTokenA = await createFactoryUserToken(fixtureA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(fixtureB.stock.factoryId);
     const dispatchA = await packAndFinalize(
@@ -324,7 +328,11 @@ describe('Tax Invoice — quantity and provenance', () => {
     await createTestSellerRegistration({ branchCode: 'ERVE-HO' });
     const fixtureA = await createApprovedSaleOrder(app, { quantity: 15 });
     const distributorId = fixtureA.stock.distributorId;
-    const fixtureB = await createApprovedSaleOrder(app, { distributorId, quantity: 25 });
+    const fixtureB = await createApprovedSaleOrder(app, {
+      distributorId,
+      quantity: 25,
+      retailStoreId: fixtureA.saleOrder.destinations[0].retailStoreId,
+    });
     const factoryTokenA = await createFactoryUserToken(fixtureA.stock.factoryId);
     const factoryTokenB = await createFactoryUserToken(fixtureB.stock.factoryId);
     const dispatchA = await packAndFinalize(

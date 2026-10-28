@@ -222,11 +222,15 @@ async function findInconsistentStoreOwnership(
 /**
  * Check 3 — OPEN Erve Packing Lists still carrying a pre-ISS-100
  * address-based destinationMatchKey (anything non-null that isn't the new
- * "STORE:<id>" format). These can no longer accept Add Carton or Finalize
- * under the new rule (the code already fails them closed), but they are
- * listed here explicitly so an operator can decide whether to leave them
- * as-is (still finalizable with their current members, if ever reopened for
- * review) or recreate them after Retail Store cleanup.
+ * "STORE:<id>" format). Add Carton always fails closed for these: it
+ * compares a new carton's "STORE:<id>" key against this stored legacy key,
+ * which can never match. Finalize is NOT blocked by this stored key —
+ * it re-derives identity fresh from the EIPL's current member cartons and
+ * only fails if those members are actually store-inconsistent or missing a
+ * Store (see Check 4). So a legacy-key EIPL whose current cartons happen to
+ * share one valid Retail Store can still finalize as-is; one that can't is
+ * already covered by Check 4, not this one. Listed here so an operator can
+ * decide whether to leave it as-is or recreate it after Retail Store cleanup.
  */
 async function findLegacyMatchKeyOpenEipls(
   client: Prisma.TransactionClient,
@@ -262,7 +266,19 @@ async function findLegacyMatchKeyOpenEipls(
 async function findMixedOrMissingStoreOpenEipls(
   client: Prisma.TransactionClient,
 ): Promise<{ count: number; sample: MixedStoreOpenEiplRow[] }> {
-  const rows = await client.$queryRaw<MixedStoreOpenEiplRow[]>`
+  const [{ count }] = await client.$queryRaw<[{ count: bigint }]>`
+    SELECT COUNT(*)::bigint AS count FROM (
+      SELECT epl.id
+      FROM erve_packing_lists epl
+      JOIN factory_packing_cartons c ON c.erve_packing_list_id = epl.id AND c.retired_at IS NULL
+      JOIN sale_order_destinations d ON d.id = c.destination_id
+      WHERE epl.status = 'OPEN'
+      GROUP BY epl.id
+      HAVING COUNT(DISTINCT d.retail_store_id) > 1
+        OR COUNT(*) FILTER (WHERE d.retail_store_id IS NULL) > 0
+    ) matching
+  `;
+  const sample = await client.$queryRaw<MixedStoreOpenEiplRow[]>`
     SELECT epl.id, epl.erve_packing_list_number AS "ervePackingListNumber",
       COUNT(DISTINCT d.retail_store_id)::bigint AS "distinctStores",
       COUNT(*) FILTER (WHERE d.retail_store_id IS NULL)::bigint AS "cartonsMissingStore",
@@ -277,7 +293,7 @@ async function findMixedOrMissingStoreOpenEipls(
     ORDER BY epl.id
     LIMIT ${SAMPLE_LIMIT}
   `;
-  return { count: rows.length, sample: rows };
+  return { count: Number(count), sample };
 }
 
 export async function runIss100Preflight(

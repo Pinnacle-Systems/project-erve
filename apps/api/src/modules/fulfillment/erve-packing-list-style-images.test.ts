@@ -102,7 +102,11 @@ describe('ISS-053 — Erve Packing List Style identity and image projection', ()
 
   it('keeps two distinct Styles consolidated into the same Erve Packing List correctly, never-swapped with each other', async () => {
     const orderA = await createApprovedSaleOrder(app, { quantity: 10 });
-    const orderB = await createApprovedSaleOrder(app, { distributorId: orderA.stock.distributorId, quantity: 15 });
+    const orderB = await createApprovedSaleOrder(app, {
+      distributorId: orderA.stock.distributorId,
+      quantity: 15,
+      retailStoreId: orderA.saleOrder.destinations[0].retailStoreId,
+    });
     expect(orderA.stock.styleId).not.toBe(orderB.stock.styleId);
 
     const imageA = await uploadStyleImage(orderA.merchToken, orderA.stock.styleId, PNG_A).expect(201);
