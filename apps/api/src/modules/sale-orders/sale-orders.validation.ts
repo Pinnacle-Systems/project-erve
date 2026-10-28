@@ -17,8 +17,12 @@ const optionalGstinSchema = z.preprocess(
     .optional(),
 );
 
+// ISS-100: a Dispatch Order destination must always identify one real Retail
+// Store master record — this is the sole authoritative destination identity
+// used downstream for Erve consolidation, so there is no manual/unlinked
+// destination-entry path any more (see retail-store-snapshot.ts).
 const destinationSchema = z.object({
-  retailStoreId: z.string().trim().min(1).optional().nullable(),
+  retailStoreId: z.string().trim().min(1),
   refreshStoreSnapshot: z.boolean().optional(),
   clientKey: z.string().trim().min(1),
   id: z.string().trim().min(1).optional(),

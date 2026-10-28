@@ -9,13 +9,10 @@ export interface EligibleCartonPosition {
   createdAt: Date;
 }
 
+// ISS-100: identity is the linked Retail Store alone — see
+// erve-dispatch.service.ts destinationIdentityKeyOf.
 export interface EligibleCartonCandidate extends EligibleCartonPosition {
-  addressLine1: string;
-  addressLine2: string | null;
-  city: string;
-  state: string;
-  country: string;
-  postalCode: string | null;
+  retailStoreId: string | null;
 }
 
 export function eligibleCartonContext(filters: {
@@ -85,8 +82,7 @@ export function eligibleCartonCandidateQuery(filters: {
   const pattern = `%${filters.search.replace(/[\\%_]/g, '\\$&')}%`;
   return Prisma.sql`
     SELECT c.id, c.created_at AS "createdAt",
-      d.address_line1 AS "addressLine1", d.address_line2 AS "addressLine2",
-      d.city, d.state, d.country, d.postal_code AS "postalCode"
+      d.retail_store_id AS "retailStoreId"
     FROM factory_packing_cartons c
     JOIN factory_dispatches fd ON fd.id = c.factory_dispatch_id
     JOIN sale_orders so ON so.id = fd.sale_order_id
