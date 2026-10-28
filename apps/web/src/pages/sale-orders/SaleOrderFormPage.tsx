@@ -469,6 +469,13 @@ export function SaleOrderFormPage() {
         if (!group.distributorId) throw new Error('Every Distributor group must have a Distributor selected');
         if (group.destinations.length === 0) throw new Error('Every Distributor group needs at least one destination');
         for (const destination of group.destinations) {
+          // ISS-100: there is no manual/unlinked destination any more —
+          // every destination must identify a real Retail Store, so a
+          // cleared store (or one never selected) must block submission
+          // here rather than silently going through as a manual address.
+          if (!destination.retailStoreId) {
+            throw new Error('Select a Retail Store for every destination before saving');
+          }
           if (normalizeGstin(destination.gstin) && !isValidGstinFormat(destination.gstin)) {
             throw new Error('Enter a valid 15-character GSTIN for the destination');
           }
@@ -672,6 +679,7 @@ export function SaleOrderFormPage() {
                                   onChange={(store) =>
                                     selectStore(group.clientKey, dest.clientKey, store)
                                   }
+                                  required
                                 />
                                 <FormGrid layout="content">
                                   <TextField

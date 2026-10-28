@@ -23,11 +23,15 @@ export function RetailStoreLookupField({
   distributor,
   value,
   onChange,
+  required,
 }: {
   id: string;
   distributor: DistributorLookupValue | null;
   value: RetailStoreLookupValue | null;
   onChange: (store: RetailStore | null) => void;
+  // ISS-100: every Dispatch Order destination must identify a real Retail
+  // Store — there is no manual/unlinked destination workflow any more.
+  required?: boolean;
 }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -65,6 +69,7 @@ export function RetailStoreLookupField({
         label="Retail Store"
         selectedOption={value}
         disabled={!distributor}
+        required={required}
         placeholder="Search Store Code or Store Name…"
         options={lookup.options}
         onSelect={(store) => onChange(store as RetailStore | null)}

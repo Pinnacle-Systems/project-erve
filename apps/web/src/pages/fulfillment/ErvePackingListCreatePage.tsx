@@ -21,8 +21,14 @@ import {
   EligibleCartonContinuation,
 } from './EligibleCartonDiscoveryControls.js';
 
-function destinationGroupKeyOf(carton: EligibleErveCartonView): string {
-  return `${carton.distributor.id}|${carton.destination.city}|${carton.destination.state}`;
+// ISS-100: compatibility is the server-derived destinationCompatibilityKey
+// (one retail store = one destination) combined with the independent
+// Distributor boundary — never city/state, which different stores can
+// share. A carton whose destination has no linked Retail Store can never
+// be combined with anything (destinationCompatibilityKey is null).
+function destinationGroupKeyOf(carton: EligibleErveCartonView): string | null {
+  if (!carton.destination.destinationCompatibilityKey) return null;
+  return `${carton.distributor.id}|${carton.destination.destinationCompatibilityKey}`;
 }
 
 export function ErvePackingListCreatePage() {
@@ -121,8 +127,14 @@ export function ErvePackingListCreatePage() {
               <div className="text-lg font-semibold">{sourceDispatchOrders.size}</div>
             </div>
             <div>
-              <div className="text-muted-foreground">Destination</div>
+              <div className="text-muted-foreground">Retail Store</div>
               <div className="text-lg font-semibold">
+                {selectedCartons[0]!.destination.label ?? '—'}
+                {selectedCartons[0]!.destination.storeCode
+                  ? ` (${selectedCartons[0]!.destination.storeCode})`
+                  : ''}
+              </div>
+              <div className="text-xs text-muted-foreground">
                 {selectedCartons[0]!.destination.city}, {selectedCartons[0]!.destination.state}
               </div>
             </div>
@@ -160,7 +172,8 @@ export function ErvePackingListCreatePage() {
             ))}
           </ul>
           <p className="mt-2 text-sm text-muted-foreground">
-            The complete destination address is checked when the Packing List is created.
+            Only cartons for this exact Retail Store can be added — a shared address or
+            Distributor is never enough.
           </p>
         </Panel>
       )}
@@ -175,20 +188,24 @@ export function ErvePackingListCreatePage() {
               {
                 key: 'select',
                 header: '',
-                render: (r: EligibleErveCartonView) => (
-                  <input
-                    type="checkbox"
-                    checked={selected.has(r.id)}
-                    disabled={
-                      createMutation.isPending ||
-                      (groupKey !== null &&
-                        !selected.has(r.id) &&
-                        destinationGroupKeyOf(r) !== groupKey)
-                    }
-                    onChange={() => toggle(r)}
-                    aria-label={`Select carton ${r.cartonNumber}`}
-                  />
-                ),
+                render: (r: EligibleErveCartonView) => {
+                  const incompatible =
+                    groupKey !== null && !selected.has(r.id) && destinationGroupKeyOf(r) !== groupKey;
+                  return (
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.id)}
+                      disabled={createMutation.isPending || incompatible}
+                      onChange={() => toggle(r)}
+                      aria-label={`Select carton ${r.cartonNumber}`}
+                      title={
+                        incompatible
+                          ? 'This carton is for a different Retail Store and cannot be combined with the cartons already selected.'
+                          : undefined
+                      }
+                    />
+                  );
+                },
               },
               { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
               { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
@@ -198,9 +215,19 @@ export function ErvePackingListCreatePage() {
                 render: (r) => r.saleOrder.saleOrderNumber,
               },
               {
-                key: 'destination',
-                header: 'Destination',
-                render: (r) => `${r.destination.city}, ${r.destination.state}`,
+                key: 'retailStore',
+                header: 'Retail Store',
+                render: (r) => (
+                  <>
+                    <div>
+                      {r.destination.label ?? '—'}
+                      {r.destination.storeCode ? ` (${r.destination.storeCode})` : ''}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {r.destination.city}, {r.destination.state}
+                    </div>
+                  </>
+                ),
               },
               { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },
               {
