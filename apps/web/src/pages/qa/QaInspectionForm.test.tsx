@@ -396,7 +396,7 @@ describe('QaInspectionForm', () => {
     expect(canReopenQaForm(undefined)).toBe(false);
   });
 
-  it('marks missing PP Sample evidence as a design-system validation error', async () => {
+  it('keeps PP Sample Finalize disabled with a clear explanation until required evidence exists', async () => {
     const source = detail();
     const form = source.sessions[0]!.forms[0]!;
     source.sessions[0]!.forms = [form];
@@ -410,14 +410,8 @@ describe('QaInspectionForm', () => {
     source.sessions[0]!.evidence = [];
     await renderHarness(source);
 
-    await act(async () => button('Finalize size M').click());
-
-    const error = Array.from(container.querySelectorAll('[role="alert"]')).find(
-      (element) =>
-        element.textContent?.includes('Evidence is required before a PP Sample can be finalized.'),
-    );
-    expect(error).toBeDefined();
-    expect(error?.className).toContain('text-danger');
+    expect(button('Finalize size M').disabled).toBe(true);
+    expect(container.textContent).toContain('Upload evidence for size M to enable Finalize.');
   });
 
   it('renders one locked PP Sample context and sends the calculated QA decision', async () => {
@@ -1033,8 +1027,15 @@ describe('QaInspectionForm', () => {
     expect(container.textContent).not.toContain('Uploading evidence…');
   });
 
-  it('ISS-085 unblocks the upload control after failure and allows retrying the same file', async () => {
+  it('ISS-085 leaves PP Sample Finalize disabled after failed upload until successful retry', async () => {
     const initial = editableRejectedM();
+    initial.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
     const refreshed = structuredClone(initial);
     refreshed.sessions[0]!.evidence = [{
       id: 'uploaded-retry',
@@ -1067,11 +1068,14 @@ describe('QaInspectionForm', () => {
       expect(button('Upload evidence').disabled).toBe(false);
       expect(container.textContent).toContain('Unable to upload evidence.');
     });
-    // A failure is not falsely reported as saved evidence.
+    // A failed upload must not enable finalization when mandatory evidence is absent.
+    expect(button('Finalize size M').disabled).toBe(true);
+    expect(container.textContent).toContain('Upload evidence for size M to enable Finalize.');
     expect(container.textContent).not.toContain('Evidence added to size M.');
     act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
     await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(container.textContent).toContain('Evidence added to size M.'));
+    expect(button('Finalize size M').disabled).toBe(false);
   });
 
   it('uploads evidence for the selected size, refreshes it, and unblocks that size finalization', async () => {
