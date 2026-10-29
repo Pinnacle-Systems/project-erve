@@ -173,7 +173,7 @@ export function PurchaseOrderListPage() {
             <SelectItem value="OUTRIGHT">Outright</SelectItem>
             <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
           </SelectField>
-          <div className="flex min-w-0 flex-wrap items-start justify-end gap-2 sm:col-span-2 @min-[48rem]:col-span-1 @min-[64rem]:flex-nowrap">
+          <div className="flex min-h-8 min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-2 @min-[48rem]:col-span-1 @min-[64rem]:flex-nowrap">
             {(search || planningState || distributorId || purchaseMode || financialYearId) && (
               <Button
                 type="button"
