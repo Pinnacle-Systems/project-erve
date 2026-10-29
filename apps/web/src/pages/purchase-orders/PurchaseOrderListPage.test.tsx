@@ -91,6 +91,43 @@ async function renderPage() {
   });
 }
 
+describe('ISS-084 Order Sheet filter and export toolbar', () => {
+  it('keeps all five filters and PDF actions in one responsive container-aware row at desktop widths', async () => {
+    await renderPage();
+    const toolbar = container.querySelector<HTMLElement>(
+      '[aria-label="Order Sheet filters and export actions"]',
+    );
+    expect(toolbar).not.toBeNull();
+    expect(toolbar!.className).toContain('@container');
+    const grid = toolbar!.firstElementChild as HTMLElement;
+    expect(grid.className).toContain('@min-[64rem]:grid-cols-[');
+    expect(grid.className).toContain('sm:grid-cols-2');
+    expect(grid.children).toHaveLength(6);
+    for (const label of ['Search', 'Planning State', 'Financial Year', 'Distributor', 'Purchase mode']) {
+      expect(toolbar!.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
+    }
+    expect(toolbar!.textContent).toContain('Download PDF');
+    expect(toolbar!.textContent).toContain('Print');
+  });
+
+  it('retains Clear filters within the toolbar and restores the search to empty', async () => {
+    await renderPage();
+    const toolbar = container.querySelector<HTMLElement>(
+      '[aria-label="Order Sheet filters and export actions"]',
+    )!;
+    const search = toolbar.querySelector<HTMLInputElement>('[aria-label="Search"]')!;
+    await act(async () => setInputValue(search, 'EIOS/26'));
+    const clear = Array.from(toolbar.querySelectorAll('button')).find(
+      (item) => item.textContent === 'Clear filters',
+    );
+    expect(clear).toBeDefined();
+    await act(async () => clear!.click());
+    expect(search.value).toBe('');
+    expect(toolbar.textContent).toContain('Download PDF');
+    expect(toolbar.textContent).toContain('Print');
+  });
+});
+
 describe('PurchaseOrderListPage search debounce', () => {
   it('debounces the purchase order search so rapid typing issues only the final request', async () => {
     await renderPage();
