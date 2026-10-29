@@ -261,6 +261,9 @@ export function QaInspectionForm({
     ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
   const remainingInspectable = rework?.assignedQuantity ?? line?.availableToInspect ?? capacity;
   const evidence = session?.evidence.filter((item) => item.inspectionLineId === selected?.id) ?? [];
+  // PP Sample evidence is a mandatory prerequisite, not just a validation
+  // error after an enabled Finalize click. A failed upload leaves this true.
+  const ppSampleEvidenceMissing = Boolean(ppSample) && evidence.length === 0;
   const update = (change: Partial<Draft>) => {
     if (!selected) return;
     setNotice('');
@@ -572,6 +575,10 @@ export function QaInspectionForm({
           <ValidationMessage tone="success" role="status">
             {notice}
           </ValidationMessage>
+        ) : ppSampleEvidenceMissing && !readonly ? (
+          <span role="status" className="text-sm text-muted-foreground">
+            Upload evidence for size {selected.sizeLabel} to enable Finalize.
+          </span>
         ) : null
       }
     >
@@ -588,7 +595,7 @@ export function QaInspectionForm({
           <Button
             type="button"
             loading={mutation.isPending}
-            disabled={upload.isPending || removeEvidence.isPending}
+            disabled={ppSampleEvidenceMissing || upload.isPending || removeEvidence.isPending}
             onClick={() => save(true)}
           >
             Finalize size {selected.sizeLabel}
