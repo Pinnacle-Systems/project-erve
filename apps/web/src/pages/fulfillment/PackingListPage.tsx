@@ -10,6 +10,7 @@ import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js';
 import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
+import { PackingProgressGrid } from './PackingProgressGrid.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -51,24 +52,6 @@ function cartonStyleSizeRows(
     }
   }
   return groupLinesByStyle(carton.lines).map((group) => ({
-    styleId: group.styleId,
-    styleNumber: group.styleNumber,
-    styleName: group.styleName,
-    primaryImage: primaryImageByStyle.get(group.styleId) ?? null,
-    values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
-  }));
-}
-
-// ISS-023 Phase 2: the destination's Required/Packed progress as two Style x
-// Size matrices (one metric per matrix, per the operational-summary standard
-// — a single matrix cannot carry two quantity metrics per cell) instead of
-// one flat row per Style+Size combination.
-function destinationStyleSizeRows(
-  lines: PackingListDestinationView['lines'],
-  metric: 'requiredQuantity' | 'packedQuantity',
-): StyleSizeGridRow[] {
-  const primaryImageByStyle = new Map(lines.map((line) => [line.styleId, line.primaryImage]));
-  return groupLinesByStyle(lines.map((line) => ({ ...line, quantity: line[metric] }))).map((group) => ({
     styleId: group.styleId,
     styleNumber: group.styleNumber,
     styleName: group.styleName,
@@ -119,7 +102,7 @@ function packingFinalizeReadiness(packingList: PackingListView): string[] {
 
   if (notInspected + reinspection > 0) {
     const count = notInspected + reinspection;
-    issues.push(`Waiting for Packing Audit: ${count} carton${count === 1 ? '' : 's'} (${notInspected} not inspected, ${reinspection} needing reinspection). Ask QA to complete the audit.`);
+    issues.push(`Waiting for Packing Audit: ${count} carton${count === 1 ? '' : 's'} (${notInspected} not inspected, ${reinspection} awaiting QA reconfirmation). Ask QA to complete the audit.`);
   }
   if (underPacked > 0) issues.push(`Packing incomplete: ${underPacked} Size ${underPacked === 1 ? 'quantity is' : 'quantities are'} below the required quantity.`);
   if (overPacked > 0) issues.push(`Packing exceeds the required quantity for ${overPacked} Size ${overPacked === 1 ? 'entry' : 'entries'}.`);
@@ -414,6 +397,15 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
   const canFinalize = Boolean(dispatch) && isDraft;
   const finalizeBlockers = packingFinalizeReadiness(packingList);
   const finalizeDisabled = finalizeBlockers.length > 0 || query.isFetching || finalizeMutation.isPending;
+  const packingLines = packingList.destinations.flatMap((destination) => destination.lines);
+  const activeCartons = packingList.destinations.flatMap((destination) =>
+    destination.cartons.filter((carton) => !carton.retired),
+  );
+  const packingComplete = packingLines.length > 0 &&
+    packingLines.every((line) => line.packedQuantity === line.requiredQuantity) &&
+    activeCartons.length > 0;
+  const qaConfirmed = activeCartons.filter((carton) => carton.auditState === 'INSPECTED').length;
+  const qaComplete = qaConfirmed === activeCartons.length;
 
   return (
     <div className="space-y-6">
@@ -456,7 +448,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
         primaryAction={
           canMutate && canFinalize && dispatch ? (
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <Button variant="destructive" onClick={() => setAbandonOpen(true)}>
+              <Button variant="secondary" onClick={() => setAbandonOpen(true)}>
                 Abandon
               </Button>
               <div className="flex flex-col items-end gap-1">
@@ -470,7 +462,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 {query.isFetching ? (
                   <span role="status" className="text-xs text-muted-foreground">Refreshing packing status…</span>
                 ) : finalizeBlockers.length > 0 ? (
-                  <div role="status" className="max-w-sm space-y-1 text-right text-xs text-muted-foreground">
+                  <div role="status" className="max-w-sm space-y-1 text-right text-xs text-foreground">
                     {finalizeBlockers.map((reason) => <div key={reason}>{reason}</div>)}
                   </div>
                 ) : null}
@@ -479,6 +471,31 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
           ) : undefined
         }
       />
+
+      {canMutate && isDraft && packingComplete && (
+        <section
+          role="status"
+          aria-label="Packing and QA status"
+          className="space-y-1 rounded-md border border-border bg-surface-raised p-4"
+        >
+          <div className="text-base font-semibold text-foreground">
+            {qaComplete ? 'Packing complete — QA audit complete' : 'Packing complete — Awaiting QA audit'}
+          </div>
+          <p className="text-sm text-foreground">
+            {activeCartons.length} of {activeCartons.length} cartons packed; {qaConfirmed} of {activeCartons.length} confirmed by QA.
+          </p>
+          <p className="text-sm font-medium text-foreground">
+            Pending with: {qaComplete ? 'Factory User' : 'QA User'}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {qaComplete
+              ? finalizeBlockers.length > 0
+                ? 'All cartons are QA-confirmed. Complete the remaining packing checks to enable Finalize.'
+                : 'All cartons are QA-confirmed. Finalize (Ready for Erve) is available.'
+              : 'Finalize (Ready for Erve) is locked until QA confirms every carton.'}
+          </p>
+        </section>
+      )}
 
       {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
       {finalizeIssues && finalizeIssues.length > 0 && (
@@ -509,24 +526,7 @@ function PackingListShell({ fetchUrl, queryKey, backLabel, backTo }: ShellProps)
                 {destination.contactName && <DescriptionList.Item label="Contact" value={destination.contactName} />}
               </DescriptionList>
 
-              <div className="space-y-3">
-                <div>
-                  <div className="mb-1 text-xs font-semibold text-muted-foreground">Required</div>
-                  <StyleSizeGrid
-                    columns={distinctSizeColumns(destination.lines)}
-                    rows={destinationStyleSizeRows(destination.lines, 'requiredQuantity')}
-                    variant="readOnly"
-                  />
-                </div>
-                <div>
-                  <div className="mb-1 text-xs font-semibold text-muted-foreground">Packed</div>
-                  <StyleSizeGrid
-                    columns={distinctSizeColumns(destination.lines)}
-                    rows={destinationStyleSizeRows(destination.lines, 'packedQuantity')}
-                    variant="readOnly"
-                  />
-                </div>
-              </div>
+              <PackingProgressGrid lines={destination.lines} />
 
               <div className="space-y-3">
                 {destination.cartons.map((carton) =>
