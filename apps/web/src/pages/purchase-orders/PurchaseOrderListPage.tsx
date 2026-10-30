@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { DistributorOption } from '@erve/types';
-import { FilterBar, PageHeader, StatusBadge } from '@erve/app-components';
-import { Button, SelectField, SelectItem } from '@erve/primitives';
+import { PageHeader, StatusBadge } from '@erve/app-components';
+import { Button, SelectField, SelectItem, TextField } from '@erve/primitives';
 import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { LoadMoreFooter, loadMoreProps, useCursorList } from '../../lib/cursor-list.js';
 import {
@@ -119,73 +119,86 @@ export function PurchaseOrderListPage() {
         }
       />
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1">
-          <FilterBar
-            searchValue={search}
-            onSearchChange={setSearch}
-            searchPlaceholder="Search Order Sheet number"
-            statusValue={planningState || 'ALL'}
-            onStatusChange={(value) =>
+      {/* ISS-084: one container-aware grid for filters and export actions. */}
+      <div aria-label="Order Sheet filters and export actions" className="@container border-b border-border-subtle bg-surface-muted">
+        <div className="grid grid-cols-1 items-start gap-2 px-3 py-2.5 sm:grid-cols-2 @min-[48rem]:grid-cols-3 @min-[64rem]:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.85fr)_minmax(0,1.2fr)_minmax(0,0.8fr)_auto]">
+          <TextField
+            aria-label="Search"
+            placeholder="Search Order Sheet number"
+            density="compact"
+            width="full"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <SelectField
+            aria-label="Planning State"
+            density="compact"
+            width="full"
+            value={planningState || 'ALL'}
+            onValueChange={(value) =>
               setPlanningState(value === 'ALL' ? '' : (value as OrderSheetPlanningState))
             }
-            statusOptions={[
-              { label: 'All planning states', value: 'ALL' },
-              ...(Object.keys(PLANNING_STATE_LABELS) as OrderSheetPlanningState[]).map((s) => ({
-                label: PLANNING_STATE_LABELS[s],
-                value: s,
-              })),
-            ]}
-            hasActiveFilters={Boolean(
-              search || planningState || distributorId || purchaseMode || financialYearId,
-            )}
-            onClearFilters={() => {
-              setSearch('');
-              setPlanningState('');
-              setDistributor(null);
-              setPurchaseMode('');
-              setFinancialYearId('');
-            }}
-            actions={
-              <>
-                <FinancialYearSelect
-                  aria-label="Financial Year"
-                  value={financialYearId}
-                  onValueChange={setFinancialYearId}
-                  allLabel="All Financial Years"
-                />
-                <DistributorLookupField
-                  aria-label="Distributor"
-                  id="order-sheet-distributor-filter"
-                  placeholder="All distributors"
-                  value={distributor}
-                  onChange={setDistributor}
-                  density="compact"
-                  width="md"
-                />
-                <SelectField
-                  aria-label="Purchase mode"
-                  value={purchaseMode || 'ALL'}
-                  onValueChange={(value) =>
-                    setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))
-                  }
-                  density="compact"
-                  width="sm"
-                >
-                  <SelectItem value="ALL">All modes</SelectItem>
-                  <SelectItem value="OUTRIGHT">Outright</SelectItem>
-                  <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
-                </SelectField>
-              </>
-            }
+          >
+            <SelectItem value="ALL">All planning states</SelectItem>
+            {(Object.keys(PLANNING_STATE_LABELS) as OrderSheetPlanningState[]).map((state) => (
+              <SelectItem key={state} value={state}>{PLANNING_STATE_LABELS[state]}</SelectItem>
+            ))}
+          </SelectField>
+          <FinancialYearSelect
+            aria-label="Financial Year"
+            value={financialYearId}
+            onValueChange={setFinancialYearId}
+            allLabel="All Financial Years"
+            width="full"
           />
+          <DistributorLookupField
+            aria-label="Distributor"
+            id="order-sheet-distributor-filter"
+            placeholder="All distributors"
+            value={distributor}
+            onChange={setDistributor}
+            density="compact"
+            width="full"
+          />
+          <SelectField
+            aria-label="Purchase mode"
+            value={purchaseMode || 'ALL'}
+            onValueChange={(value) =>
+              setPurchaseMode(value === 'ALL' ? '' : (value as PurchaseMode))
+            }
+            density="compact"
+            width="full"
+          >
+            <SelectItem value="ALL">All modes</SelectItem>
+            <SelectItem value="OUTRIGHT">Outright</SelectItem>
+            <SelectItem value="SALE_RETURN">Sale or Return</SelectItem>
+          </SelectField>
+          <div className="flex min-h-8 min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-2 @min-[48rem]:col-span-1 @min-[64rem]:flex-nowrap">
+            {(search || planningState || distributorId || purchaseMode || financialYearId) && (
+              <Button
+                type="button"
+                variant="ghost"
+                density="compact"
+                onClick={() => {
+                  setSearch('');
+                  setPlanningState('');
+                  setDistributor(null);
+                  setPurchaseMode('');
+                  setFinancialYearId('');
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+            <PdfActionButtons
+              density="compact"
+              isGenerating={pdfAction.isGenerating}
+              error={pdfAction.error}
+              onDownload={pdfAction.handleDownload}
+              onPrint={pdfAction.handlePrint}
+            />
+          </div>
         </div>
-        <PdfActionButtons
-          isGenerating={pdfAction.isGenerating}
-          error={pdfAction.error}
-          onDownload={pdfAction.handleDownload}
-          onPrint={pdfAction.handlePrint}
-        />
       </div>
 
       <DataTable

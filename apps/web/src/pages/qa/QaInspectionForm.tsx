@@ -239,6 +239,9 @@ export function QaInspectionForm({
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
   const [reloading, setReloading] = useState(false);
   const evidenceInputRef = useRef<HTMLInputElement>(null);
+  // ISS-085: synchronous guard closes the same-tick gap before React Query's
+  // pending state renders, preventing duplicate uploads/finalize races.
+  const evidenceUploadInFlight = useRef(false);
   // Entered-but-unsaved size results live only in `drafts` (cleared per form on save).
   useUnsavedChangesWarning(Object.keys(drafts).length > 0 || reopenReason.trim() !== '');
   useEffect(() => {
@@ -258,6 +261,9 @@ export function QaInspectionForm({
     ppSample?.sampleQuantity ?? rework?.assignedQuantity ?? selected?.preparedQuantity ?? 0;
   const remainingInspectable = rework?.assignedQuantity ?? line?.availableToInspect ?? capacity;
   const evidence = session?.evidence.filter((item) => item.inspectionLineId === selected?.id) ?? [];
+  // PP Sample evidence is a mandatory prerequisite, not just a validation
+  // error after an enabled Finalize click. A failed upload leaves this true.
+  const ppSampleEvidenceMissing = Boolean(ppSample) && evidence.length === 0;
   const update = (change: Partial<Draft>) => {
     if (!selected) return;
     setNotice('');
@@ -398,16 +404,21 @@ export function QaInspectionForm({
     },
   });
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, formId, sessionId }: { file: File; formId: string; sessionId: string; sizeLabel: string }) => {
       const body = new FormData();
       body.append('image', file);
-      body.append('inspectionLineId', selected!.id);
-      await apiClient.post(`/qa/inspections/${session!.id}/evidence`, body);
+      body.append('inspectionLineId', formId);
+      await apiClient.post(`/qa/inspections/${sessionId}/evidence`, body);
+      // The upload is not considered complete until the saved evidence is
+      // visible in the refreshed inspection. Never unblock Finalize earlier.
       return refresh();
     },
-    onSuccess: (updated) => {
-      setNotice(`Evidence added to size ${selected?.sizeLabel}.`);
+    onSuccess: (updated, { sizeLabel }) => {
+      setNotice(`Evidence added to size ${sizeLabel}.`);
       onUpdated(updated);
+    },
+    onSettled: () => {
+      evidenceUploadInFlight.current = false;
     },
   });
   const removeEvidence = useMutation({
@@ -462,6 +473,10 @@ export function QaInspectionForm({
       )
     : null;
   const save = (finalizing: boolean) => {
+    if (finalizing && (evidenceUploadInFlight.current || upload.isPending || removeEvidence.isPending)) {
+      setErrors({ form: 'Evidence is being updated. Finish the upload or removal before finalizing.' });
+      return;
+    }
     setNotice('');
     const next = validate(
       draft,
@@ -560,6 +575,10 @@ export function QaInspectionForm({
           <ValidationMessage tone="success" role="status">
             {notice}
           </ValidationMessage>
+        ) : ppSampleEvidenceMissing && !readonly ? (
+          <span role="status" className="text-sm text-muted-foreground">
+            Upload evidence for size {selected.sizeLabel} to enable Finalize.
+          </span>
         ) : null
       }
     >
@@ -573,7 +592,12 @@ export function QaInspectionForm({
           >
             Save size form
           </Button>
-          <Button type="button" loading={mutation.isPending} onClick={() => save(true)}>
+          <Button
+            type="button"
+            loading={mutation.isPending}
+            disabled={ppSampleEvidenceMissing || upload.isPending || removeEvidence.isPending}
+            onClick={() => save(true)}
+          >
             Finalize size {selected.sizeLabel}
           </Button>
         </>
@@ -861,21 +885,31 @@ export function QaInspectionForm({
                   aria-label={`Upload evidence for size ${selected.sizeLabel}`}
                   type="file"
                   accept="image/*"
-                  disabled={upload.isPending}
+                  disabled={upload.isPending || removeEvidence.isPending}
                   className="sr-only"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
-                    if (file) upload.mutate(file);
+                    event.currentTarget.value = '';
+                    if (!file || evidenceUploadInFlight.current || !selected || !session) return;
+                    evidenceUploadInFlight.current = true;
+                    setPendingFinalize(null);
+                    upload.mutate({ file, formId: selected.id, sessionId: session.id, sizeLabel: selected.sizeLabel });
                   }}
                 />
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={upload.isPending}
+                  loading={upload.isPending}
+                  disabled={upload.isPending || removeEvidence.isPending}
                   onClick={() => evidenceInputRef.current?.click()}
                 >
                   Upload evidence
                 </Button>
+                {upload.isPending && (
+                  <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+                    Uploading evidence… Finalize will be available after the evidence is saved.
+                  </p>
+                )}
               </>
             )}
             {ppSample && !errors.evidence && (
@@ -956,7 +990,9 @@ export function QaInspectionForm({
         confirmLabel="Yes, finalize"
         loading={mutation.isPending}
         onConfirm={() => {
-          if (pendingFinalize) mutation.mutate(pendingFinalize);
+          if (pendingFinalize && !evidenceUploadInFlight.current && !upload.isPending && !removeEvidence.isPending) {
+            mutation.mutate(pendingFinalize);
+          }
         }}
       />
       {selected ? (

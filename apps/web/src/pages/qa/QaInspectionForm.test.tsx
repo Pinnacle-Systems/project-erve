@@ -396,7 +396,7 @@ describe('QaInspectionForm', () => {
     expect(canReopenQaForm(undefined)).toBe(false);
   });
 
-  it('marks missing PP Sample evidence as a design-system validation error', async () => {
+  it('keeps PP Sample Finalize disabled with a clear explanation until required evidence exists', async () => {
     const source = detail();
     const form = source.sessions[0]!.forms[0]!;
     source.sessions[0]!.forms = [form];
@@ -410,14 +410,8 @@ describe('QaInspectionForm', () => {
     source.sessions[0]!.evidence = [];
     await renderHarness(source);
 
-    await act(async () => button('Finalize size M').click());
-
-    const error = Array.from(container.querySelectorAll('[role="alert"]')).find(
-      (element) =>
-        element.textContent?.includes('Evidence is required before a PP Sample can be finalized.'),
-    );
-    expect(error).toBeDefined();
-    expect(error?.className).toContain('text-danger');
+    expect(button('Finalize size M').disabled).toBe(true);
+    expect(container.textContent).toContain('Upload evidence for size M to enable Finalize.');
   });
 
   it('renders one locked PP Sample context and sends the calculated QA decision', async () => {
@@ -981,6 +975,107 @@ describe('QaInspectionForm', () => {
     await renderHarness(controlled);
     expect(container.querySelector('[aria-label="Other defect details"]')).toBeNull();
     expect(container.querySelector('[aria-label="Defect notes"]')).not.toBeNull();
+  });
+
+  it('ISS-085 shows upload progress, blocks Finalize and duplicate uploads until refresh confirms evidence', async () => {
+    const initial = editableRejectedM();
+    const refreshed = structuredClone(initial);
+    refreshed.sessions[0]!.evidence = [{
+      id: 'uploaded-m',
+      inspectionLineId: 'form-1',
+      fileName: 'proof.png',
+      contentType: 'image/png',
+      sizeBytes: 1,
+      createdAt: '2026-08-06T11:00:00Z',
+    }];
+    let releaseUpload!: (value: unknown) => void;
+    const pendingUpload = new Promise((resolve) => { releaseUpload = resolve; });
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(() => pendingUpload as never);
+    const request = vi.spyOn(apiClient, 'request').mockResolvedValue({ data: { data: refreshed } } as never);
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: refreshed } } as never);
+    await renderHarness(initial);
+
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Upload evidence for size M"]')!;
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: [new File(['x'], 'proof.png', { type: 'image/png' })],
+    });
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(button('Upload evidence').disabled).toBe(true);
+    expect(button('Finalize size M').disabled).toBe(true);
+    expect(container.textContent).toContain('Uploading evidence…');
+    expect(container.textContent).toContain('Finalize will be available after the evidence is saved.');
+
+    // A programmatically repeated change must not enqueue a second upload.
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    expect(post).toHaveBeenCalledTimes(1);
+    await act(async () => button('Finalize size M').click());
+    expect(request).not.toHaveBeenCalled();
+
+    await act(async () => {
+      releaseUpload({ data: { data: {} } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await vi.waitFor(() => {
+      expect(button('Finalize size M').disabled).toBe(false);
+      expect(button('Upload evidence').disabled).toBe(false);
+    });
+    expect(container.textContent).toContain('proof.png');
+    expect(container.textContent).not.toContain('Uploading evidence…');
+  });
+
+  it('ISS-085 leaves PP Sample Finalize disabled after failed upload until successful retry', async () => {
+    const initial = editableRejectedM();
+    initial.sessions[0]!.processFlowPpSample = {
+      executionId: 'execution-1',
+      processFlowActivityId: 'activity-1',
+      qualityFormVersionId: 'sample-v1',
+      sampleQuantity: 5,
+      decision: null,
+    };
+    const refreshed = structuredClone(initial);
+    refreshed.sessions[0]!.evidence = [{
+      id: 'uploaded-retry',
+      inspectionLineId: 'form-1',
+      fileName: 'retry.png',
+      contentType: 'image/png',
+      sizeBytes: 1,
+      createdAt: '2026-08-06T11:00:00Z',
+    }];
+    let rejectUpload!: (reason: Error) => void;
+    const pendingUpload = new Promise((_resolve, reject) => { rejectUpload = reject; });
+    const post = vi.spyOn(apiClient, 'post')
+      .mockImplementationOnce(() => pendingUpload as never)
+      .mockResolvedValueOnce({ data: { data: {} } } as never);
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: refreshed } } as never);
+    await renderHarness(initial);
+
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Upload evidence for size M"]')!;
+    const file = new File(['x'], 'retry.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await act(async () => { await Promise.resolve(); });
+    expect(button('Finalize size M').disabled).toBe(true);
+
+    await act(async () => {
+      rejectUpload(new Error('Network lost'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await vi.waitFor(() => {
+      expect(button('Upload evidence').disabled).toBe(false);
+      expect(container.textContent).toContain('Unable to upload evidence.');
+    });
+    // A failed upload must not enable finalization when mandatory evidence is absent.
+    expect(button('Finalize size M').disabled).toBe(true);
+    expect(container.textContent).toContain('Upload evidence for size M to enable Finalize.');
+    expect(container.textContent).not.toContain('Evidence added to size M.');
+    act(() => input.dispatchEvent(new Event('change', { bubbles: true })));
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(container.textContent).toContain('Evidence added to size M.'));
+    expect(button('Finalize size M').disabled).toBe(false);
   });
 
   it('uploads evidence for the selected size, refreshes it, and unblocks that size finalization', async () => {
