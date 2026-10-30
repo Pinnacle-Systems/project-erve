@@ -107,7 +107,7 @@ describe.each(manageRoles)('HSN registered navigation for %s', (role) => {
     await clickAction('Import');
     await waitFor(() => container.textContent?.includes('Import HSNs') ?? false);
     expectLocation('/hsns/import');
-    expect(container.textContent).toContain('Optional GST Rule Set Code');
+    expect(container.textContent).toContain('refer to the Instructions tab');
   });
   it('opens the create form from the list', async () => {
     await renderRoutes(role, '/hsns', () => Boolean(findAction('Create HSN')));
