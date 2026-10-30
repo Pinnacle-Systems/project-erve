@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { DistributorOption } from '@erve/types';
 import { ConfirmDialog, createEnterToNextHandler } from '@erve/app-components';
@@ -8,6 +8,13 @@ import { apiClient } from '../../../lib/api-client.js';
 import { DistributorLookupField } from '../../master-data/DistributorLookupField.js';
 import type { AdminUserSummary } from '../../master-data/types.js';
 import { toErrorMessage } from './toErrorMessage.js';
+
+type RemovalTarget = Readonly<{
+  userId: string;
+  distributorId: string;
+  userName: string;
+  distributorName: string;
+}>;
 
 // A Distributor user is capped at exactly one distributor mapping by the
 // backend today (see DistributorDetailPage's UserMappingPanel eligibility
@@ -26,15 +33,34 @@ export function DistributorMappingPanel({ user }: { user: AdminUserSummary }) {
 function DistributorMappingPanelInner({ user }: { user: AdminUserSummary }) {
   const queryClient = useQueryClient();
   const [selectedDistributor, setSelectedDistributor] = useState<DistributorOption | null>(null);
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removalTarget, setRemovalTarget] = useState<RemovalTarget | null>(null);
+  // Also revoke retained callbacks on cancel, drift, and unmount. A later
+  // confirmation for the same identity pair is a separate deliberate action.
+  const activeRemoval = useRef<RemovalTarget | null>(null);
   const [error, setError] = useState('');
   const submitting = useRef(false);
 
   const mapped = user.distributors[0];
+  const targetMatches = removalTarget !== null && user.distributors.length === 1 &&
+    removalTarget.userId === user.id && removalTarget.distributorId === mapped?.id;
 
-  const invalidate = () =>
+  useLayoutEffect(() => {
+    if (removalTarget && !targetMatches && !submitting.current) {
+      activeRemoval.current = null;
+      setRemovalTarget(null);
+    }
+  }, [removalTarget, targetMatches]);
+
+  useLayoutEffect(() => () => { activeRemoval.current = null; }, []);
+
+  const closeRemoval = () => {
+    activeRemoval.current = null;
+    setRemovalTarget(null);
+  };
+
+  const invalidate = (userId = user.id) =>
     Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['admin-user', user.id] }),
+      queryClient.invalidateQueries({ queryKey: ['admin-user', userId] }),
       queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     ]);
 
@@ -54,25 +80,28 @@ function DistributorMappingPanelInner({ user }: { user: AdminUserSummary }) {
   });
 
   const removeMutation = useMutation({
-    mutationFn: async (mappingId: string) => {
+    mutationFn: async (target: RemovalTarget) => {
       setError('');
-      await apiClient.delete(`/users/${user.id}/distributors/${mappingId}`);
+      await apiClient.delete(`/users/${target.userId}/distributors/${target.distributorId}`);
     },
-    onSuccess: async () => {
-      setConfirmRemove(false);
-      await invalidate();
+    onSuccess: async (_data, target) => {
+      closeRemoval();
+      await invalidate(target.userId);
     },
     onError: (caught) => {
-      setConfirmRemove(false);
+      closeRemoval();
       setError(toErrorMessage(caught, 'Unable to remove distributor mapping'));
     },
     onSettled: () => { submitting.current = false; },
   });
 
   const remove = () => {
-    if (submitting.current || !mapped) return;
+    if (submitting.current || !removalTarget || activeRemoval.current !== removalTarget) return;
+    // Validate in the handler too: cleanup alone cannot protect confirmation
+    // during the commit that observes a changed, missing, or ambiguous mapping.
+    if (!targetMatches) { closeRemoval(); return; }
     submitting.current = true;
-    removeMutation.mutate(mapped.id);
+    removeMutation.mutate(removalTarget);
   };
 
   return (
@@ -96,7 +125,17 @@ function DistributorMappingPanelInner({ user }: { user: AdminUserSummary }) {
               type="button"
               variant="destructive"
               density="compact"
-              onClick={() => setConfirmRemove(true)}
+              onClick={() => {
+                if (submitting.current || user.distributors.length !== 1) return;
+                const target: RemovalTarget = {
+                  userId: user.id,
+                  distributorId: mapped.id,
+                  userName: user.name,
+                  distributorName: mapped.name,
+                };
+                activeRemoval.current = target;
+                setRemovalTarget(target);
+              }}
             >
               Remove
             </Button>
@@ -128,11 +167,13 @@ function DistributorMappingPanelInner({ user }: { user: AdminUserSummary }) {
       </div>
 
       <ConfirmDialog
-        open={confirmRemove}
-        onOpenChange={(open) => { if (!open && !submitting.current) setConfirmRemove(false); }}
+        open={removalTarget !== null}
+        onOpenChange={(open) => { if (!open && !submitting.current) closeRemoval(); }}
         title="Remove distributor mapping"
         description={
-          mapped ? `${user.name} will lose access to ${mapped.name}'s Order Sheets.` : undefined
+          removalTarget
+            ? `${removalTarget.userName} will lose access to ${removalTarget.distributorName}'s Order Sheets.`
+            : undefined
         }
         confirmLabel="Remove"
         destructive
