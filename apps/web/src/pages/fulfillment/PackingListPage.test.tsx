@@ -1027,10 +1027,10 @@ describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', (
       ],
     }));
 
-    const cells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
-    expect(cells).toHaveLength(7); // destination 1: Required, Packed, two cartons; destination 2: three rows
-    expect(cells.slice(0, 4).every((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
-    expect(cells.slice(4).every((cell) => !cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
+    const cells = Array.from(container.querySelectorAll('td, th')).filter((cell) => cell.textContent?.includes('ST-001'));
+    expect(cells).toHaveLength(5); // destination 1: one summary, two cartons; destination 2: one summary, one carton
+    expect(cells.slice(0, 3).every((cell) => cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
+    expect(cells.slice(3).every((cell) => !cell.querySelector('button[aria-label="View style image"]'))).toBe(true);
     // The thumbnail must be resolved only from the already-authorized Packing List payload.
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledTimes(1);
   });
@@ -1046,12 +1046,9 @@ describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', (
     });
     await renderPage(buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [carton] }] }));
 
-    // "ST-001" appears once in the Required matrix, once in the Packed
-    // matrix, and once in the carton's own Style x Size grid — it never
-    // repeats across separate rows within any one grid the way the old
-    // per-Size <ul>/flat table did.
-    const styleCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
-    expect(styleCells).toHaveLength(3);
+    // One combined summary row and one row in the carton's own Style x Size grid.
+    const styleCells = Array.from(container.querySelectorAll('td, th')).filter((cell) => cell.textContent?.includes('ST-001'));
+    expect(styleCells).toHaveLength(2);
     // Size codes appear as column headers.
     expect(content()).toContain('S');
     expect(content()).toContain('M');
@@ -1097,10 +1094,9 @@ describe('PackingListPage carton Style x Size presentation (ISS-007/ISS-010)', (
   });
 });
 
-// ISS-023 Phase 2: the destination's Required/Packed progress summary as two
-// Style x Size matrices instead of one flat row per Style+Size combination.
-describe('PackingListPage destination Required/Packed Style x Size presentation (ISS-023 Phase 2)', () => {
-  it('shows a "Required" and a "Packed" matrix, grouping multiple Styles each into their own row', async () => {
+// ISS-083: the destination has one Packed / Required Style x Size matrix.
+describe('PackingListPage combined destination packing progress (ISS-083)', () => {
+  it('shows each Style once with per-Size, per-Style and destination Packed / Required totals', async () => {
     const destination = {
       ...buildPackingList().destinations[0]!,
       lines: [
@@ -1111,30 +1107,97 @@ describe('PackingListPage destination Required/Packed Style x Size presentation 
       cartons: [],
     };
     await renderPage(buildPackingList({ destinations: [destination] }));
-
-    expect(content()).toContain('Required');
-    expect(content()).toContain('Packed');
-    // Each Style number appears exactly once per matrix (grouped, not repeated per Size).
-    const styleOneCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-001'));
-    expect(styleOneCells).toHaveLength(2);
-    const styleTwoCells = Array.from(container.querySelectorAll('td')).filter((td) => td.textContent?.includes('ST-002'));
-    expect(styleTwoCells).toHaveLength(2);
-    // Required total (10+8+5=23) and Packed total (6+8+0=14) both reconcile to the source lines.
-    expect(content()).toContain('23');
-    expect(content()).toContain('14');
+    const section = container.querySelector('[aria-label="Packed / Required by Style and Size"]')!;
+    expect(section.querySelectorAll('table')).toHaveLength(1);
+    expect(Array.from(section.querySelectorAll('thead th')).map((n) => n.textContent)).toEqual(['Style', 'S', 'M', 'L', 'Total']);
+    const rows = Array.from(section.querySelectorAll('tbody tr'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('6 / 10');
+    expect(rows[0]!.textContent).toContain('8 / 8');
+    expect(rows[0]!.textContent).toContain('14 / 18');
+    expect(rows[1]!.textContent).toContain('0 / 5');
+    expect(section.querySelector('tfoot')!.textContent).toContain('14 / 23');
+    expect(rows[0]!.textContent).toContain('Incomplete');
+    expect(section.querySelector('[aria-label="ST-001 S: 6 packed of 10 required"]')).toBeTruthy();
   });
 
-  it('shows a real zero Packed quantity (not blank) when nothing has been packed yet', async () => {
-    const destination = {
-      ...buildPackingList().destinations[0]!,
-      lines: [
-        { saleOrderLineId: 'line-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', primaryImage: null, sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', requiredQuantity: 12, packedQuantity: 0 },
-      ],
-      cartons: [],
-    };
-    await renderPage(buildPackingList({ destinations: [destination] }));
-    const packedInputs = Array.from(container.querySelectorAll('input[aria-label="ST-001 M quantity"]'));
-    expect(packedInputs.some((input) => (input as HTMLInputElement).value === '0')).toBe(true);
+  it('keeps genuine zero quantities and updates 0/2 to 1/2 to 2/2 from refreshed server projections', async () => {
+    const initial = buildPackingList();
+    initial.destinations[0]!.lines[0]!.requiredQuantity = 2;
+    initial.destinations[0]!.lines[0]!.packedQuantity = 0;
+    initial.destinations[0]!.cartons = [];
+    const client = await renderPage(initial);
+    const progress = () => container.querySelector('[aria-label="Packed / Required by Style and Size"]')!;
+    expect(progress().textContent).toContain('0 / 2');
+    const one = structuredClone(initial);
+    one.destinations[0]!.lines[0]!.packedQuantity = 1;
+    act(() => client.setQueryData(['packing-list', 'so-1'], one));
+    expect(progress().textContent).toContain('1 / 2');
+    const two = structuredClone(one);
+    two.destinations[0]!.lines[0]!.packedQuantity = 2;
+    two.destinations[0]!.cartons = [buildCarton({ lines: [{ ...buildCarton().lines[0]!, quantity: 2 }], totalQuantity: 2 })];
+    act(() => client.setQueryData(['packing-list', 'so-1'], two));
+    expect(progress().textContent).toContain('2 / 2');
+    expect(content()).toContain('Packing complete — Awaiting QA audit');
+  });
+
+  it('keeps separate destination totals even for the same Style and Size', async () => {
+    const first = buildPackingList().destinations[0]!;
+    first.lines[0]!.requiredQuantity = 3;
+    first.lines[0]!.packedQuantity = 1;
+    first.cartons = [];
+    const second = structuredClone(first);
+    second.id = 'dest-2';
+    second.label = 'Second destination';
+    second.lines[0]!.saleOrderLineId = 'line-2';
+    second.lines[0]!.requiredQuantity = 5;
+    second.lines[0]!.packedQuantity = 5;
+    await renderPage(buildPackingList({ destinations: [first, second] }));
+    const sections = container.querySelectorAll('[aria-label="Packed / Required by Style and Size"]');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.querySelector('tfoot')!.textContent).toContain('1 / 3');
+    expect(sections[1]!.querySelector('tfoot')!.textContent).toContain('5 / 5');
+    expect(content()).not.toContain('6 / 8');
+  });
+});
+
+describe('PackingListPage QA handoff visibility (ISS-082)', () => {
+  it('shows a strong QA owner/status, counts 0–4 confirmed cartons and keeps Finalize blocked until all pass', async () => {
+    const initial = buildPackingList();
+    initial.destinations[0]!.lines[0]!.requiredQuantity = 8;
+    initial.destinations[0]!.lines[0]!.packedQuantity = 8;
+    initial.destinations[0]!.cartons = Array.from({ length: 4 }, (_, i) => buildCarton({
+      id: `carton-${i + 1}`, cartonNumber: `C${i + 1}`,
+      totalQuantity: 2, lines: [{ ...buildCarton().lines[0]!, quantity: 2 }],
+    }));
+    const client = await renderPage(initial);
+    const finalize = buttonByText('Finalize (Ready for Erve)')!;
+    expect(finalize.disabled).toBe(true);
+    expect(content()).toContain('Packing complete — Awaiting QA audit');
+    expect(content()).toContain('4 of 4 cartons packed; 0 of 4 confirmed by QA');
+    expect(content()).toContain('Pending with: QA User');
+    expect(content()).toContain('Finalize (Ready for Erve) is locked');
+    expect(buttonByText('Abandon')!.className).not.toContain('destructive');
+
+    for (let confirmed = 1; confirmed <= 4; confirmed++) {
+      const fresh = structuredClone(initial);
+      fresh.destinations[0]!.cartons.forEach((carton, index) => {
+        carton.auditState = index < confirmed ? 'INSPECTED' : 'NOT_INSPECTED';
+      });
+      act(() => client.setQueryData(['packing-list', 'so-1'], fresh));
+      expect(content()).toContain(`4 of 4 cartons packed; ${confirmed} of 4 confirmed by QA`);
+      expect(finalize.disabled).toBe(confirmed < 4);
+    }
+    expect(content()).toContain('Packing complete — QA audit complete');
+    expect(content()).toContain('Pending with: Factory User');
+  });
+
+  it('does not claim QA handoff while required quantities are incomplete', async () => {
+    const partial = buildPackingList();
+    partial.destinations[0]!.lines[0]!.packedQuantity = 9;
+    await renderPage(partial);
+    expect(content()).not.toContain('Packing complete — Awaiting QA audit');
+    expect(buttonByText('Finalize (Ready for Erve)')!.disabled).toBe(true);
   });
 });
 
