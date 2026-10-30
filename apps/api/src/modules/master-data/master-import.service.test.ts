@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as XLSX from 'xlsx';
 import { createId } from '@erve/shared';
+import type { MasterImportKind } from '@erve/types';
 import { prisma } from '../../db/prisma.js';
 import { currentUserSelect, toCurrentUser } from '../../auth/current-user.js';
 import { createTestUser, resetDatabase } from '../../test/helpers.js';
 import { planMasterImport, executeMasterImport } from './master-import.service.js';
+import { buildMasterImportTemplate, masterImportWorksheets } from './master-import.parser.js';
 import * as audit from '../../audit/audit.service.js';
 
 const csv = (rows: string) => Buffer.from(rows);
@@ -266,5 +269,107 @@ describe('shared business master imports', () => {
       planMasterImport(await actor('QA_USER'), 'factories', file, 'f.csv'),
     ).rejects.toMatchObject({ statusCode: 403 });
     expect(await prisma.masterImportRun.count()).toBe(0);
+  });
+});
+
+// ISS-071 regression: the generated downloadable template's own Instructions
+// worksheet documents an "Example Value" per field — this exercises the
+// ACTUAL generated template (not a hand-built fixture) end to end, through
+// the real plan/execute pipeline, using exactly those documented examples,
+// so a stale or invalid example would be caught here.
+async function exampleRowFromTemplate(kind: MasterImportKind) {
+  const buffer = await buildMasterImportTemplate(kind);
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const worksheet = masterImportWorksheets[kind];
+  const header = (XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[worksheet]!, { header: 1 })[0] ?? []).map(String);
+  const instructionRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Instructions!, { header: 1 });
+  const tableHeaderRow = instructionRows.findIndex((row) => row[0] === 'Field Name');
+  const examples = new Map(
+    instructionRows
+      .slice(tableHeaderRow + 1)
+      .filter((row) => row[2] === 'Required' || row[2] === 'Optional')
+      .map((row) => [String(row[0]), String(row[4] ?? '')]),
+  );
+  const values = header.map((name) => examples.get(name) ?? '');
+  XLSX.utils.sheet_add_aoa(workbook.Sheets[worksheet]!, [values], { origin: 'A2' });
+  const filled = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  return { filled, header, values, worksheet };
+}
+
+describe('generated-template round trip against documented examples (ISS-071 regression)', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  it.each(['seasons', 'sizes', 'factories', 'distributors'] as const)(
+    'creates a %s record straight from the generated template’s own documented example',
+    async (kind) => {
+      const user = await actor();
+      const { filled, header, values, worksheet } = await exampleRowFromTemplate(kind);
+      const plan = await planMasterImport(user, kind, filled, `${kind}.xlsx`, worksheet);
+      expect(plan.rows).toHaveLength(1);
+      expect(plan.rows[0]!.outcome).toBe('CREATE');
+      const result = await executeMasterImport(user, kind, filled, `${kind}.xlsx`, worksheet, plan.confirmationToken);
+      expect(result.rows[0]!.outcome).toBe('CREATE');
+      expect(result.rows[0]!.code).toBeTruthy();
+      const nameField = header.includes('Name') ? 'Name' : header.find((h) => h.includes('Code'))!;
+      expect(values[header.indexOf(nameField)]).toBeTruthy();
+    },
+  );
+
+  it('resolves the documented GST Rule Set Code example and assigns it to the created HSN', async () => {
+    const user = await actor();
+    await prisma.gstRuleSet.create({ data: { id: createId(), code: 'GST-12-STD', name: 'Standard rule set' } });
+    const { filled, header, values, worksheet } = await exampleRowFromTemplate('hsns');
+    const plan = await planMasterImport(user, 'hsns', filled, 'hsns.xlsx', worksheet);
+    expect(plan.rows[0]!.outcome).toBe('CREATE');
+    const result = await executeMasterImport(user, 'hsns', filled, 'hsns.xlsx', worksheet, plan.confirmationToken);
+    expect(result.rows[0]!.outcome).toBe('CREATE');
+    const hsnCode = values[header.indexOf('HSN Code')]!;
+    const created = await prisma.hsn.findUniqueOrThrow({ where: { code: hsnCode } });
+    expect(created.gstRuleSetId).not.toBeNull();
+    const ruleSet = await prisma.gstRuleSet.findUniqueOrThrow({ where: { id: created.gstRuleSetId! } });
+    expect(ruleSet.code).toBe('GST-12-STD');
+  });
+
+  it('resolves the documented parent Distributor example for the generated Retail Store template', async () => {
+    const user = await actor();
+    // Pre-create the Distributor exactly as the Distributor template's own
+    // documented example describes it, so the Retail Store template's
+    // "Distributor Name / GSTIN / Purchase Mode" example resolves to it.
+    const distributorExample = await exampleRowFromTemplate('distributors');
+    const distributorPlan = await planMasterImport(
+      user,
+      'distributors',
+      distributorExample.filled,
+      'distributors.xlsx',
+      distributorExample.worksheet,
+    );
+    await executeMasterImport(
+      user,
+      'distributors',
+      distributorExample.filled,
+      'distributors.xlsx',
+      distributorExample.worksheet,
+      distributorPlan.confirmationToken,
+    );
+
+    const { filled, worksheet } = await exampleRowFromTemplate('retail-stores');
+    const plan = await planMasterImport(user, 'retail-stores', filled, 'stores.xlsx', worksheet);
+    expect(plan.rows[0]!.outcome).toBe('CREATE');
+    const result = await executeMasterImport(user, 'retail-stores', filled, 'stores.xlsx', worksheet, plan.confirmationToken);
+    expect(result.rows[0]!.outcome).toBe('CREATE');
+    const created = await prisma.retailStore.findUniqueOrThrow({ where: { id: result.rows[0]!.masterId! } });
+    const parent = await prisma.distributor.findUniqueOrThrow({ where: { id: created.distributorId } });
+    expect(parent.name).toBe('Example Distributors Pvt Ltd');
+  });
+
+  it('never treats the Instructions worksheet as a selectable or importable data source for any template', async () => {
+    for (const kind of Object.keys(masterImportWorksheets) as MasterImportKind[]) {
+      const buffer = await buildMasterImportTemplate(kind);
+      await expect(
+        planMasterImport(await actor(), kind, buffer, `${kind}.xlsx`, 'Instructions'),
+      ).rejects.toThrow(/instruction/i);
+    }
   });
 });

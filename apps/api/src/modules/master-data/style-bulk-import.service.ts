@@ -38,11 +38,17 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { env } from '../../config/env.js';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { createId } from '@erve/shared';
 import { prisma, type Prisma } from '../../db/prisma.js';
 import { currentUserSelect, toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { getFileStorage } from '../../storage/index.js';
+import {
+  addDataWorksheet,
+  addInstructionsWorksheet,
+  type ImportFieldDoc,
+} from './import-instructions-sheet.js';
 import {
   extractNormalizedEmbeddedImagesByRow,
   type EmbeddedImage,
@@ -142,8 +148,14 @@ const SHEET_HEADERS: Record<
   'hsn code': 'hsnCode',
 };
 
+const normalizeSheetName = (value: string) => value.normalize('NFKC').trim().toLowerCase();
+
+// The downloadable template's second worksheet is guidance, never data — it
+// is never offered as a selectable worksheet (mirrors master-import.parser.ts).
 export function listBulkStyleImportWorksheets(buffer: Buffer): string[] {
-  return XLSX.read(buffer, { type: 'buffer' }).SheetNames;
+  return XLSX.read(buffer, { type: 'buffer' }).SheetNames.filter(
+    (name) => normalizeSheetName(name) !== 'instructions',
+  );
 }
 
 const styleMetadataFields = ['description', 'categoryDescription', 'ipName', 'licensor', 'colour'] as const;
@@ -186,6 +198,8 @@ function resolveRoyaltyPercentageCell(sheet: XLSX.WorkSheet, sheetRowIndex: numb
 }
 
 export function parseBulkStyleImportSheet(buffer: Buffer, worksheet?: string): BulkStyleImportSheetRow[] {
+  if (worksheet && normalizeSheetName(worksheet) === 'instructions')
+    throw new Error('Instructions worksheets cannot be imported; select the data worksheet');
   const workbook = XLSX.read(buffer, { type: 'buffer', raw: true, cellNF: true });
   const sheet = workbook.Sheets[worksheet ?? workbook.SheetNames[0]!];
   if (!sheet) throw new Error(`Worksheet "${worksheet ?? ''}" does not exist`);
@@ -804,23 +818,171 @@ export function verifyBulkStyleImportConfirmation(plan: BulkStyleImportPlan, act
   }
 }
 
-export function buildBulkStyleImportTemplate(): Buffer {
-  const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([[
-    'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes',
-    'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
-    'Description', 'Category', 'IP Name', 'Licensor', 'Colour', 'Royalty %',
-  ]]), 'Styles');
-  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([
-    ['Style import instructions'],
-    ['Select the Styles worksheet. Required: Style Number, Style Name, Final MRP, Season Code and Size Codes.'],
-    ['Pictures: embed PNG or JPEG pictures anchored to their Style row, or use Excel Picture in Cell on that row.'],
-    ['Pictures may be in any column; multiple pictures on one Style row are supported. JPEG sources are converted to PNG.'],
-    ['No filename, base64 or URL column is required. Only image bytes packaged in the workbook are used.'],
-    ['Season Code is globally unique; Financial Year is not part of Season identity and is not needed. Supply existing master codes; do not infer missing business fields.'],
-    ['Royalty % is optional (0-100). Enter a plain number such as 7.5 to mean 7.5%; leave the cell blank for no royalty.'],
-  ]), 'Instructions');
-  return XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+const STYLE_IMPORT_HEADERS = [
+  'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes',
+  'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
+  'Description', 'Category', 'IP Name', 'Licensor', 'Colour', 'Royalty %',
+];
+const STYLE_IMPORT_FIELD_DOCS: ImportFieldDoc[] = [
+  {
+    name: 'Style Number',
+    description: 'The Style’s unique business identifier.',
+    required: true,
+    dataType: 'Text',
+    example: 'AW27-10045001',
+    validation:
+      'Must be unique within this file. An existing Style with the same number and identical values is skipped; an existing Style with the same number but different values is held for review — this import never overwrites an existing Style.',
+    notes: 'Illustrative only; commonly built as "{Season Code}-{LMIX Number}", but any unique text is accepted.',
+  },
+  {
+    name: 'Style Name',
+    description: 'Display name of the Style.',
+    required: true,
+    dataType: 'Text',
+    example: "Boys Crew Neck T-Shirt",
+    validation: 'Free text.',
+  },
+  {
+    name: 'Final MRP',
+    description: 'The Style’s maximum retail price.',
+    required: true,
+    dataType: 'Number, greater than 0',
+    example: '799',
+    validation: 'Must be a positive number.',
+  },
+  {
+    name: 'Season Code',
+    description: 'The Season this Style belongs to.',
+    required: true,
+    dataType: 'Text, matching an existing Season Code',
+    example: 'AW27',
+    validation: 'Must match an existing Season’s Code exactly (case-insensitive).',
+    notes: 'Financial Year is not part of Season identity and is not a template column.',
+  },
+  {
+    name: 'Size Codes',
+    description: 'The Sizes this Style is offered in.',
+    required: true,
+    dataType: 'Comma-separated list of existing Size Codes',
+    example: '3,4,5,6,7,8',
+    validation: 'Every code must match an ACTIVE Size; at least one Size Code is required.',
+  },
+  {
+    name: 'LMIX Number',
+    description: 'Used by the automatic barcode generator when a Size’s Barcode is left blank.',
+    required: false,
+    dataType: 'Text: literal "LMIX" followed by digits',
+    example: 'LMIX10045001',
+    validation: 'Must match the pattern "LMIX<digits>" when supplied.',
+    notes: 'Required only if any Size’s Barcode cell (below) is left blank; leave blank entirely if you are supplying an explicit Barcode for every Size.',
+  },
+  {
+    name: 'HSN Code',
+    description: 'The HSN classification to assign to this Style.',
+    required: false,
+    dataType: 'Text, exactly 8 digits',
+    example: '61091000',
+    validation: 'Must resolve to an existing ACTIVE HSN master record when supplied.',
+    notes: 'Leave blank if the HSN is not yet known — the Style is still created, and HSN can be assigned later from the Style edit page.',
+  },
+  {
+    name: 'Barcodes',
+    description: 'Explicit barcode for each Size, positionally parallel to Size Codes.',
+    required: false,
+    dataType: 'Comma-separated list, same count and order as Size Codes; a blank entry means "generate"',
+    example: 'BTSS10045001-3Y,BTSS10045001-4Y,BTSS10045001-5Y,BTSS10045001-6Y,BTSS10045001-7Y,BTSS10045001-8Y',
+    validation: 'Each supplied barcode must be unique and 1–64 printable characters.',
+    notes: 'Leaving the whole column blank or absent auto-generates every barcode (needs a Season Barcode Serial and an LMIX Number).',
+  },
+  {
+    name: 'Factory Name Mappings',
+    description: 'Factories permitted to produce this Style, each with its ex-factory price.',
+    required: false,
+    dataType: 'Semicolon-separated "Factory Name:Price" pairs',
+    example: 'Example Garments Pvt Ltd:450.00;Example Knitting Pvt Ltd:460.00',
+    validation: 'Each Factory Name must match exactly one ACTIVE Factory; each Price must be a positive number.',
+    notes: 'Preferred over the legacy Factory Mappings column below — use one or the other, not both.',
+  },
+  {
+    name: 'Factory Mappings',
+    description: 'Legacy equivalent of Factory Name Mappings, keyed by Factory Code instead of Factory Name.',
+    required: false,
+    dataType: 'Semicolon-separated "FactoryCode:Price" pairs',
+    example: '',
+    validation: 'Each Factory Code must match exactly one ACTIVE Factory; each Price must be a positive number.',
+    notes: 'Kept for older workbooks; new workbooks should use Factory Name Mappings instead.',
+  },
+  {
+    name: 'Description',
+    description: 'Free-text description of the Style.',
+    required: false,
+    dataType: 'Text',
+    example: 'Short-sleeve crew neck T-shirt in cotton jersey.',
+    validation: 'Free text.',
+  },
+  {
+    name: 'Category',
+    description: 'Business category/classification label for the Style.',
+    required: false,
+    dataType: 'Text',
+    example: 'T-Shirt',
+    validation: 'Free text.',
+  },
+  {
+    name: 'IP Name',
+    description: 'Licensed character or property name associated with the Style, if any.',
+    required: false,
+    dataType: 'Text',
+    example: 'Sample Cartoon Co',
+    validation: 'Free text.',
+    notes: 'Illustrative only.',
+  },
+  {
+    name: 'Licensor',
+    description: 'Licensor associated with the IP Name, if any.',
+    required: false,
+    dataType: 'Text',
+    example: 'Sample Licensing Ltd',
+    validation: 'Free text.',
+    notes: 'Illustrative only.',
+  },
+  {
+    name: 'Colour',
+    description: 'Colour of the Style.',
+    required: false,
+    dataType: 'Text',
+    example: 'Navy Blue',
+    validation: 'Free text.',
+  },
+  {
+    name: 'Royalty %',
+    description: 'Royalty percentage payable on this Style, if any.',
+    required: false,
+    dataType: 'Number, 0–100 (percentage points, not a fraction)',
+    example: '7.5',
+    validation:
+      'Enter a plain number such as 7.5 to mean 7.5%. A genuinely Excel "Percentage"-formatted cell displaying 7.5% (stored internally as the fraction 0.075) is also accepted and resolves to the same 7.5. Must be between 0 and 100 inclusive when supplied; non-numeric text is rejected.',
+    notes: 'Leave blank for "no royalty set" — never a rejection, and never compared against an existing Style’s stored value.',
+  },
+];
+export async function buildBulkStyleImportTemplate(): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  addDataWorksheet(workbook, 'Styles', STYLE_IMPORT_HEADERS);
+  addInstructionsWorksheet(workbook, {
+    moduleName: 'Style Bulk Import',
+    summary: 'Creates new Style master records, each with its Sizes, barcodes, Factory pricing and (optionally) a primary image.',
+    purpose: 'Bulk-create an entire Season’s or collection’s Styles in one upload instead of adding them one at a time.',
+    dataWorksheetName: 'Styles',
+    usageNotes: [
+      'Required columns: Style Number, Style Name, Final MRP, Season Code and Size Codes. All other columns are optional.',
+      'This import only creates new Styles; an existing Style is skipped (if identical) or held for review (if different) — never updated or overwritten.',
+      'Primary Style images are PNG or JPEG pictures embedded directly in the workbook and anchored to (or placed in any cell of) their Style’s row — not a column. Multiple pictures on one row are supported; JPEG sources are converted to PNG. No filename, base64 or URL column is used.',
+      'Supply existing master codes (Season, Size, HSN, Factory); this import never infers or creates a missing master record.',
+      'Maximum workbook size: 25 MB.',
+    ],
+    fields: STYLE_IMPORT_FIELD_DOCS,
+  });
+  return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
 /** Original cell display values are exported as typed text, never executable formulas. */

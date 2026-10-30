@@ -319,14 +319,9 @@ function ImportWorkflow({ kind }: { kind: MasterImportKind }) {
           </Button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          {kind === 'seasons'
-            ? 'Season Code alone identifies a Season, globally and case-insensitively unique. Blank Barcode Serial stays NULL; automatic Style barcodes may require it.'
-            : kind === 'sizes'
-              ? 'Supply the original Size Code, label, valid Size Type and integer Sort Order. Existing metadata is never changed.'
-              : kind === 'hsns'
-                ? 'HSN Code: exactly 8 digits stored as text. Optional GST Rule Set Code must identify one ACTIVE rule set; assignment requires ADMIN or ACCOUNTANT.'
-                : 'Internal codes are generated automatically. Missing Purchase Modes and uncertain Distributor matches require review.'}{' '}
-          Files may contain up to 10,000 rows.
+          Download the Excel template and refer to the Instructions tab for field descriptions, example values, and
+          import guidelines. Enter your data in the first worksheet and upload the completed file. Files may contain
+          up to 10,000 rows.
         </p>
         {worksheets.isPending && <p role="status">Reading worksheets…</p>}
       </Panel>

@@ -89,13 +89,20 @@ describe('business import workflow', () => {
     expect(button('Preview').disabled).toBe(false);
   });
 
+  it('points users to the Instructions tab instead of repeating field-level guidance on screen', () => {
+    render('factories');
+    expect(container.textContent).toContain(
+      'Download the Excel template and refer to the Instructions tab for field descriptions, example values, and import guidelines.',
+    );
+  });
+
 
   it('allows ACCOUNTANT to import HSN identity but not other masters', async () => {
     auth.role = 'ACCOUNTANT';
     render('hsns');
     await flush();
     expect(container.textContent).toContain('Import HSNs');
-    expect(container.textContent).toContain('GST Rule Set');
+    expect(container.textContent).not.toContain('Import not permitted');
     render('sizes');
     expect(container.textContent).toContain('Import not permitted');
   });
