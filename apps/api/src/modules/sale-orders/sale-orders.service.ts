@@ -1,4 +1,4 @@
-import { canFilterDispatchOrders, canMutateDispatchOrders, canViewDispatchOrderAudit, createId } from '@erve/shared';
+import { canMutateDispatchOrders, canViewDispatchOrderAudit, canViewUnscopedDispatchOrders, createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { DistributorStatus, FactoryStatus, PurchaseMode } from '../../db/prisma.js';
@@ -220,7 +220,7 @@ function assertDispatchOrderMutationAccess(user: CurrentUser): void {
 // DISTRIBUTOR and QA_USER have no Dispatch Order access at all — enforced
 // primarily by the route role guards, these helpers are defense in depth.
 function canViewAllDispatchOrders(user: CurrentUser): boolean {
-  return canFilterDispatchOrders(user);
+  return canViewUnscopedDispatchOrders(user);
 }
 
 function resolveListFactoryScope(user: CurrentUser, requestedFactoryId?: string): string | undefined {
