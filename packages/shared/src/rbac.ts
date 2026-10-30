@@ -170,6 +170,23 @@ export function canViewDispatchOrders(user: RoleHolder): boolean {
   return hasAnyRole(user, DISPATCH_ORDER_VIEW_ROLES);
 }
 
+/**
+ * Unrestricted Dispatch Order list/detail readers. This is deliberately
+ * independent of DISPATCH_ORDER_FILTER_ROLES: the ability to choose a filter
+ * must never implicitly grant unscoped access to factory inventory/orders.
+ * FACTORY_USER keeps factory-scoped read-only access via the service guard.
+ */
+export const DISPATCH_ORDER_UNSCOPED_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+
+export function canViewUnscopedDispatchOrders(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISPATCH_ORDER_UNSCOPED_VIEW_ROLES);
+}
+
 export const DISPATCH_ORDER_AUDIT_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
