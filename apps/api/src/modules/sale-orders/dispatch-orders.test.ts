@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { createId } from '@erve/shared';
+import { canViewUnscopedDispatchOrders, createId } from '@erve/shared';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import { createReleasedQaStock, createTestDistributor, createTestFactory, createTestRetailStore, createTestSeason, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
@@ -354,6 +354,23 @@ describe('Dispatch Orders — creation is the sole allocation point', () => {
 });
 
 describe('Dispatch Orders — authorization', () => {
+  it.each([
+    ['ADMIN', true],
+    ['MERCHANDISER', true],
+    ['SENIOR_MANAGEMENT', true],
+    ['ACCOUNTANT', true],
+    ['FACTORY_USER', false],
+    ['QA_USER', false],
+    ['DISTRIBUTOR', false],
+  ] as const)('uses explicit unrestricted read permission for %s = %s', (role, allowed) => {
+    expect(canViewUnscopedDispatchOrders({ roles: [role] })).toBe(allowed);
+  });
+
+  it('allows a multi-role user with an unrestricted reader role but not a factory-only user', () => {
+    expect(canViewUnscopedDispatchOrders({ roles: ['FACTORY_USER', 'ACCOUNTANT'] })).toBe(true);
+    expect(canViewUnscopedDispatchOrders({ roles: ['FACTORY_USER'] })).toBe(false);
+  });
+
   it('forbids DISTRIBUTOR from creating, viewing, or listing Dispatch Orders', async () => {
     const stock = await createReleasedQaStock({ quantity: 20 });
     const distributorToken = await roleToken(['DISTRIBUTOR']);
