@@ -1132,11 +1132,13 @@ describe('PackingListPage combined destination packing progress (ISS-083)', () =
     const one = structuredClone(initial);
     one.destinations[0]!.lines[0]!.packedQuantity = 1;
     act(() => client.setQueryData(['packing-list', 'so-1'], one));
+    await flush();
     expect(progress().textContent).toContain('1 / 2');
     const two = structuredClone(one);
     two.destinations[0]!.lines[0]!.packedQuantity = 2;
     two.destinations[0]!.cartons = [buildCarton({ lines: [{ ...buildCarton().lines[0]!, quantity: 2 }], totalQuantity: 2 })];
     act(() => client.setQueryData(['packing-list', 'so-1'], two));
+    await flush();
     expect(progress().textContent).toContain('2 / 2');
     expect(content()).toContain('Packing complete — Awaiting QA audit');
   });
@@ -1185,6 +1187,7 @@ describe('PackingListPage QA handoff visibility (ISS-082)', () => {
         carton.auditState = index < confirmed ? 'INSPECTED' : 'NOT_INSPECTED';
       });
       act(() => client.setQueryData(['packing-list', 'so-1'], fresh));
+      await flush();
       expect(content()).toContain(`4 of 4 cartons packed; ${confirmed} of 4 confirmed by QA`);
       expect(finalize.disabled).toBe(confirmed < 4);
     }
