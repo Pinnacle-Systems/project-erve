@@ -23,7 +23,7 @@ styleBulkImportRouter.use(requireAuth);
 
 styleBulkImportRouter.get('/template', canManageMasterData, asyncHandler(async (_req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="styles.xlsx"');
-  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(buildBulkStyleImportTemplate());
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(await buildBulkStyleImportTemplate());
 }));
 styleBulkImportRouter.post('/worksheets', canManageMasterData, singleBulkImportFileUpload('file'), asyncHandler(async (req, res) => {
   res.json(successResponse(listBulkStyleImportWorksheets(requireUploadedFile(req.file).buffer)));

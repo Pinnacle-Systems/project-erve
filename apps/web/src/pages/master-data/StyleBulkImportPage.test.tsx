@@ -91,6 +91,12 @@ describe('StyleBulkImportPage', () => {
     expect(container.textContent).toContain('styles.xlsx');
   });
 
+  it('points users to the Instructions tab instead of repeating field-level guidance on screen', () => {
+    render();
+    expect(container.textContent).toContain(
+      'Download the Excel template and refer to the Instructions tab for field descriptions, example values, and import guidelines.',
+    );
+  });
 
   it('offers template, worksheet selection and history in the existing Style workflow', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: [] } });

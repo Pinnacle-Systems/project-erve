@@ -10,6 +10,8 @@ import {
   planBulkStyleImport,
   bulkStyleImportConfirmationToken,
   verifyBulkStyleImportConfirmation,
+  buildBulkStyleImportTemplate,
+  listBulkStyleImportWorksheets,
   type BulkStyleImportPlan,
 } from './style-bulk-import.service.js';
 import * as styleImagesService from './style-images.service.js';
@@ -135,6 +137,100 @@ function bareCreatePlan(
     ],
   };
 }
+
+describe('buildBulkStyleImportTemplate (ISS-071)', () => {
+  it('builds a two-sheet workbook: unchanged Styles headers, then a documented Instructions worksheet', async () => {
+    const buffer = await buildBulkStyleImportTemplate();
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    expect(workbook.SheetNames).toEqual(['Styles', 'Instructions']);
+    expect(listBulkStyleImportWorksheets(buffer)).toEqual(['Styles']);
+    const dataHeader = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Styles!, { header: 1 })[0];
+    expect(dataHeader).toEqual([
+      'Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes',
+      'LMIX Number', 'HSN Code', 'Barcodes', 'Factory Name Mappings', 'Factory Mappings',
+      'Description', 'Category', 'IP Name', 'Licensor', 'Colour', 'Royalty %',
+    ]);
+    expect(XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Styles!, { header: 1 })).toHaveLength(1);
+    const instructionRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Instructions!, { header: 1 });
+    expect(instructionRows[0]?.[0]).toBe('ERVE MASTER IMPORT INSTRUCTIONS - DO NOT IMPORT');
+    const tableHeaderRow = instructionRows.findIndex((row) => row[0] === 'Field Name');
+    expect(tableHeaderRow).toBeGreaterThan(0);
+    const fieldRows = instructionRows
+      .slice(tableHeaderRow + 1)
+      .filter((row) => row[2] === 'Required' || row[2] === 'Optional');
+    expect(fieldRows.map((row) => String(row[0] ?? ''))).toEqual(dataHeader);
+    const required = new Set(fieldRows.filter((row) => row[2] === 'Required').map((row) => row[0]));
+    expect(required).toEqual(new Set(['Style Number', 'Style Name', 'Final MRP', 'Season Code', 'Size Codes']));
+  });
+
+  it('rejects the Instructions worksheet as a data selection, and excludes it from the worksheet picker', async () => {
+    const buffer = await buildBulkStyleImportTemplate();
+    expect(() => parseBulkStyleImportSheet(buffer, 'Instructions')).toThrow(/Instructions/);
+    expect(listBulkStyleImportWorksheets(buffer)).not.toContain('Instructions');
+    const rows = parseBulkStyleImportSheet(buffer, 'Styles');
+    expect(rows).toEqual([]);
+  });
+
+  it('round-trips the actual generated template end to end: parse, plan and execute create real Styles with every column correctly mapped', async () => {
+    const user = await actor();
+    const seasonCode = `RTS-${createId().slice(-6)}`;
+    const season = await createTestSeason({ code: seasonCode });
+    const size = await createSize(`RT${createId().slice(-4)}`);
+    const factory = await createTestFactory({ name: `Regression Factory ${createId().slice(-6)}` });
+    const hsn = await createHsn({ code: '61091000' });
+
+    const buffer = await buildBulkStyleImportTemplate();
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets.Styles!;
+    const styleNumberPlain = `RT-${createId().slice(-8)}`;
+    const styleNumberPercent = `RT-${createId().slice(-8)}`;
+    const row = (styleNumber: string, royalty: string) => [
+      styleNumber, 'Regression Test Tee', '599', seasonCode, size.code,
+      '', hsn.code, `RT-BARCODE-${styleNumber}`, `${factory.name}:450.00`, '',
+      'Round-trip regression description', 'T-Shirt', '', '', 'Navy Blue', royalty,
+    ];
+    XLSX.utils.sheet_add_aoa(sheet, [row(styleNumberPlain, '7.5'), row(styleNumberPercent, '')], { origin: 'A2' });
+    // Row 3's Royalty % cell is overwritten as a genuine Excel "Percentage"
+    // cell (raw fraction 0.05, displaying "5.00%") — the real-world case the
+    // plain aoa write above cannot produce — so both accepted representations
+    // are exercised against the actual generated template, not a hand-built fixture.
+    sheet['P3'] = { t: 'n', v: 0.05, z: '0.00%' };
+    const filled = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    // No worksheet argument: must resolve to "Styles", never "Instructions".
+    const parsedRows = parseBulkStyleImportSheet(filled);
+    expect(parsedRows).toHaveLength(2);
+    expect(parsedRows[0]).toMatchObject({ styleNumber: styleNumberPlain, hsnCode: hsn.code, royaltyPercentage: 7.5 });
+    expect(parsedRows[1]).toMatchObject({ styleNumber: styleNumberPercent, royaltyPercentage: 5 });
+    expect(parsedRows[0]!.factoryNameMappings).toEqual([{ factoryName: factory.name, priceRaw: '450.00' }]);
+
+    const plan = await planBulkStyleImport(filled);
+    expect(plan.worksheet).toBe('Styles');
+    expect(plan.rows).toHaveLength(2);
+    expect(plan.rows.map((r) => r.status)).toEqual(['CREATE', 'CREATE']);
+    expect(plan.rows[0]!.create).toMatchObject({ royaltyPercentage: 7.5, hsnId: hsn.id });
+    expect(plan.rows[0]!.create!.factoryMappings).toEqual([{ factoryId: factory.id, exFactoryPrice: 450 }]);
+    expect(plan.rows[1]!.create).toMatchObject({ royaltyPercentage: 5 });
+
+    const result = await executeBulkStyleImport(user, plan, 'generated-template-regression.xlsx');
+    expect(result.results.map((r) => r.outcome)).toEqual(['COMPLETED', 'COMPLETED']);
+
+    const created = await prisma.style.findMany({
+      where: { styleNumber: { in: [styleNumberPlain, styleNumberPercent] } },
+      orderBy: { styleNumber: 'asc' },
+      include: { styleFactoryMappings: true },
+    });
+    expect(created).toHaveLength(2);
+    const plainStyle = created.find((s) => s.styleNumber === styleNumberPlain)!;
+    const percentStyle = created.find((s) => s.styleNumber === styleNumberPercent)!;
+    expect(Number(plainStyle.royaltyPercentage)).toBe(7.5);
+    expect(Number(percentStyle.royaltyPercentage)).toBe(5);
+    expect(plainStyle.hsnId).toBe(hsn.id);
+    expect(plainStyle.seasonId).toBe(season.id);
+    expect(plainStyle.styleFactoryMappings).toHaveLength(1);
+    expect(Number(plainStyle.styleFactoryMappings[0]!.exFactoryPrice)).toBe(450);
+  });
+});
 
 describe('parseBulkStyleImportSheet', () => {
   it('parses required and optional columns, splitting list-valued cells', () => {

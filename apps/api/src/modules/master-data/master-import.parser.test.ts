@@ -33,27 +33,18 @@ describe('downloadable business master templates (ISS-036)', () => {
 
   it.each(Object.keys(samples) as Array<keyof typeof samples>)(
     'exports %s with business-only headers and accepts a filled-in copy',
-    (kind) => {
-      const workbook = XLSX.read(buildMasterImportTemplate(kind), { type: 'buffer' });
+    async (kind) => {
+      const template = await buildMasterImportTemplate(kind);
+      const workbook = XLSX.read(template, { type: 'buffer' });
       expect(workbook.SheetNames).toEqual([masterImportWorksheets[kind], 'Instructions']);
-      expect(listMasterImportWorksheets(buildMasterImportTemplate(kind), 'template.xlsx')).toEqual([
+      expect(listMasterImportWorksheets(template, 'template.xlsx')).toEqual([
         masterImportWorksheets[kind],
       ]);
       expect(() =>
-        parseMasterImportFile(
-          kind,
-          buildMasterImportTemplate(kind),
-          'template.xlsx',
-          'Instructions',
-        ),
+        parseMasterImportFile(kind, template, 'template.xlsx', 'Instructions'),
       ).toThrow(/instruction/i);
       expect(
-        parseMasterImportFile(
-          kind,
-          buildMasterImportTemplate(kind),
-          'template.xlsx',
-          masterImportWorksheets[kind],
-        ).rows,
+        parseMasterImportFile(kind, template, 'template.xlsx', masterImportWorksheets[kind]).rows,
       ).toEqual([]);
       expect(
         XLSX.utils.sheet_to_json(workbook.Sheets.Instructions!, { header: 1 }).length,
@@ -88,8 +79,32 @@ describe('downloadable business master templates (ISS-036)', () => {
     },
   );
 
-  it('rejects renamed instructions and their CSV export instead of treating guidance as records', () => {
-    const workbook = XLSX.read(buildMasterImportTemplate('factories'), { type: 'buffer' });
+  it('documents every data column exactly once in the Instructions field-reference table', async () => {
+    for (const kind of Object.keys(samples) as Array<keyof typeof samples>) {
+      const workbook = XLSX.read(await buildMasterImportTemplate(kind), { type: 'buffer' });
+      const dataHeader = (
+        XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[masterImportWorksheets[kind]]!, {
+          header: 1,
+        })[0] ?? []
+      ).map(String);
+      const instructionRows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets.Instructions!, {
+        header: 1,
+      });
+      const tableHeaderRow = instructionRows.findIndex((row) => row[0] === 'Field Name');
+      expect(tableHeaderRow).toBeGreaterThan(0);
+      const fieldRows = instructionRows
+        .slice(tableHeaderRow + 1)
+        .filter((row) => row[2] === 'Required' || row[2] === 'Optional');
+      expect(fieldRows.map((row) => String(row[0] ?? ''))).toEqual(dataHeader);
+      for (const row of fieldRows) {
+        expect(String(row[1] ?? '').length).toBeGreaterThan(0);
+        expect(String(row[3] ?? '').length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('rejects renamed instructions and their CSV export instead of treating guidance as records', async () => {
+    const workbook = XLSX.read(await buildMasterImportTemplate('factories'), { type: 'buffer' });
     const csv = XLSX.utils.sheet_to_csv(workbook.Sheets.Instructions!);
     expect(() => parseMasterImportFile('factories', Buffer.from(csv), 'instructions.csv')).toThrow(
       /Instruction/,

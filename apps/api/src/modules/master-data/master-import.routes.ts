@@ -61,7 +61,7 @@ masterImportsRouter.get(
     const kind = masterImportKindSchema.parse(req.params.kind);
     res
       .attachment(`${kind}-template.xlsx`)
-      .send(buildMasterImportTemplate(kind));
+      .send(await buildMasterImportTemplate(kind));
   }),
 );
 masterImportsRouter.post(

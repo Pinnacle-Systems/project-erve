@@ -1004,7 +1004,7 @@ describe('QaInspectionForm', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(post).toHaveBeenCalledTimes(1);
-    expect(button('Upload evidence').disabled).toBe(true);
+    await vi.waitFor(() => expect(button('Upload evidence').disabled).toBe(true));
     expect(button('Finalize size M').disabled).toBe(true);
     expect(container.textContent).toContain('Uploading evidence…');
     expect(container.textContent).toContain('Finalize will be available after the evidence is saved.');
