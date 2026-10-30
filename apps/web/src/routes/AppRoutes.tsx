@@ -827,7 +827,7 @@ export function AppRoutes() {
       <Route
         path="/quality-executions/:executionId"
         element={
-          <RoleRoute allowed={['ADMIN', 'QA_USER', 'MERCHANDISER', 'SENIOR_MANAGEMENT']}>
+          <RoleRoute allowed={QA_VIEW_ROLES}>
             <AppLayout />
           </RoleRoute>
         }

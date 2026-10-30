@@ -1,4 +1,4 @@
-import { createId } from '@erve/shared';
+import { canMutateDispatchOrders, canViewDispatchOrderAudit, canViewUnscopedDispatchOrders, createId } from '@erve/shared';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { DistributorStatus, FactoryStatus, PurchaseMode } from '../../db/prisma.js';
@@ -209,7 +209,7 @@ async function toSaleOrderView(order: SORecord) {
 // rights it already had under the old Sale Order workflow (no new
 // capability granted here). No DISTRIBUTOR role at all.
 function assertDispatchOrderMutationAccess(user: CurrentUser): void {
-  if (!user.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER')) {
+  if (!canMutateDispatchOrders(user)) {
     throw HttpError.forbidden('You do not have permission to manage dispatch orders');
   }
 }
@@ -220,7 +220,7 @@ function assertDispatchOrderMutationAccess(user: CurrentUser): void {
 // DISTRIBUTOR and QA_USER have no Dispatch Order access at all — enforced
 // primarily by the route role guards, these helpers are defense in depth.
 function canViewAllDispatchOrders(user: CurrentUser): boolean {
-  return user.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER' || r === 'SENIOR_MANAGEMENT' || r === 'ACCOUNTANT');
+  return canViewUnscopedDispatchOrders(user);
 }
 
 function resolveListFactoryScope(user: CurrentUser, requestedFactoryId?: string): string | undefined {
@@ -243,7 +243,7 @@ function assertDispatchOrderViewAccess(user: CurrentUser, order: { factoryId: st
 // route excludes FACTORY_USER from this endpoint entirely; this is the
 // service-side backstop.
 function assertDispatchOrderAuditAccess(user: CurrentUser): void {
-  if (!canViewAllDispatchOrders(user)) {
+  if (!canViewDispatchOrderAudit(user)) {
     throw HttpError.forbidden('You do not have permission to view dispatch order audit history');
   }
 }

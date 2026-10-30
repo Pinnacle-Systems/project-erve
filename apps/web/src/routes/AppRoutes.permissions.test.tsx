@@ -73,6 +73,9 @@ vi.mock('../pages/job-orders/JobOrderDetailPage.js', () => ({
 }));
 vi.mock('../pages/qa/QaQueuePage.js', () => ({ QaQueuePage: () => <div>QaQueuePage</div> }));
 vi.mock('../pages/qa/QaDetailPage.js', () => ({ QaDetailPage: () => <div>QaDetailPage</div> }));
+vi.mock('../pages/qa/QualityExecutionPage.js', () => ({
+  QualityExecutionPage: () => <div>QualityExecutionPage</div>,
+}));
 vi.mock('../pages/master-data/QualityFormListPage.js', () => ({
   QualityFormListPage: () => <div>QualityFormListPage</div>,
 }));
@@ -513,6 +516,22 @@ describe('AppRoutes Permissions', () => {
       await renderRoutes('QA_USER', '/qa');
       expect(getPageContent()).toContain('JobOrderListPage');
       expect(getPageContent()).not.toContain('QaQueuePage');
+    });
+  });
+
+  describe('QualityExecution direct route permission parity (NEW-AUTH-002)', () => {
+    it.each([
+      ['ADMIN', true],
+      ['QA_USER', true],
+      ['MERCHANDISER', true],
+      ['SENIOR_MANAGEMENT', true],
+      ['FACTORY_USER', false],
+      ['ACCOUNTANT', false],
+      ['DISTRIBUTOR', false],
+    ] as const)('QualityExecution route for %s = %s', async (role, allowed) => {
+      await renderRoutes(role, '/quality-executions/execution-1');
+      expect(getPageContent()).toContain(allowed ? 'QualityExecutionPage' : 'ForbiddenPage');
+      expect(getPageContent()).not.toContain(allowed ? 'ForbiddenPage' : 'QualityExecutionPage');
     });
   });
 
