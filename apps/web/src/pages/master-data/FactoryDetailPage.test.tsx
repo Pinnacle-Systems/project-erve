@@ -378,6 +378,19 @@ describe('FactoryDetailPage — Mapped Factory Users inline creation (DEMO-015)'
   });
 });
 
+describe('Factory Detail shared User-management permission (NEW-AUTH-004)', () => {
+  it('shows the mapped-user management panel only to ADMIN, not MERCHANDISER', async () => {
+    await renderPageWithRole(makeFactory(), 'MERCHANDISER');
+    expect(container.textContent).not.toContain('Mapped Factory Users');
+    expect(container.textContent).toContain('Factory Details');
+  });
+
+  it('keeps mapped-user management available to ADMIN', async () => {
+    await renderPageWithRole(makeFactory(), 'ADMIN');
+    expect(container.textContent).toContain('Mapped Factory Users');
+  });
+});
+
 describe('FactoryDetailPage PDF actions', () => {
   it('shows Download PDF and Print actions in the header', async () => {
     await renderPage(makeFactory());
