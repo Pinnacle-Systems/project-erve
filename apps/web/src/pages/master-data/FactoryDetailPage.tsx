@@ -252,7 +252,7 @@ export function FactoryDetailPage() {
   const { user } = useAuth();
   const client = useQueryClient();
   const canEdit = canManageFactories(user);
-  const isAdmin = user?.roles.includes('ADMIN') ?? false;
+  const canManageFactoryUsers = canManageUsers(user);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState('');
   const query = useQuery({
@@ -367,7 +367,7 @@ export function FactoryDetailPage() {
           <DescriptionList.Item label="Mapped users" value={String(usage.mappedUsers)} />
         </DescriptionList>
       </Panel>
-      {isAdmin ? <MappedUsers factory={factory} /> : null}
+      {canManageFactoryUsers ? <MappedUsers factory={factory} /> : null}
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}
