@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from '@erve/theme';
 import type { AuthUser, Role } from '@erve/types';
@@ -39,6 +39,13 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 let container: HTMLDivElement;
 let root: Root;
 let originalAdapter: typeof apiClient.defaults.adapter;
+let navigate: NavigateFunction;
+
+function NavigationProbe() {
+  const routeNavigate = useNavigate();
+  useLayoutEffect(() => { navigate = routeNavigate; }, [routeNavigate]);
+  return null;
+}
 
 beforeEach(() => {
   vi.stubGlobal(
@@ -76,6 +83,7 @@ async function renderPage(
   roles: Role[],
   adapter: AxiosAdapter,
   currentUserId = 'admin-1',
+  queryClient?: QueryClient,
 ) {
   const user: AuthUser = {
     id: currentUserId,
@@ -89,12 +97,13 @@ async function renderPage(
     if (config.url === '/auth/me') return ok(config, { success: true, data: user });
     return adapter(config);
   });
-  const client = new QueryClient({
+  const client = queryClient ?? new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[path]}>
+        <NavigationProbe />
         <ThemeProvider theme="default">
           <QueryClientProvider client={client}>
             <AuthProvider>
@@ -557,6 +566,44 @@ describe('user detail page', () => {
     });
 
     expect(removeCalled).toBe(true);
+  });
+
+  it('DistributorMappingPanel: discards confirmation across cached routes and targets a fresh confirmation', async () => {
+    const userA = { ...baseUser, id: 'user-a', name: 'User A', distributors: [{ id: 'dist-a', code: 'DA', name: 'Distributor A' }] };
+    const userB = { ...baseUser, id: 'user-b', name: 'User B', distributors: [{ id: 'dist-b', code: 'DB', name: 'Distributor B' }] };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    client.setQueryData(['admin-user', userA.id], userA);
+    client.setQueryData(['admin-user', userB.id], userB);
+    const deletes: string[] = [];
+    await renderPage('/master-data/users/user-a', ['ADMIN'], async (config) => {
+      if (config.method === 'delete') {
+        deletes.push(config.url!);
+        return ok(config, { success: true, data: { ...userB, distributors: [] } });
+      }
+      if (config.url === '/users/user-b') return ok(config, { success: true, data: { ...userB, distributors: [] } });
+      throw new Error(`Unexpected request: ${config.url}`);
+    }, 'admin-1', client);
+    const remove = () => Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Remove')!;
+    await act(async () => remove().click());
+    const staleButton = document.querySelector('[role="dialog"] button:last-child') as HTMLButtonElement;
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('User A will lose access to Distributor A');
+    await act(async () => { await navigate('/master-data/users/user-b'); });
+    expect(container.textContent).toContain('Distributor B');
+    expect(container.textContent).not.toContain('Loading user');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => staleButton.click());
+    await act(async () => { await navigate('/master-data/users/user-a'); });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(deletes).toEqual([]);
+    await act(async () => { await navigate('/master-data/users/user-b'); });
+    await act(async () => remove().click());
+    const confirm = document.querySelector('[role="dialog"] button:last-child') as HTMLButtonElement;
+    await act(async () => {
+      confirm.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(deletes).toEqual(['/users/user-b/distributors/dist-b']);
+    expect(container.textContent).not.toContain('Distributor B');
   });
 
   it('DistributorMappingPanel: assigns and can then remove the mapping', async () => {
