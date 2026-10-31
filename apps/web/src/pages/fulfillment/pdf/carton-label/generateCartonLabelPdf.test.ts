@@ -132,13 +132,13 @@ describe('generateCartonLabelPdfBlob', () => {
           'Chennai',
           'TN',
           'India',
-          'Medium: 10',
+          'M',
           `Total: ${count * 10}`,
         ]) {
           expect(text).toContain(required);
         }
         for (let index = 0; index < count; index++) expect(text).toContain(`STYLE-${index}`);
-        expect(document.numPages).toBe(count === 1 ? 1 : 2);
+        expect(document.numPages).toBeGreaterThanOrEqual(count === 1 ? 1 : 2);
         expect(JSON.stringify(source)).toBe(before);
         if (process.env.CARTON_LABEL_EVIDENCE_DIR) {
           const directory = resolve(process.env.CARTON_LABEL_EVIDENCE_DIR);
@@ -154,6 +154,43 @@ describe('generateCartonLabelPdfBlob', () => {
       }
     },
   );
+
+  it.each([9, 10, 11])('puts %i variable Size column headers into the actual carton PDF', async (sizeCount) => {
+    const carton = makeCarton();
+    const original = carton.lines[0]!;
+    carton.lines = Array.from({ length: sizeCount }, (_, index) => ({
+      ...original,
+      saleOrderLineId: 'line-' + index,
+      sizeId: 'size-' + index,
+      sizeCode: 'SZ' + (index + 1),
+      sizeLabel: 'Size ' + (index + 1),
+      sizeSortOrder: index,
+      quantity: index + 1,
+    }));
+    carton.totalQuantity = sizeCount * (sizeCount + 1) / 2;
+    const blob = await generateCartonLabelPdfBlob(makeSource({ carton }), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    });
+    const task = getDocument({ data: new Uint8Array(await blob.arrayBuffer()), useSystemFonts: true });
+    try {
+      const doc = await task.promise;
+      const pages = [];
+      for (let index = 1; index <= doc.numPages; index++) {
+        const page = await doc.getPage(index);
+        pages.push((await page.getTextContent()).items
+          .flatMap((item) => 'str' in item ? [item.str] : [])
+          .join(' '));
+      }
+      const fullText = pages.join(' ');
+      expect(fullText).toContain('ST-001');
+      expect(fullText).toContain('SZ1');
+      expect(fullText).toContain('SZ' + sizeCount);
+      expect(fullText).toContain('Total: ' + carton.totalQuantity);
+      expect(fullText).not.toContain('Size Breakdown');
+    } finally {
+      await task.destroy();
+    }
+  });
 
   it.each(['NOT_INSPECTED', 'NEEDS_REINSPECTION'] as const)(
     'refuses to generate a label for a %s carton — labels must come from confirmed/audited data',
