@@ -184,7 +184,9 @@ describe('AppShell', () => {
     const header = container.querySelector('header') as HTMLElement;
     const gridHead = container.querySelector('main th.sticky') as HTMLElement;
     const gridTotals = container.querySelector('main tfoot td.sticky') as HTMLElement;
-    const zIndex = (element: HTMLElement) => Number(element.className.match(/\\bz-(\\d+)\\b/)?.[1] ?? 0);
+    const zIndex = (element: HTMLElement) => Number(
+      element.className.split(' ').find((token) => /^z-[0-9]+$/.test(token))?.slice(2) ?? 0,
+    );
 
     expect(header.className).toContain('sticky top-0');
     expect(gridHead).not.toBeNull();
