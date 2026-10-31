@@ -399,6 +399,9 @@ importers:
 
   packages/data-display:
     dependencies:
+      '@erve/app-components':
+        specifier: workspace:*
+        version: link:../app-components
       '@erve/layout':
         specifier: workspace:*
         version: link:../layout
