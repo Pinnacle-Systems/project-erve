@@ -43,8 +43,8 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
         <PdfStyleSizeMatrix
           columns={viewModel.sizeColumns}
           rows={viewModel.styleRows}
-          maxColumnsPerGroup={8}
-          styleColumnWidth="35%"
+          maxColumnsPerGroup={11}
+          styleColumnWidth="30%"
         />
         <Text style={styles.totalsLine}>Total: {viewModel.totalQuantity}</Text>
       </PdfSection>
