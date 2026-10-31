@@ -17,12 +17,13 @@ function makeViewModel(overrides: Partial<CartonLabelPdfViewModel> = {}): Carton
       { label: 'Address', value: '123 Test Street, Chennai, TN, India' },
     ],
     totalQuantity: 10,
+    sizeColumns: [{ sizeId: 'size-m', sizeCode: 'M' }],
     styleRows: [
       {
-        id: 'style-1',
-        styleDisplay: 'ST-001 — Classic Tee',
-        sizeBreakdown: 'Medium: 10',
-        quantity: 10,
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        values: { 'size-m': 10 },
       },
     ],
     ...overrides,
@@ -58,10 +59,10 @@ describe('CartonLabelDocument', () => {
 
   it('renders a carton with many Style rows without hanging', async () => {
     const styleRows = Array.from({ length: 25 }, (_, i) => ({
-      id: `style-${i}`,
-      styleDisplay: `ST-${i}`,
-      sizeBreakdown: 'M: 5',
-      quantity: 5,
+      styleId: `style-${i}`,
+      styleNumber: `ST-${i}`,
+      styleName: `Style ${i}`,
+      values: { 'size-m': 5 },
     }));
     const blob = await Promise.race([
       pdf(
