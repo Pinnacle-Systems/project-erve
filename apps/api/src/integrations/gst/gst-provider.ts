@@ -19,6 +19,17 @@ export interface GstProvider {
     level: GstinVerificationLevel;
   }): Promise<GstProviderResult>;
 }
+/** Raw provider counters for today. Not a balance; carries no credentials. */
+export interface GstUsageCounters {
+  totalCalls: number;
+  successfulCalls: number;
+  errorCalls: number;
+  creditsUsed: number;
+}
+/** Read-only monitoring, deliberately separate from `GstProvider` lookups. */
+export interface GstUsageProvider {
+  usageToday(): Promise<GstUsageCounters>;
+}
 export class GstProviderError extends Error {
   constructor(
     public code: GstVerificationFailure,

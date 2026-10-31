@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { canManageGstComplianceSettings, canViewGstComplianceSettings } from '@erve/shared';
+import { canManageGstComplianceSettings, canViewGstApiUsage, canViewGstComplianceSettings } from '@erve/shared';
 import type { ApiSuccessResponse, GstComplianceSettings, GstComplianceSettingsAudit, GstComplianceValues, UpdateGstComplianceSettings } from '@erve/types';
 import { ConfirmDialog, PageHeader, StatusBadge, createEnterToNextHandler } from '@erve/app-components';
 import { Button, Radio, RadioGroup, Switch, ValidationMessage } from '@erve/primitives';
@@ -10,6 +10,7 @@ import { useAuth } from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { AccountantGstinLookup } from './GstinVerificationPanel.js';
+import { GstApiUsagePanel } from './GstApiUsagePanel.js';
 
 const SETTINGS_KEY = ['gst-compliance-settings'] as const;
 const AUDIT_KEY = ['gst-compliance-settings-audit'] as const;
@@ -56,6 +57,7 @@ export function GstComplianceSettingsPage() {
         }}
       />
       {user?.roles.includes('ACCOUNTANT') && query.data.onlineGstinVerificationEnabled && <AccountantGstinLookup />}
+      {user && canViewGstApiUsage(user) && <GstApiUsagePanel />}
       <Panel title="Recent settings history">
         {audit.isPending ? <LoadingState label="Loading settings history" /> : audit.isError ? (
           <ValidationMessage tone="error">Settings history is unavailable. <Button variant="secondary" onClick={() => void audit.refetch()}>Retry history</Button></ValidationMessage>

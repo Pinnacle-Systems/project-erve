@@ -170,4 +170,53 @@ describe('GST Compliance Settings page', () => {
     expect(control('switch', 'Enable Online GSTIN Verification').disabled).toBe(true);
     await act(async () => finishSave({ data: { success: true, data: { ...persisted, onlineGstinVerificationEnabled: true, version: 1 } } })); await settle();
   });
+
+  describe("GSTINAPI Today's Usage section", () => {
+    const usageCalls = () => vi.mocked(apiClient.get).mock.calls.filter(([url]) => url === '/gst-compliance/usage');
+    function serveUsage() {
+      const settings = vi.mocked(apiClient.get).getMockImplementation()!;
+      vi.mocked(apiClient.get).mockImplementation((url, config) => url === '/gst-compliance/usage'
+        ? Promise.resolve({ data: { success: true, data: { totalCalls: 7, successfulCalls: 6, errorCalls: 1, creditsUsed: 6, fetchedAt: '2026-10-31T06:30:00.000Z' } } }) as ReturnType<typeof apiClient.get>
+        : settings(url, config));
+    }
+    it('shows the section to an Accountant, even with online verification OFF, without any request', async () => {
+      expect(persisted.onlineGstinVerificationEnabled).toBe(false);
+      await mount();
+      expect(container.textContent).toContain("GSTINAPI — Today's Usage");
+      expect(button('Refresh Usage')).toBeTruthy();
+      expect(usageCalls()).toHaveLength(0);
+    });
+    it('does not render the section or call the route for an ADMIN', async () => {
+      auth.roles = ['ADMIN']; await mount();
+      expect(container.textContent).not.toContain("Today's Usage");
+      expect([...container.querySelectorAll('button')].some((item) => item.textContent?.includes('Refresh Usage'))).toBe(false);
+      expect(usageCalls()).toHaveLength(0);
+    });
+    it('does not render the section for other roles, which cannot even read settings', async () => {
+      auth.roles = ['MERCHANDISER']; await mount();
+      expect(container.textContent).not.toContain("Today's Usage");
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+    it('requests usage only on Refresh and not when GST settings change or save', async () => {
+      serveUsage();
+      await mount();
+      await act(async () => button('Refresh Usage').click()); await settle();
+      expect(usageCalls()).toHaveLength(1);
+      expect(container.textContent).toContain('Credits Used Today');
+      await act(async () => control('switch', 'Enable Online GSTIN Verification').click());
+      await act(async () => control('radio', 'Complete Profile — 2 credits').click());
+      await act(async () => button('Save changes').click()); await settle();
+      await act(async () => button('Reload settings').click()); await settle();
+      expect(persisted.onlineGstinVerificationEnabled).toBe(true);
+      expect(usageCalls()).toHaveLength(1);
+      expect(container.textContent).not.toContain('Last successful');
+      expect(container.textContent).toContain('Total Calls');
+    });
+    it('leaves the existing settings controls functional alongside the usage section', async () => {
+      await mount();
+      expect(control('switch', 'Enable Online GSTIN Verification').disabled).toBe(false);
+      expect(control('radio', 'Demo Mode').getAttribute('aria-checked')).toBe('true');
+      expect(control('switch', 'Enable E-Way Bill Generation').disabled).toBe(true);
+    });
+  });
 });

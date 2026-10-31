@@ -107,8 +107,13 @@ export class GstinApiProvider implements GstProvider {
       )
         throw new GstProviderError('UNEXPECTED_RESPONSE', true);
       if (input.mode === 'DEMO') {
+        // Basic sample responses carry `test: true`. The observed Complete sample
+        // response omits `test`, so it may be absent there but never explicitly false.
+        // The exact sample identity and `billed_to: "test"` are required for both.
+        const testMarkerAcceptable =
+          input.level === 'COMPLETE' ? envelope.test !== false : envelope.test === true;
         if (
-          envelope.test !== true ||
+          !testMarkerAcceptable ||
           envelope.billed_to !== 'test' ||
           (envelope.credits_charged !== undefined && envelope.credits_charged !== 0)
         )

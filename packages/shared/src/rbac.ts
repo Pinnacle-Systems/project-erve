@@ -3,6 +3,14 @@ import type { Role } from '@erve/types';
 export const GST_COMPLIANCE_SETTINGS_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
 export const GST_COMPLIANCE_SETTINGS_MANAGE_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
 
+// Provider usage statistics for the shared API key: ACCOUNTANT only. ADMIN may view
+// settings but gets no operational visibility into paid-provider consumption.
+export const GST_API_USAGE_VIEW_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canViewGstApiUsage(user: RoleHolder): boolean {
+  return hasAnyRole(user, GST_API_USAGE_VIEW_ROLES);
+}
+
 export function canViewGstComplianceSettings(user: RoleHolder): boolean {
   return hasAnyRole(user, GST_COMPLIANCE_SETTINGS_VIEW_ROLES);
 }

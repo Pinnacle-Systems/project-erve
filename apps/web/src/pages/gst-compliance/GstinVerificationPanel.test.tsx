@@ -172,6 +172,37 @@ describe('GSTIN verification UI', () => {
     act(() => container.querySelector('summary')!.click());
     expect(post).not.toHaveBeenCalled();
   });
+  it('displays the normalized observed Complete Demo result as a sample with return periods', async () => {
+    // Evidence as the adapter normalizes the observed real GSTINAPI Complete sample response.
+    const observed = {
+      ...evidence,
+      legalName: 'GSTINAPI TEST PRIVATE LIMITED',
+      tradeName: 'GSTINAPI SANDBOX',
+      registrationDate: '2020-01-01',
+      businessConstitution: 'Private Limited Company',
+      registeredAddress: '1, Test Building, Test Street, Test Locality',
+      filingFrequency: 'Monthly',
+      gstr1FiledTill: '2026-09',
+      gstr3bFiledTill: '2026-09',
+      partial: false,
+      unavailable: [],
+      actualCredits: null,
+    };
+    await render(<GstinVerificationResult view={{ ...view(), evidence: observed }} />);
+    act(() => container.querySelector('summary')!.click());
+    const text = container.textContent ?? '';
+    expect(text).toContain('Demo Result');
+    expect(text).toContain('The entered GSTIN has not been verified');
+    expect(text).toContain('Sample GSTIN');
+    expect(text).toContain('00AAAAA0000A1ZT');
+    expect(text).toContain('GSTINAPI TEST PRIVATE LIMITED');
+    expect(text).toContain('GSTINAPI SANDBOX');
+    expect(text).toContain('Monthly');
+    expect(text.match(/September 2026/g)).toHaveLength(2);
+    expect(text).toContain('Filed-through values are return periods, not submission dates.');
+    expect(text).toContain('Available profile retrieved');
+    expect(text).not.toMatch(/Not Filed|Information unavailable|Partial/);
+  });
   it('hides all extra UI when verification is OFF', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { enabled: false } } });
     await render(<GstinVerificationPanel gstin="33AAAAA0000A1Z5" standalone />);
