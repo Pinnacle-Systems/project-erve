@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,7 @@ import { apiClient } from '../lib/api-client.js';
 import { setStoredToken } from '../auth/token-storage.js';
 import { AuthProvider } from '../auth/AuthContext.js';
 import { AppShell, type AppShellNavSection } from './AppShell.js';
+import { StyleSizeGrid } from '../components/style-size-grid/StyleSizeGrid.js';
 
 const TEST_USER: AuthUser = {
   id: 'user-1',
@@ -117,7 +118,10 @@ function firePointerDown(element: HTMLElement): void {
   );
 }
 
-async function renderShell(navSections: AppShellNavSection[] = NAV_SECTIONS): Promise<void> {
+async function renderShell(
+  navSections: AppShellNavSection[] = NAV_SECTIONS,
+  content: ReactNode = <div>Page Content</div>,
+): Promise<void> {
   setStoredToken('valid-token');
   apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
     if (config.url === '/auth/me') {
@@ -141,7 +145,7 @@ async function renderShell(navSections: AppShellNavSection[] = NAV_SECTIONS): Pr
           <ThemeProvider theme="default" density="comfortable">
             <AuthProvider>
               <AppShell navSections={navSections}>
-                <div>Page Content</div>
+                {content}
               </AppShell>
             </AuthProvider>
           </ThemeProvider>
@@ -160,6 +164,35 @@ describe('AppShell', () => {
 
     expect((container.querySelector('aside') as HTMLElement).className).toContain('bg-shell');
     expect((container.querySelector('header') as HTMLElement).className).toContain('bg-shell/95');
+  });
+
+  it('ISS-057: keeps the account header above sticky Style/Size grid cells', async () => {
+    await renderShell(NAV_SECTIONS, (
+      <StyleSizeGrid
+        variant="readOnly"
+        columns={[{ sizeId: 's', sizeCode: 'S' }, { sizeId: 'm', sizeCode: 'M' }]}
+        rows={[{
+          styleId: 'style-1',
+          styleNumber: 'ST-001',
+          styleName: 'Classic Tee',
+          primaryImage: null,
+          values: { s: 2, m: 3 },
+        }]}
+      />
+    ));
+
+    const header = container.querySelector('header') as HTMLElement;
+    const gridHead = container.querySelector('main th.sticky') as HTMLElement;
+    const gridTotals = container.querySelector('main tfoot td.sticky') as HTMLElement;
+    const zIndex = (element: HTMLElement) => Number(element.className.match(/\\bz-(\\d+)\\b/)?.[1] ?? 0);
+
+    expect(header.className).toContain('sticky top-0');
+    expect(gridHead).not.toBeNull();
+    expect(gridTotals).not.toBeNull();
+    expect(zIndex(header)).toBeGreaterThan(zIndex(gridHead));
+    expect(zIndex(header)).toBeGreaterThan(zIndex(gridTotals));
+    expect(header.textContent).toContain('Test Admin');
+    expect(header.textContent).toContain('Log out');
   });
 
   it('renders the Erve logo, nav sections, and the routed page content', async () => {
