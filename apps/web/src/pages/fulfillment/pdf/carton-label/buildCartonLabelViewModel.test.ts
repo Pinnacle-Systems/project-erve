@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildCartonLabelViewModel, type CartonLabelSource } from './buildCartonLabelViewModel.js';
 import type { FactoryPackingCartonView, PackingListDestinationView } from '../../types.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 
 function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryPackingCartonView {
   return {
@@ -300,7 +301,7 @@ describe('buildCartonLabelViewModel', () => {
     const image = { dataUri: 'data:image/png;base64,AA==' };
     const vm = buildCartonLabelViewModel(makeSource({ carton }), {
       generatedAt: '2026-09-15T10:00:00Z',
-    }, new Map([['style-1', image], ['style-2', { placeholder: true }]]));
+    }, new Map<string, PdfImageSource>([['style-1', image], ['style-2', { placeholder: true }]]));
 
     expect(vm.sizeColumns).toHaveLength(11);
     expect(vm.sizeColumns.map((column) => column.sizeCode)).toEqual(
