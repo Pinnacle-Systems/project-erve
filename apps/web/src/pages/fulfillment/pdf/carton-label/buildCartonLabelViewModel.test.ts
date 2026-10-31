@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildCartonLabelViewModel, type CartonLabelSource } from './buildCartonLabelViewModel.js';
 import type { FactoryPackingCartonView, PackingListDestinationView } from '../../types.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 
 function makeCarton(overrides: Partial<FactoryPackingCartonView> = {}): FactoryPackingCartonView {
   return {
@@ -143,16 +144,17 @@ describe('buildCartonLabelViewModel', () => {
     const vm = buildCartonLabelViewModel(makeSource(), { generatedAt: '2026-09-15T10:00:00Z' });
     expect(vm.styleRows).toEqual([
       {
-        id: 'style-1',
-        styleDisplay: 'ST-001 — Classic Tee',
-        sizeBreakdown: 'Medium: 10',
-        quantity: 10,
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        values: { 'size-1': 10 },
       },
     ]);
     expect(vm.totalQuantity).toBe(10);
+    expect(vm.sizeColumns.map((column) => column.sizeCode)).toEqual(['M']);
   });
 
-  it('groups multiple Sizes of the same Style into one row with a compact Size Breakdown, without dropping any', () => {
+  it('groups multiple Sizes of the same Style into one row with dynamic Size columns', () => {
     const carton = makeCarton({
       lines: [
         {
@@ -200,17 +202,17 @@ describe('buildCartonLabelViewModel', () => {
     // One Style (ST-001) appears once despite having two Size lines.
     expect(vm.styleRows).toEqual([
       {
-        id: 'style-1',
-        styleDisplay: 'ST-001 — Classic Tee',
-        sizeBreakdown: 'Small: 4 · Medium: 6',
-        quantity: 10,
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        values: { 'size-1': 4, 'size-2': 6 },
       },
-      { id: 'style-2', styleDisplay: 'ST-002 — Polo', sizeBreakdown: 'Large: 8', quantity: 8 },
+      { styleId: 'style-2', styleNumber: 'ST-002', styleName: 'Polo', values: { 'size-3': 8 } },
     ]);
     expect(vm.totalQuantity).toBe(18);
   });
 
-  it('prints authoritative Size order in a compact label even when carton lines arrive scrambled', () => {
+  it('prints authoritative Size-column order even when carton lines arrive scrambled', () => {
     const carton = makeCarton();
     const source = carton.lines[0]!;
     carton.lines = [
@@ -234,11 +236,12 @@ describe('buildCartonLabelViewModel', () => {
     const vm = buildCartonLabelViewModel(makeSource({ carton }), {
       generatedAt: '2026-09-15T10:00:00Z',
     });
-    expect(vm.styleRows[0]).toMatchObject({ sizeBreakdown: 'Small: 7 · Large: 3', quantity: 10 });
+    expect(vm.sizeColumns.map((column) => column.sizeCode)).toEqual(['S', 'L']);
+    expect(vm.styleRows[0]).toMatchObject({ values: { small: 7, large: 3 } });
     expect(vm.totalQuantity).toBe(10);
   });
 
-  it('sums duplicate Style+Size lines within the same carton into one Size Breakdown entry rather than printing it twice', () => {
+  it('sums duplicate Style+Size lines into one Size cell rather than printing it twice', () => {
     const carton = makeCarton({
       lines: [
         {
@@ -273,12 +276,50 @@ describe('buildCartonLabelViewModel', () => {
     });
     expect(vm.styleRows).toEqual([
       {
-        id: 'style-1',
-        styleDisplay: 'ST-001 — Classic Tee',
-        sizeBreakdown: 'Medium: 10',
-        quantity: 10,
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        values: { 'size-1': 10 },
       },
     ]);
+  });
+
+  it('supports 11 variable Size columns with gaps, duplicate entries and stable Style image attachment', () => {
+    const carton = makeCarton();
+    const base = carton.lines[0]!;
+    carton.lines = Array.from({ length: 11 }, (_, index) => ({
+      ...base,
+      sizeId: `size-${index}`,
+      sizeCode: `SZ${index + 1}`,
+      sizeLabel: `Size ${index + 1}`,
+      sizeSortOrder: index,
+      quantity: index + 1,
+    }));
+    carton.lines.push({ ...carton.lines[3]!, saleOrderLineId: 'duplicate', quantity: 5 });
+    carton.lines.push({ ...base, styleId: 'style-2', styleNumber: 'ST-002', sizeId: 'size-0', sizeCode: 'SZ1', quantity: 2 });
+    carton.totalQuantity = 73;
+    const image = { dataUri: 'data:image/png;base64,AA==' };
+    const vm = buildCartonLabelViewModel(makeSource({ carton }), {
+      generatedAt: '2026-09-15T10:00:00Z',
+    }, new Map<string, PdfImageSource>([['style-1', image], ['style-2', { placeholder: true }]]));
+
+    expect(vm.sizeColumns).toHaveLength(11);
+    expect(vm.sizeColumns.map((column) => column.sizeCode)).toEqual(
+      Array.from({ length: 11 }, (_, index) => `SZ${index + 1}`),
+    );
+    expect(vm.styleRows).toHaveLength(2);
+    expect(vm.styleRows[0]).toMatchObject({
+      styleId: 'style-1',
+      image,
+      values: { 'size-0': 1, 'size-3': 9, 'size-10': 11 },
+    });
+    expect(vm.styleRows[1]).toMatchObject({
+      styleId: 'style-2',
+      image: { placeholder: true },
+      values: { 'size-0': 2 },
+    });
+    expect(Object.keys(vm.styleRows[1]!.values)).toEqual(['size-0']);
+    expect(vm.totalQuantity).toBe(73);
   });
 
   it('omits Net Weight/Gross Weight/Dimensions entirely when absent, rather than printing a placeholder', () => {

@@ -1,5 +1,6 @@
 import { buildCartonLabelViewModel, type CartonLabelPdfMeta, type CartonLabelSource } from './buildCartonLabelViewModel.js';
 import { CartonLabelDocument } from './CartonLabelDocument.js';
+import { prepareCartonLabelPdfImages } from './prepareCartonLabelPdfImages.js';
 import { renderPdfBlob } from '../../../../lib/pdf/generate.js';
 
 /**
@@ -16,6 +17,7 @@ export async function generateCartonLabelPdfBlob(source: CartonLabelSource, meta
   if (source.carton.auditState !== 'INSPECTED') {
     throw new Error('Carton label can only be generated for a currently Inspected carton.');
   }
-  const viewModel = buildCartonLabelViewModel(source, meta);
+  const styleImages = await prepareCartonLabelPdfImages(source.carton);
+  const viewModel = buildCartonLabelViewModel(source, meta, styleImages);
   return renderPdfBlob(<CartonLabelDocument viewModel={viewModel} />);
 }

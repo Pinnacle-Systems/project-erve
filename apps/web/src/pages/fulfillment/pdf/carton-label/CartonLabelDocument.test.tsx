@@ -17,12 +17,13 @@ function makeViewModel(overrides: Partial<CartonLabelPdfViewModel> = {}): Carton
       { label: 'Address', value: '123 Test Street, Chennai, TN, India' },
     ],
     totalQuantity: 10,
+    sizeColumns: [{ sizeId: 'size-m', sizeCode: 'M' }],
     styleRows: [
       {
-        id: 'style-1',
-        styleDisplay: 'ST-001 — Classic Tee',
-        sizeBreakdown: 'Medium: 10',
-        quantity: 10,
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'Classic Tee',
+        values: { 'size-m': 10 },
       },
     ],
     ...overrides,
@@ -58,10 +59,10 @@ describe('CartonLabelDocument', () => {
 
   it('renders a carton with many Style rows without hanging', async () => {
     const styleRows = Array.from({ length: 25 }, (_, i) => ({
-      id: `style-${i}`,
-      styleDisplay: `ST-${i}`,
-      sizeBreakdown: 'M: 5',
-      quantity: 5,
+      styleId: `style-${i}`,
+      styleNumber: `ST-${i}`,
+      styleName: `Style ${i}`,
+      values: { 'size-m': 5 },
     }));
     const blob = await Promise.race([
       pdf(
@@ -79,42 +80,56 @@ describe('CartonLabelDocument', () => {
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders a Style row with a long Size Breakdown (many Sizes grouped under one Style) without hanging', async () => {
-    const sizeBreakdown = Array.from({ length: 12 }, (_, i) => `SZ${i}: ${i + 1}`).join(' · ');
+  it.each([9, 10, 11])('renders %i configured Size columns, long Style names and totals', async (count) => {
+    const sizeColumns = Array.from({ length: count }, (_, index) => ({
+      sizeId: 'size-' + index,
+      sizeCode: 'SZ' + (index + 1),
+    }));
+    const styleRows = [
+      {
+        styleId: 'style-1',
+        styleNumber: 'ST-001',
+        styleName: 'A Very Long Style Name That Could Wrap Across Lines',
+        image: { placeholder: true } as const,
+        values: Object.fromEntries(sizeColumns.map((column, index) => [column.sizeId, index + 1])),
+      },
+      {
+        styleId: 'style-2',
+        styleNumber: 'ST-002',
+        styleName: 'Polo',
+        values: { 'size-0': 2 },
+      },
+    ];
+    const totalQuantity = count * (count + 1) / 2 + 2;
     const blob = await pdf(
-      <CartonLabelDocument
-        viewModel={makeViewModel({
-          styleRows: [
-            {
-              id: 'style-1',
-              styleDisplay: 'ST-001 — A Very Long Style Name That Could Wrap Across Lines',
-              sizeBreakdown,
-              quantity: 78,
-            },
-          ],
-          totalQuantity: 78,
-        })}
-      />,
+      <CartonLabelDocument viewModel={makeViewModel({ sizeColumns, styleRows, totalQuantity })} />,
     ).toBlob();
     expect(blob.size).toBeGreaterThan(0);
   });
 
-  it('renders multiple Styles each grouped into a single row (not repeated per Size)', async () => {
+  it('renders multiple Styles once each, with an explicit thumbnail placeholder', async () => {
     const blob = await pdf(
       <CartonLabelDocument
         viewModel={makeViewModel({
+          sizeColumns: [
+            { sizeId: 's', sizeCode: 'S' },
+            { sizeId: 'm', sizeCode: 'M' },
+            { sizeId: 'l', sizeCode: 'L' },
+          ],
           styleRows: [
             {
-              id: 'style-1',
-              styleDisplay: 'ST-001 — Classic Tee',
-              sizeBreakdown: 'S: 3 · M: 4 · L: 2',
-              quantity: 9,
+              styleId: 'style-1',
+              styleNumber: 'ST-001',
+              styleName: 'Classic Tee',
+              image: { placeholder: true },
+              values: { s: 3, m: 4, l: 2 },
             },
             {
-              id: 'style-2',
-              styleDisplay: 'ST-002 — Polo',
-              sizeBreakdown: 'M: 2 · L: 2',
-              quantity: 4,
+              styleId: 'style-2',
+              styleNumber: 'ST-002',
+              styleName: 'Polo',
+              image: { placeholder: true },
+              values: { m: 2, l: 2 },
             },
           ],
           totalQuantity: 13,

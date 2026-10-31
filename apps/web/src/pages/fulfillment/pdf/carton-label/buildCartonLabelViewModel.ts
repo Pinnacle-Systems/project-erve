@@ -1,6 +1,7 @@
 import type { PdfKeyValueItem } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import type { FactoryPackingCartonView, PackingListDestinationView } from '../../types.js';
-import { groupLinesByStyle } from '../../style-size-grouping.js';
+import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
+import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 
 export interface CartonLabelSource {
   carton: FactoryPackingCartonView;
@@ -15,12 +16,13 @@ export interface CartonLabelPdfMeta {
   generatedBy?: string | null;
 }
 
-/** ISS-009: one row per Style within the carton — `sizeBreakdown` compresses every Size quantity for that Style into a single compact, space-saving column rather than a full Size-columns grid, since a carton label's print area is small. */
+/** ISS-009: one Style per row, authoritative Sizes as columns. Images are pre-resolved before rendering. */
 export interface CartonLabelStyleRow {
-  id: string;
-  styleDisplay: string;
-  sizeBreakdown: string;
-  quantity: number;
+  styleId: string;
+  styleNumber: string;
+  styleName: string | null;
+  image?: PdfImageSource;
+  values: Record<string, number | null>;
 }
 
 export interface CartonLabelPdfViewModel {
@@ -31,6 +33,7 @@ export interface CartonLabelPdfViewModel {
   destinationName: string;
   identityItems: PdfKeyValueItem[];
   totalQuantity: number;
+  sizeColumns: SizeColumn[];
   styleRows: CartonLabelStyleRow[];
 }
 
@@ -61,13 +64,15 @@ function formatAddress(destination: PackingListDestinationView): string {
  * their absence must never block label generation.
  *
  * Carton contents are grouped by stable Style identity (`styleId`, never
- * display name) into one row per Style — ISS-009, so a Style with several
- * Sizes in the same carton prints once with a compact Size Breakdown
- * ("S: 3 · M: 4 · L: 2") rather than repeating the Style on separate rows.
+ * display name) into one row per Style, with the configured Size master order
+ * running across columns (including 9+ Sizes). Missing Style/Size cells stay
+ * distinct from zero; duplicate Size entries are summed by the grouping helper.
+ * Image bytes are resolved by the caller, never fetched inside the builder.
  */
 export function buildCartonLabelViewModel(
   source: CartonLabelSource,
   meta: CartonLabelPdfMeta,
+  styleImages?: Map<string, PdfImageSource>,
 ): CartonLabelPdfViewModel {
   const { carton, destination, saleOrderNumber } = source;
   const destinationName = destination.label ?? `${destination.city}, ${destination.state}`;
@@ -97,13 +102,16 @@ export function buildCartonLabelViewModel(
     destinationName,
     identityItems,
     totalQuantity: carton.totalQuantity,
-    styleRows: groupLinesByStyle(carton.lines).map((group) => ({
-      id: group.styleId,
-      styleDisplay: `${group.styleNumber} — ${group.styleName}`,
-      sizeBreakdown: group.sizeEntries
-        .map((entry) => `${entry.sizeLabel}: ${entry.quantity}`)
-        .join(' · '),
-      quantity: group.totalQuantity,
-    })),
+    sizeColumns: distinctSizeColumns(carton.lines),
+    styleRows: groupLinesByStyle(carton.lines).map((group) => {
+      const image = styleImages?.get(group.styleId);
+      return {
+        styleId: group.styleId,
+        styleNumber: group.styleNumber,
+        styleName: group.styleName,
+        ...(image !== undefined ? { image } : {}),
+        values: Object.fromEntries(group.sizeEntries.map((entry) => [entry.sizeId, entry.quantity])),
+      };
+    }),
   };
 }
