@@ -18,7 +18,10 @@ import { gstinVerificationRepository } from './modules/gst-compliance/gstin-veri
 import { authorizeGstVerificationTarget } from './modules/gst-compliance/gstin-verification.access.js';
 import { DEFAULT_GST_COMPLIANCE_VALUES } from './modules/gst-compliance/gst-compliance-settings.service.js';
 import { GstinApiProvider } from './integrations/gst/gstin-api.provider.js';
-import type { GstProvider } from './integrations/gst/gst-provider.js';
+import type { GstProvider, GstUsageProvider } from './integrations/gst/gst-provider.js';
+import { GstinApiUsageProvider } from './integrations/gst/gstin-api-usage.provider.js';
+import { createGstApiUsageRouter } from './modules/gst-compliance/gst-api-usage.routes.js';
+import { createGstApiUsageService } from './modules/gst-compliance/gst-api-usage.service.js';
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 import {
@@ -75,7 +78,7 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
   });
 }
 
-export function createApp(options: { gstProvider?: GstProvider } = {}) {
+export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider?: GstUsageProvider } = {}) {
   const app = express();
 
   // Exactly one hop of trust: the local CloudPanel-managed Nginx reverse
@@ -151,6 +154,9 @@ export function createApp(options: { gstProvider?: GstProvider } = {}) {
     liveActivationAuthorized: () => env.GST_COMPLIANCE_LIVE_AUTHORIZED,
     liveLookupAuthorized: () => env.GST_VERIFICATION_LIVE_LOOKUP_AUTHORIZED,
     ttlSeconds: { BASIC: env.GST_VERIFICATION_BASIC_TTL_SECONDS, COMPLETE: env.GST_VERIFICATION_COMPLETE_TTL_SECONDS },
+  })));
+  app.use('/gst-compliance/usage', createGstApiUsageRouter(createGstApiUsageService({
+    provider: options.gstUsageProvider ?? new GstinApiUsageProvider({ apiKey: env.GST_VERIFICATION_API_KEY, timeoutMs: env.GST_VERIFICATION_TIMEOUT_MS }),
   })));
   app.use('/purchase-orders', purchaseOrdersRouter);
   app.use('/job-orders', jobOrdersRouter);
