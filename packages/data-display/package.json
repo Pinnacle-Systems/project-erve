@@ -11,6 +11,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@erve/app-components": "workspace:*",
     "@erve/primitives": "workspace:*",
     "@erve/layout": "workspace:*",
     "@erve/theme": "workspace:*",
