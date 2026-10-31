@@ -16,7 +16,7 @@ export { FilterBar } from './components/filter-bar';
 export type { FilterBarProps, FilterOption } from './components/filter-bar';
 
 export { EmptyState } from './components/empty-state';
-export type { EmptyStateProps } from './components/empty-state';
+export type { EmptyStateProps, EmptyStateDensity, EmptyStateTone } from './components/empty-state';
 
 export { ErrorState } from './components/error-state';
 export type { ErrorStateProps } from './components/error-state';
