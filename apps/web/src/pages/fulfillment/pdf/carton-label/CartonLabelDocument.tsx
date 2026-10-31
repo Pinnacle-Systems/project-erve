@@ -5,8 +5,8 @@ import { PdfFooter } from '../../../../lib/pdf/core/PdfFooter.js';
 import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
-import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
-import type { CartonLabelStyleRow, CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
+import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
+import type { CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
 
 const styles = StyleSheet.create({
   identityBlock: { marginBottom: 14, paddingBottom: 10, borderBottom: '1 solid #999999' },
@@ -14,17 +14,6 @@ const styles = StyleSheet.create({
   destinationName: { fontSize: 13, fontWeight: 700, color: '#111111', marginTop: 4 },
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
 });
-
-const styleRowColumns: PdfTableColumn<CartonLabelStyleRow>[] = [
-  { key: 'styleDisplay', header: 'Style', width: '45%', value: (row) => row.styleDisplay },
-  {
-    key: 'sizeBreakdown',
-    header: 'Size Breakdown',
-    width: '35%',
-    value: (row) => row.sizeBreakdown,
-  },
-  { key: 'quantity', header: 'Total', width: '20%', align: 'right', value: (row) => row.quantity },
-];
 
 export interface CartonLabelDocumentProps {
   viewModel: CartonLabelPdfViewModel;
@@ -51,7 +40,12 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
       </PdfSection>
 
       <PdfSection title="Carton Contents" wrap>
-        <PdfTable columns={styleRowColumns} rows={viewModel.styleRows} rowKey={(row) => row.id} />
+        <PdfStyleSizeMatrix
+          columns={viewModel.sizeColumns}
+          rows={viewModel.styleRows}
+          maxColumnsPerGroup={8}
+          styleColumnWidth="35%"
+        />
         <Text style={styles.totalsLine}>Total: {viewModel.totalQuantity}</Text>
       </PdfSection>
 
