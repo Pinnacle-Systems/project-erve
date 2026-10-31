@@ -423,9 +423,11 @@ export function AppShell({ navSections, children }: AppShellProps) {
             : 'md:pl-[var(--erp-shell-sidebar-width)]',
         )}
       >
+        {/* Keep the shell above the z-10 sticky Style/Size grid cells while scrolling.
+            The header and table were peers at z-10; the later-rendered cells could cover user controls. */}
         <header
           ref={headerRef}
-          className="sticky top-0 z-10 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8"
+          className="sticky top-0 z-20 border-b border-border bg-shell/95 px-4 py-3 backdrop-blur-sm md:px-8"
         >
           <div className="flex items-center justify-between gap-4">
             <UserIdentitySummary name={user?.name} roles={user?.roles} />
