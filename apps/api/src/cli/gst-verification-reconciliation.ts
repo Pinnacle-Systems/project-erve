@@ -404,9 +404,9 @@ const GSTIN_SHAPE = /\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]/i;
 const UUID_SHAPE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const CREDENTIAL_SHAPES = [
   // "name: value" / "name=value" (a value of at least four characters)
-  /\b(?:api[-_ ]?key|apikey|secret(?:[-_ ]?key)?|passw(?:or)?d|pwd|passphrase|token|credential)s?\s*[:=]\s*\S{4,}/i,
+  /(?:api[-_ ]?key|apikey|secret(?:[-_ ]?(?:access[-_ ]?)?key)?|passw(?:or)?d|pwd|passphrase|token|credential)s?\s*[:=]\s*\S{4,}/i,
   // "password is hunter2", "api key abc123" (the value must contain a digit)
-  /\b(?:api[-_ ]?key|apikey|secret(?:[-_ ]?key)?|passw(?:or)?d|pwd|passphrase)\s+(?:is\s+|was\s+|-\s+)?(?=\S*\d)\S{6,}/i,
+  /(?:api[-_ ]?key|apikey|secret(?:[-_ ]?(?:access[-_ ]?)?key)?|passw(?:or)?d|pwd|passphrase)\s+(?:is\s+|was\s+|-\s+)?(?=\S*\d)\S{6,}/i,
   /\bauthorization\s*[:=]\s*(?=\S*\d)\S{6,}/i,
   /\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
@@ -417,12 +417,19 @@ const CREDENTIAL_SHAPES = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}/,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
 ];
+/** Percent-decodes up to three times so double or triple encoding cannot hide a value. */
 const safeDecode = (value: string) => {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
+  let current = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) break;
+      current = decoded;
+    } catch {
+      break;
+    }
   }
+  return current.normalize('NFKC').replace(/\p{Cf}/gu, '');
 };
 
 /**
@@ -583,6 +590,8 @@ function assertDecisionInputs(input: ReconcileInput): void {
     fail("--operation-id must be 1-64 letters, digits, '-' or '_'");
   if (input.operatorEmail.length > 254 || !/^[^\s@]{1,64}@[^\s@]{1,255}$/.test(input.operatorEmail))
     fail('--operator-email must be an email address');
+  // It is printed and stored as attribution, so it gets the same content rules as free text.
+  assertNoSensitiveText('--operator-email', input.operatorEmail);
   // Every operator-supplied string that is persisted in the audit metadata.
   assertNoSensitiveText('--reason', input.reason);
   assertNoSensitiveText('--evidence-ref', input.evidenceRef);

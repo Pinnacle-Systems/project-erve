@@ -297,6 +297,12 @@ describe('sensitive operator text', () => {
     ['api key without separator', 'api key abc123', 'CREDENTIAL'],
     ['short separated base64url', 'Xk9_Lm2-Qp7Zr4Tn8Vb3Wc6Yd1Fg5Hj0', 'CREDENTIAL'],
     ['mixed-case alphanumeric blob', 'Xk9Lm2Qp7Zr4Tn8Vb3Wc6Yd1', 'CREDENTIAL'],
+    ['double percent-encoded GSTIN', '27AAPFU0939F1Z%2556', 'GSTIN'],
+    ['key after underscore', 'access_token=abcd1234', 'CREDENTIAL'],
+    ['prefixed upper-case key', 'AWS_SECRET_ACCESS_KEY=abcd1234', 'CREDENTIAL'],
+    ['environment style password', 'DB_PASSWORD=hunter22', 'CREDENTIAL'],
+    ['camel-case key', 'myApiKey=abcd1234', 'CREDENTIAL'],
+    ['camel-case token', 'csrfToken=abcd1234', 'CREDENTIAL'],
   ];
   it.each([...SENSITIVE, ...EVASIONS])('detects %s', (_name, value, kind) => {
     expect(findSensitiveContent(value)).toBe(kind);
@@ -435,12 +441,16 @@ describe('sensitive operator text', () => {
       { operationId: 'password=hunter2hunter2' },
       { operationId: 'x'.repeat(65) },
       { operatorEmail: 'not an email hunter2' },
+      { operatorEmail: 'password=hunter2hunter2@example.com' },
+      { operatorEmail: `ops${String.fromCharCode(27)}[31m@example.com` },
     ] satisfies Partial<ReconcileInput>[]) {
       const error = await reconcileGstVerificationClaim(await inputFor(held, overrides)).catch(
         (e: Error) => e,
       );
       expect(error).toBeInstanceOf(GstReconciliationError);
-      expect((error as Error).message).toMatch(/--operation-id must be|--operator-email must be/);
+      expect((error as Error).message).toMatch(
+        /--operation-id must be|--operator-email (must be|appears|must not contain)/,
+      );
       expect((error as Error).message).not.toContain('hunter2');
     }
     expect(await claims()).toBe(1);
