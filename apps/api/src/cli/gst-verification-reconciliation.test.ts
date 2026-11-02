@@ -147,7 +147,7 @@ describe('argument parsing', () => {
     });
   });
   it.each([
-    ['unknown flag', [...notCharged, '--force'], /force/],
+    ['unknown flag', [...notCharged, '--force'], /unknown option/],
     [
       'duplicate-charge acknowledgement',
       [...notCharged, '--acknowledge-duplicate-charge'],
@@ -278,8 +278,36 @@ describe('sensitive operator text', () => {
     'INV-2026-000123 line 4',
   ];
 
-  it.each(SENSITIVE)('detects %s', (_name, value, kind) => {
+  // Evasion attempts caught by the detector itself (invisible characters are also
+  // refused outright by the field check, which runs first).
+  const EVASIONS: Array<[string, string, 'GSTIN' | 'CREDENTIAL']> = [
+    ['zero-width space inside a GSTIN', '27AAPFU0939F1Z\u200BV', 'GSTIN'],
+    ['soft hyphens between characters', '2\u00AD7AAPFU0939F1ZV', 'GSTIN'],
+    [
+      'fullwidth GSTIN',
+      '\uFF12\uFF17\uFF21\uFF21\uFF30\uFF26\uFF35\uFF10\uFF19\uFF13\uFF19\uFF26\uFF11\uFF3A\uFF36',
+      'GSTIN',
+    ],
+    ['slash separated GSTIN', '27/AAPFU/0939/F/1/Z/V', 'GSTIN'],
+    ['comma separated GSTIN', '27,AAPFU,0939,F1ZV', 'GSTIN'],
+    ['percent-encoded GSTIN', '27AAPFU0939F1Z%56', 'GSTIN'],
+    ['fullwidth equals sign', 'password\uFF1Dhunter2hunter2', 'CREDENTIAL'],
+    ['keyword split by zero-width space', 'pass\u200Bword=hunter2hunter2', 'CREDENTIAL'],
+    ['keyword without separator', 'password is hunter2', 'CREDENTIAL'],
+    ['api key without separator', 'api key abc123', 'CREDENTIAL'],
+    ['short separated base64url', 'Xk9_Lm2-Qp7Zr4Tn8Vb3Wc6Yd1Fg5Hj0', 'CREDENTIAL'],
+    ['mixed-case alphanumeric blob', 'Xk9Lm2Qp7Zr4Tn8Vb3Wc6Yd1', 'CREDENTIAL'],
+  ];
+  it.each([...SENSITIVE, ...EVASIONS])('detects %s', (_name, value, kind) => {
     expect(findSensitiveContent(value)).toBe(kind);
+  });
+  it.each([
+    'support/tickets/2026/11/12345678',
+    'token: 5 credits',
+    'password reset requested by the vendor',
+    'provider authorization: granted',
+  ])('does not block ordinary prose or paths: %s', (value) => {
+    expect(findSensitiveContent(value)).toBeNull();
   });
   it.each(ALLOWED)('allows an ordinary reference: %s', (value) => {
     expect(findSensitiveContent(value)).toBeNull();
@@ -360,6 +388,63 @@ describe('sensitive operator text', () => {
       expect(await prisma.auditLog.count()).toBe(0);
     },
   );
+
+  it.each(fieldCases)('%s refuses control and invisible characters', (flag, _key, build) => {
+    const values = [
+      'first line of the text\nsecond line of the text',
+      `ansi sequence ${String.fromCharCode(27)}[31m in the text`,
+      `zero${String.fromCharCode(0x200b)}width character in the text`,
+    ];
+    for (const value of values) {
+      let message = '';
+      try {
+        parseReconcileArgs(build(value));
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain(flag);
+      expect(message).toMatch(/control or invisible characters|printable/);
+    }
+  });
+
+  it('never echoes stray words or unknown option values from the argument parser', () => {
+    const attempts: string[][] = [
+      [...base, '--reason', 'Provider ledger', 'password:', 'hunter2hunter2'],
+      [...base, '--foo=hunter2hunter2'],
+      [...base, '--hunter2hunter2'],
+    ];
+    for (const argv of attempts) {
+      let message = '';
+      try {
+        parseReconcileArgs(argv);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).not.toBe('');
+      expect(message).not.toContain('hunter2');
+      expect(message).not.toContain('password');
+    }
+    expect(() => parseReconcileArgs([...base, '--reason', 'a', 'extra'])).toThrow(
+      /quote any value that contains spaces/,
+    );
+  });
+
+  it('requires identifier-shaped operation ids and operator emails, without echoing them', async () => {
+    const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+    for (const overrides of [
+      { operationId: 'password=hunter2hunter2' },
+      { operationId: 'x'.repeat(65) },
+      { operatorEmail: 'not an email hunter2' },
+    ] satisfies Partial<ReconcileInput>[]) {
+      const error = await reconcileGstVerificationClaim(await inputFor(held, overrides)).catch(
+        (e: Error) => e,
+      );
+      expect(error).toBeInstanceOf(GstReconciliationError);
+      expect((error as Error).message).toMatch(/--operation-id must be|--operator-email must be/);
+      expect((error as Error).message).not.toContain('hunter2');
+    }
+    expect(await claims()).toBe(1);
+  });
 
   it('keeps a complete GSTIN out of the audit trail even when the operator supplies one', async () => {
     const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });

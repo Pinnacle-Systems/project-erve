@@ -324,11 +324,19 @@ function strictParse<T extends Record<string, { type: 'string' | 'boolean'; shor
     return parseArgs({ args: argv, options, strict: true, allowPositionals: false }).values;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const code = (error as { code?: string }).code;
     if (/acknowledge-duplicate-charge/.test(message))
       throw new GstReconciliationError(
         '--acknowledge-duplicate-charge is not supported: CHARGED_NO_RESULT never releases a claim. ' +
           'Releasing it requires separately authorized duplicate-charge handling.',
       );
+    // parseArgs echoes stray words verbatim; a mis-quoted --reason could carry a secret.
+    if (code === 'ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL')
+      throw new GstReconciliationError(
+        'unexpected extra argument: quote any value that contains spaces (for example --reason "...")',
+      );
+    if (code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION')
+      throw new GstReconciliationError('unknown option (the name is not echoed); see --help');
     throw new GstReconciliationError(message);
   }
 }
@@ -395,7 +403,11 @@ function parseDate(flag: string, value: string | undefined): Date | undefined {
 const GSTIN_SHAPE = /\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]/i;
 const UUID_SHAPE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const CREDENTIAL_SHAPES = [
-  /(api[-_ ]?key|apikey|secret|passw(?:or)?d|pwd|passphrase|token|bearer|authorization|credential)s?\s*[:=]/i,
+  // "name: value" / "name=value" (a value of at least four characters)
+  /\b(?:api[-_ ]?key|apikey|secret(?:[-_ ]?key)?|passw(?:or)?d|pwd|passphrase|token|credential)s?\s*[:=]\s*\S{4,}/i,
+  // "password is hunter2", "api key abc123" (the value must contain a digit)
+  /\b(?:api[-_ ]?key|apikey|secret(?:[-_ ]?key)?|passw(?:or)?d|pwd|passphrase)\s+(?:is\s+|was\s+|-\s+)?(?=\S*\d)\S{6,}/i,
+  /\bauthorization\s*[:=]\s*(?=\S*\d)\S{6,}/i,
   /\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\./,
@@ -405,33 +417,44 @@ const CREDENTIAL_SHAPES = [
   /\bgh[pousr]_[A-Za-z0-9]{20,}/,
   /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
 ];
+const safeDecode = (value: string) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
 
 /**
  * Operator text is persisted in the audit trail, so it must not carry secrets or a
  * complete GSTIN (the audit trail only ever holds masked GSTINs). The matched text is
  * never echoed: a rejected value must not reach the terminal, shell history logs or CI output.
+ * This is a conservative heuristic, not a guarantee: it normalizes Unicode look-alikes,
+ * drops invisible characters and checks a percent-decoded copy, but cannot recognise every secret.
  */
 export function findSensitiveContent(value: string): 'GSTIN' | 'CREDENTIAL' | null {
-  const compact = value.replace(/[\s._-]/g, '');
-  if (GSTIN_SHAPE.test(compact)) return 'GSTIN';
-  if (CREDENTIAL_SHAPES.some((shape) => shape.test(value))) return 'CREDENTIAL';
-  const withoutIds = value.replace(UUID_SHAPE, ' ');
-  for (const [candidate] of withoutIds.matchAll(/[A-Za-z0-9+/_=-]{32,}/g)) {
-    const hasLetter = /[A-Za-z]/.test(candidate);
-    const hasDigit = /\d/.test(candidate);
-    const separated = /[-_]/.test(candidate);
-    // Hex/base64 blobs, or base64url with mixed case; hyphenated ticket ids stay allowed.
-    if (
-      hasLetter &&
-      hasDigit &&
-      (!separated || (/[a-z]/.test(candidate) && /[A-Z]/.test(candidate) && candidate.length >= 40))
-    )
-      return 'CREDENTIAL';
+  const normalized = value.normalize('NFKC').replace(/\p{Cf}/gu, '');
+  const views = [normalized, safeDecode(normalized)];
+  // Any separator (space, slash, comma, colon, ...) may be used to split a GSTIN.
+  if (views.some((view) => GSTIN_SHAPE.test(view.replace(/[^A-Za-z0-9]/g, '')))) return 'GSTIN';
+  if (views.some((view) => CREDENTIAL_SHAPES.some((shape) => shape.test(view))))
+    return 'CREDENTIAL';
+  for (const view of views) {
+    for (const [candidate] of view.replace(UUID_SHAPE, ' ').matchAll(/[A-Za-z0-9+_=-]{24,}/g)) {
+      if (!/[A-Za-z]/.test(candidate) || !/\d/.test(candidate)) continue;
+      const separated = /[-_]/.test(candidate);
+      const mixedCase = /[a-z]/.test(candidate) && /[A-Z]/.test(candidate);
+      // Hex/base64 blobs; hyphenated lower- or upper-case ticket ids stay allowed.
+      if (!separated && (candidate.length >= 32 || mixedCase)) return 'CREDENTIAL';
+      if (separated && mixedCase && candidate.length >= 32) return 'CREDENTIAL';
+    }
   }
   return null;
 }
 function assertNoSensitiveText(flag: string, value: string | undefined): void {
   if (!value) return;
+  if (/[\p{Cc}\p{Cf}]/u.test(value))
+    throw new GstReconciliationError(`${flag} must not contain control or invisible characters`);
   const found = findSensitiveContent(value);
   if (found === 'GSTIN')
     throw new GstReconciliationError(
@@ -555,6 +578,11 @@ function assertDecisionInputs(input: ReconcileInput): void {
   const fail: (message: string) => never = (message) => {
     throw new GstReconciliationError(message);
   };
+  // Identifiers are echoed in messages, so they must look like identifiers.
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.operationId))
+    fail("--operation-id must be 1-64 letters, digits, '-' or '_'");
+  if (input.operatorEmail.length > 254 || !/^[^\s@]{1,64}@[^\s@]{1,255}$/.test(input.operatorEmail))
+    fail('--operator-email must be an email address');
   // Every operator-supplied string that is persisted in the audit metadata.
   assertNoSensitiveText('--reason', input.reason);
   assertNoSensitiveText('--evidence-ref', input.evidenceRef);
@@ -757,7 +785,8 @@ export async function reconcileGstVerificationClaim(
         claimDisposition,
         claimAgeMinutes,
         now,
-        // Recorded exactly as observed under the locks, never asserted as constants.
+        // Computed from the rows read under the locks. Every refusal above exits before this
+        // point, so a recorded value can only be one the checks actually established.
         checks: {
           advisoryLockHeld: true, // the lock statement above completed without error
           operationRowLocked: locked.length === 1,

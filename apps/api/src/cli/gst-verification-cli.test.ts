@@ -153,7 +153,7 @@ describe('packaged GST claim CLIs', () => {
         {},
         /never releases a claim/,
       ],
-      ['unknown flag', [...target, '--force'], {}, /force/],
+      ['unknown flag', [...target, '--force'], {}, /unknown option/],
     ];
     for (const [, extra, env, message] of cases) {
       const result = await run(reconcile, [...base, ...extra], env);
