@@ -774,6 +774,50 @@ node historical-import-production.js --snapshot $R/after.json --expect-database 
 - Take a `pg_dump --format=custom` backup and record the `shared/uploads/` file manifest immediately before `--execute` (§11).
 - Later historical phases (H2C/H2D) must locate these records by business identity: Job Orders by `legacyReferenceNumber`, Styles by Season + LMIX, source documents by `sourceChecksumSha256`, and the batch by `ImportBatch.sourceLabel` (`AW25-SS26`). Never by a database id copied from an artifact.
 
+### 12.7 GSTINAPI held claims: review and reconciliation
+
+A verification claim (`mode:GSTIN:level`) is retained after an `UNCERTAIN` outcome (network error, timeout, 5xx other than 502, malformed response, local failure after dispatch) and after an interrupted `DISPATCHED` execution. A retained claim blocks every further lookup of that GSTIN, mode and coverage. **Nothing releases it automatically** — `reviewAfter` is informational — so a person must decide. Two server-side CLIs support that decision. Neither calls GSTINAPI, consumes credits, retries a verification, or has an HTTP route or UI. Run both from `$DEPLOY_ROOT/current/api` as `SITE_USER`; they are separately packaged (`gst-verification-review.js`, `gst-verification-reconcile.js`) and neither bundle contains the provider adapter.
+
+> **Releasing a claim is not proof that the provider did not charge credits.** It only allows a later, separately confirmed lookup, which can incur another charge if the earlier one was billed. The evidence you supply is your attestation; the tool records it and cannot verify it.
+
+**1. Review (read-only).** Lists operation counts by mode and outcome, the active claim count, each held operation (masked GSTIN, dispatch/review timestamps, failure code, claim age, evidence status, claim fingerprint) and any anomaly. Full GSTINs are never printed. The snapshot runs in a `READ ONLY` transaction.
+
+```bash
+node gst-verification-review.js --target production --expect-database erve_prod
+node gst-verification-review.js --target production --expect-database erve_prod --operation-id <id> --details
+```
+
+**2. Investigate the provider outcome.** Do not use the daily usage figure (`stats/me`, `credits_used`, `credits_remaining`): it is an aggregate and cannot show whether one request was charged. Obtain operation-specific evidence from the provider itself — a dashboard ledger/request-log entry (or its confirmed absence) for the time the operation was dispatched, a written provider support confirmation, or an invoice/statement line — and keep a reference you can cite. Whether GSTINAPI exposes a per-request ledger has not been verified; ask the provider before the first Live use. For a `DISPATCHED` claim, also confirm that no API replica or process can still be executing it (stop or inspect the workers, review their logs) and write that assessment down.
+
+**3. Decide and record (one operation per run).** Copy the operation id, claim fingerprint and current outcome from the review output.
+
+| Decision            | Claim        | Requires                                                                                                                                                                                              |
+| ------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_CHARGED`       | **Released** | `--evidence-type` + `--evidence-ref`, the reviewed `--evidence-window-start/--evidence-window-end` (must cover the dispatch time through completion), `--reason`. `DISPATCHED` also needs age ≥ 15 minutes and `--no-active-worker-assessment`. |
+| `CHARGED_NO_RESULT` | Retained     | Provider evidence of the charge, `--charged-credits`, `--reason`. Audit entry only. Releasing it needs separately authorized duplicate-charge handling; there is no flag for it.                       |
+| `UNKNOWN`           | Retained     | `--reason`. Audit entry only.                                                                                                                                                                         |
+| `IN_PROGRESS`       | Retained     | `--reason`. Audit entry only.                                                                                                                                                                         |
+
+Evidence types: `PROVIDER_DASHBOARD_LEDGER`, `PROVIDER_SUPPORT_CONFIRMATION`, `PROVIDER_INVOICE_STATEMENT`; for a **DEMO** claim only, `DEMO_SAMPLE_IDENTITY` (the provider's official free sample identity) with `--confirm-demo-sample`. Demo evidence can never release a Live claim.
+
+```bash
+# dry run first: every check runs under lock, nothing is written
+node gst-verification-reconcile.js --target production --expect-database erve_prod --expect-schema public --confirm-production \
+  --operation-id <id> --claim-fingerprint <8hex> --expect-outcome UNCERTAIN --decision NOT_CHARGED \
+  --operator-email <accountant-or-admin@example.com> --reason "<why>" \
+  --evidence-type PROVIDER_SUPPORT_CONFIRMATION --evidence-ref "<ticket or ledger reference>" \
+  --evidence-window-start 2026-11-02T10:00:00Z --evidence-window-end 2026-11-02T10:30:00Z --dry-run
+# the same command without --dry-run applies it
+```
+
+Safeguards: the target must match `NODE_ENV` and the live `current_database()`; production needs `NODE_ENV=production`, `--confirm-production`, `--expect-database` and `--expect-schema`. `--operator-email` must be an ACTIVE user holding ACCOUNTANT or ADMIN; it is an attribution field, **not authentication** — execution is restricted to people with server access. Inside one transaction the tool takes the same advisory lock as claim acquisition, locks the operation row, re-reads the operation and claim, rejects any mismatch (outcome, claim key, fingerprint, existing evidence, already released, not `UNCERTAIN`/`DISPATCHED`), writes the audit entry, and only then deletes the claim. If the audit insert fails, nothing changes.
+
+**Audit trail.** Each decision appends an `AuditLog` row (`GST_VERIFICATION_CLAIM_RELEASED` or `GST_VERIFICATION_CLAIM_REVIEWED`, entity `GstVerificationOperation`) with the operation id, previous outcome, decision, operator id/email/name, evidence type and reference, window, reason, whether the claim was released or retained, the eligibility checks, a masked claim key and fingerprint. The table is append-only by convention of this tool — the database does not enforce immutability, so keep write access to `audit_logs` restricted. The operation's historical `outcome` and any evidence are never altered; a released operation stays `UNCERTAIN`/`DISPATCHED` and shows as "previously released" in the review.
+
+**4. After a release.** Nothing is retried. A later verification for that GSTIN needs the normal user confirmation. Re-run the review to confirm the claim is gone.
+
+The original design decision is recorded, unchanged, in `docs/implementation/gst-compliance-phase1b-report.md`.
+
 ## 13. Troubleshooting
 
 | Symptom                                                                           | Likely cause / first check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |

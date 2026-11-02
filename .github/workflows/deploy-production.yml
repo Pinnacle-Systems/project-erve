@@ -519,6 +519,46 @@ jobs:
 
           echo "EI-numbering-preflight CLI smoke test passed: packaged, read-only diagnostic executed through the extracted artifact"
 
+      # The GST claim review/reconcile CLIs are packaged, runnable, guarded and make
+      # no provider request (the disposable database has no claims; nothing is written).
+      - name: Smoke-test the packaged GST claim review and reconcile CLIs against the disposable database
+        run: |
+          set -Eeuo pipefail
+          cd .deploy-build/verify-extract/api
+
+          export NODE_ENV=production
+          export DATABASE_URL="${{ env.TEST_DATABASE_URL }}"
+          export JWT_ACCESS_SECRET=ci-only-access-token-secret-value-not-used-anywhere-else
+          export JWT_REFRESH_SECRET=ci-only-refresh-token-secret-value-not-used-anywhere-else
+          export FILE_STORAGE_DIR="$RUNNER_TEMP/erve-smoke-uploads"
+
+          EXPECTED_DB="$(node -e 'const u=new URL(process.env.DATABASE_URL); console.log(u.pathname.replace(/^\//, "").split("?")[0])')"
+
+          node gst-verification-review.js --help | grep -q "GST Verification Claim Review CLI"
+          node gst-verification-reconcile.js --help | grep -q "GST Verification Claim Reconciliation CLI"
+
+          if node gst-verification-review.js --target production; then echo "Expected review to refuse without --expect-database"; exit 1; fi
+          if node gst-verification-review.js --target production --expect-database wrong_db_name; then echo "Expected review to refuse the wrong database"; exit 1; fi
+          REVIEW_OUTPUT="$(node gst-verification-review.js --target production --expect-database "$EXPECTED_DB")"
+          echo "$REVIEW_OUTPUT"
+          echo "$REVIEW_OUTPUT" | grep -q "GST Verification Claim Review (READ ONLY)"
+          echo "$REVIEW_OUTPUT" | grep -q "Held operations requiring investigation:"
+
+          RECONCILE_ARGS=(--target production --operation-id smoke-nonexistent --claim-fingerprint 00000000 --expect-outcome UNCERTAIN
+            --decision UNKNOWN --operator-email smoke@smoke.invalid --reason "Packaged artifact smoke test of the guards")
+          if node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database "$EXPECTED_DB" --expect-schema public; then echo "Expected reconcile to refuse without --confirm-production"; exit 1; fi
+          if node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database wrong_db_name --expect-schema public --confirm-production; then echo "Expected reconcile to refuse the wrong database"; exit 1; fi
+          if node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production --acknowledge-duplicate-charge; then echo "Expected reconcile to reject the unsupported duplicate-charge flag"; exit 1; fi
+          set +e
+          RECONCILE_OUTPUT="$(node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production --dry-run 2>&1)"
+          RECONCILE_EXIT=$?
+          set -e
+          echo "$RECONCILE_OUTPUT"
+          if [ "$RECONCILE_EXIT" -eq 0 ]; then echo "Expected reconcile to refuse an operation that does not exist"; exit 1; fi
+          echo "$RECONCILE_OUTPUT" | grep -q "does not exist"
+
+          echo "GST claim review/reconcile CLI smoke test passed: packaged, executable, guards enforced, read-only review verified"
+
       - name: Compute artifact name
         id: artifact-name
         run: echo "value=erve-release-${{ github.sha }}" >> "$GITHUB_OUTPUT"
