@@ -113,19 +113,45 @@ function lastDecisionOf(audit: AuditRow | undefined): string | null {
     : null;
 }
 
-function buildRow(op: OperationWithRelations, audits: AuditRow[], now: Date): ReviewRow {
+/**
+ * The single definition of an anomalous held operation. The review reports these
+ * and the reconcile command refuses every decision on them (audit-only ones too):
+ * their recorded state contradicts itself, so no decision could be truthfully audited.
+ */
+export function operationAnomalyFlags(
+  op: OperationWithRelations,
+  releasedBefore: boolean,
+): string[] {
   const claim = op.claim;
   const flags: string[] = [];
   const held = (HELD_OUTCOMES as readonly string[]).includes(op.outcome);
   if (claim && !held) flags.push('CLAIM_ON_NON_HELD_OUTCOME');
   if (claim && claim.key !== claimKeyFor(op)) flags.push('CLAIM_KEY_MISMATCH');
   if (held && op.evidence) flags.push('EVIDENCE_PRESENT_ON_HELD_OPERATION');
-  if (held && !claim && !audits.some((a) => a.action === AUDIT_ACTION_RELEASED))
-    flags.push('HELD_OUTCOME_WITHOUT_CLAIM');
+  if (held && !claim && !releasedBefore) flags.push('HELD_OUTCOME_WITHOUT_CLAIM');
   if (op.outcome === 'UNCERTAIN' && !op.completedAt)
     flags.push('UNCERTAIN_WITHOUT_COMPLETION_TIME');
   if (op.outcome === 'DISPATCHED' && !op.dispatchedAt)
     flags.push('DISPATCHED_WITHOUT_DISPATCH_TIME');
+  return flags;
+}
+
+const ANOMALY_DESCRIPTIONS: Record<string, string> = {
+  EVIDENCE_PRESENT_ON_HELD_OPERATION: 'evidence already exists for this operation',
+  UNCERTAIN_WITHOUT_COMPLETION_TIME: 'an UNCERTAIN operation has no completion time',
+  DISPATCHED_WITHOUT_DISPATCH_TIME: 'a DISPATCHED operation has no dispatch time',
+  HELD_OUTCOME_WITHOUT_CLAIM: 'the operation holds no claim and was never released here',
+  CLAIM_KEY_MISMATCH: 'the claim key does not match the operation identity',
+  CLAIM_ON_NON_HELD_OUTCOME:
+    'a claim is held by an operation that is neither DISPATCHED nor UNCERTAIN',
+};
+
+function buildRow(op: OperationWithRelations, audits: AuditRow[], now: Date): ReviewRow {
+  const claim = op.claim;
+  const flags = operationAnomalyFlags(
+    op,
+    audits.some((a) => a.action === AUDIT_ACTION_RELEASED),
+  );
   const age = claim && op.dispatchedAt ? minutesBetween(now, op.dispatchedAt) : null;
   const last = audits[0];
   let readiness: string;
@@ -366,6 +392,57 @@ function parseDate(flag: string, value: string | undefined): Date | undefined {
   return parsed;
 }
 
+const GSTIN_SHAPE = /\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]/i;
+const UUID_SHAPE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const CREDENTIAL_SHAPES = [
+  /(api[-_ ]?key|apikey|secret|passw(?:or)?d|pwd|passphrase|token|bearer|authorization|credential)s?\s*[:=]/i,
+  /\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/i,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\./,
+  /[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i,
+  /\b(?:sk|pk|rk)[-_](?:live|test)?[-_]?[A-Za-z0-9]{16,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+];
+
+/**
+ * Operator text is persisted in the audit trail, so it must not carry secrets or a
+ * complete GSTIN (the audit trail only ever holds masked GSTINs). The matched text is
+ * never echoed: a rejected value must not reach the terminal, shell history logs or CI output.
+ */
+export function findSensitiveContent(value: string): 'GSTIN' | 'CREDENTIAL' | null {
+  const compact = value.replace(/[\s._-]/g, '');
+  if (GSTIN_SHAPE.test(compact)) return 'GSTIN';
+  if (CREDENTIAL_SHAPES.some((shape) => shape.test(value))) return 'CREDENTIAL';
+  const withoutIds = value.replace(UUID_SHAPE, ' ');
+  for (const [candidate] of withoutIds.matchAll(/[A-Za-z0-9+/_=-]{32,}/g)) {
+    const hasLetter = /[A-Za-z]/.test(candidate);
+    const hasDigit = /\d/.test(candidate);
+    const separated = /[-_]/.test(candidate);
+    // Hex/base64 blobs, or base64url with mixed case; hyphenated ticket ids stay allowed.
+    if (
+      hasLetter &&
+      hasDigit &&
+      (!separated || (/[a-z]/.test(candidate) && /[A-Z]/.test(candidate) && candidate.length >= 40))
+    )
+      return 'CREDENTIAL';
+  }
+  return null;
+}
+function assertNoSensitiveText(flag: string, value: string | undefined): void {
+  if (!value) return;
+  const found = findSensitiveContent(value);
+  if (found === 'GSTIN')
+    throw new GstReconciliationError(
+      `${flag} appears to contain a complete GSTIN; cite the operation id or the masked GSTIN instead`,
+    );
+  if (found === 'CREDENTIAL')
+    throw new GstReconciliationError(
+      `${flag} appears to contain credential-like content; cite a ticket or ledger identifier instead`,
+    );
+}
+
 /** Pure validation of everything that does not need the database. */
 export function parseReconcileArgs(argv: string[]): ReconcileArgs {
   const v = strictParse(argv, {
@@ -426,10 +503,6 @@ export function parseReconcileArgs(argv: string[]): ReconcileArgs {
       [...evidenceRef].some((ch) => ch.charCodeAt(0) < 32)
     )
       throw new GstReconciliationError('--evidence-ref must be 8-500 printable characters');
-    if (/(api[-_ ]?key|secret|password|bearer|authorization)\s*[:=]/i.test(evidenceRef))
-      throw new GstReconciliationError(
-        '--evidence-ref must be a reference (ticket/ledger id), never a credential',
-      );
   }
   if (evidenceTypeRaw && !evidenceRef)
     throw new GstReconciliationError('--evidence-type requires --evidence-ref');
@@ -482,6 +555,10 @@ function assertDecisionInputs(input: ReconcileInput): void {
   const fail: (message: string) => never = (message) => {
     throw new GstReconciliationError(message);
   };
+  // Every operator-supplied string that is persisted in the audit metadata.
+  assertNoSensitiveText('--reason', input.reason);
+  assertNoSensitiveText('--evidence-ref', input.evidenceRef);
+  assertNoSensitiveText('--no-active-worker-assessment', input.noActiveWorkerAssessment);
   if (input.chargedCredits !== undefined && input.decision !== 'CHARGED_NO_RESULT')
     fail('--charged-credits only applies to --decision CHARGED_NO_RESULT');
   if (input.noActiveWorkerAssessment && input.decision !== 'NOT_CHARGED')
@@ -597,23 +674,28 @@ export async function reconcileGstVerificationClaim(
       if (claimFingerprint(claim.key) !== input.claimFingerprint)
         refuse("--claim-fingerprint does not match this operation's claim; re-run the review");
 
+      // Anomalous state (for example an evidence row on a held operation) is refused for
+      // EVERY decision, audit-only ones included: a review entry would otherwise assert a
+      // state the database contradicts. The review lists these operations as anomalies.
+      const releasedBefore =
+        (await tx.auditLog.count({
+          where: { entityType: AUDIT_ENTITY_TYPE, entityId: op.id, action: AUDIT_ACTION_RELEASED },
+        })) > 0;
+      const anomalyFlags = operationAnomalyFlags(op, releasedBefore);
+      if (anomalyFlags.length > 0)
+        refuse(
+          `${anomalyFlags.map((flag) => ANOMALY_DESCRIPTIONS[flag] ?? flag).join('; ')}; ` +
+            `the recorded state is anomalous (${anomalyFlags.join(', ')}) and cannot be reconciled with this tool - investigate manually`,
+        );
+
       const releases = input.decision === 'NOT_CHARGED';
       const completed = op.completedAt;
       const dispatched = op.dispatchedAt;
       const claimAgeMinutes = dispatched ? minutesBetween(now, dispatched) : null;
       if (releases) {
-        if (op.evidence)
-          refuse(
-            'evidence already exists for this operation; the outcome is ambiguous, no release is possible',
-          );
-        const priorRelease = await tx.auditLog.count({
-          where: { entityType: AUDIT_ENTITY_TYPE, entityId: op.id, action: AUDIT_ACTION_RELEASED },
-        });
-        if (priorRelease > 0)
+        if (releasedBefore)
           refuse('this operation was already released by a previous reconciliation');
         if (!dispatched) refuse('the operation has no dispatch time; cannot assess it');
-        if (op.outcome === 'UNCERTAIN' && !completed)
-          refuse('an UNCERTAIN operation without completion time is ambiguous');
         if (op.outcome === 'DISPATCHED') {
           const age = minutesBetween(now, dispatched);
           if (age < DISPATCHED_MIN_AGE_MINUTES)
@@ -647,8 +729,6 @@ export async function reconcileGstVerificationClaim(
           if (windowEnd.getTime() > now.getTime() + 60_000)
             refuse('--evidence-window-end is in the future');
         }
-      } else if (input.decision === 'CHARGED_NO_RESULT' && op.evidence) {
-        refuse('evidence already exists for this operation; the outcome is ambiguous');
       }
 
       const claimDisposition = releases ? 'RELEASED' : 'RETAINED';
@@ -677,6 +757,16 @@ export async function reconcileGstVerificationClaim(
         claimDisposition,
         claimAgeMinutes,
         now,
+        // Recorded exactly as observed under the locks, never asserted as constants.
+        checks: {
+          advisoryLockHeld: true, // the lock statement above completed without error
+          operationRowLocked: locked.length === 1,
+          evidenceRowPresent: op.evidence !== null,
+          claimKeyMatchedOperation: claim.operationId === op.id && claim.key === key,
+          fingerprintMatched: claimFingerprint(claim.key) === input.claimFingerprint,
+          outcomeMatchedExpectation: op.outcome === input.expectOutcome,
+          anomalyFlags,
+        },
       });
       return {
         operationId: op.id,
@@ -702,6 +792,15 @@ async function writeAuditThenApply(
     claimDisposition: 'RELEASED' | 'RETAINED';
     claimAgeMinutes: number | null;
     now: Date;
+    checks: {
+      advisoryLockHeld: boolean;
+      operationRowLocked: boolean;
+      evidenceRowPresent: boolean;
+      claimKeyMatchedOperation: boolean;
+      fingerprintMatched: boolean;
+      outcomeMatchedExpectation: boolean;
+      anomalyFlags: string[];
+    };
   },
 ): Promise<string> {
   const { input, op, operator } = ctx;
@@ -733,12 +832,7 @@ async function writeAuditThenApply(
       completedAt: op.completedAt?.toISOString() ?? null,
       claimAgeMinutes: ctx.claimAgeMinutes,
       dispatchedMinAgeMinutes: DISPATCHED_MIN_AGE_MINUTES,
-      advisoryLockHeld: true,
-      operationRowLocked: true,
-      evidenceRowPresent: false,
-      claimKeyMatchedOperation: true,
-      fingerprintMatched: true,
-      outcomeMatchedExpectation: true,
+      ...ctx.checks,
     },
     possibleDuplicateCharge: input.decision === 'CHARGED_NO_RESULT' ? true : null,
   };

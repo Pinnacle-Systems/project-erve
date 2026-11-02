@@ -164,6 +164,33 @@ describe('packaged GST claim CLIs', () => {
     expect(await prisma.auditLog.count()).toBe(0);
   });
 
+  it('reconcile rejects credential-like or GSTIN text without echoing it, and writes nothing', async () => {
+    const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+    const operator = await createOperator(['ACCOUNTANT']);
+    for (const secret of ['password=hunter2hunter2', `ledger lists ${LIVE_GSTIN} uncharged`]) {
+      const result = await run(reconcile, [
+        ...target,
+        '--operation-id',
+        held.intent.id,
+        '--claim-fingerprint',
+        claimFingerprint(held.key),
+        '--expect-outcome',
+        'UNCERTAIN',
+        '--decision',
+        'UNKNOWN',
+        '--operator-email',
+        operator.email,
+        `--reason=${secret}`,
+      ]);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toMatch(/--reason appears to contain/);
+      expect(result.stdout + result.stderr).not.toContain('hunter2');
+      expect(result.stdout + result.stderr).not.toContain(LIVE_GSTIN);
+    }
+    expect(await prisma.auditLog.count()).toBe(0);
+    expect(await prisma.gstVerificationClaim.count()).toBe(1);
+  });
+
   it('reconcile refuses an unauthorized operator and a double execution, and releases once through the packaged bundle', async () => {
     const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
     const accountant = await createOperator(['ACCOUNTANT']);

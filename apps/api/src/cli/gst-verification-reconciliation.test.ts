@@ -18,6 +18,7 @@ import {
   AUDIT_ACTION_REVIEWED,
   AUDIT_ENTITY_TYPE,
   claimFingerprint,
+  findSensitiveContent,
   formatReviewReport,
   GST_EXECUTION_ADVISORY_LOCK,
   GstReconciliationError,
@@ -49,6 +50,26 @@ afterAll(async () => {
   fetchSpy.mockRestore();
   await prisma.$disconnect();
 });
+
+async function addEvidenceRow(operationId: string) {
+  await prisma.gstVerificationEvidence.create({
+    data: {
+      id: `evidence-${operationId}`,
+      operationId,
+      requestedGstin: LIVE_GSTIN,
+      normalizedGstin: LIVE_GSTIN,
+      lookupGstin: LIVE_GSTIN,
+      returnedGstin: LIVE_GSTIN,
+      mode: 'LIVE',
+      level: 'BASIC',
+      profile: {},
+      retrievedAt: new Date(),
+      expiresAt: new Date(Date.now() + 1000),
+      ttlSeconds: 1,
+      estimatedCredits: 1,
+    },
+  });
+}
 
 type Held = Awaited<ReturnType<typeof createHeldOperation>>;
 async function inputFor(
@@ -158,7 +179,7 @@ describe('argument parsing', () => {
     [
       'credential in reference',
       notCharged.map((a) => (a === 'ticket-12345' ? 'x-api-key: abcdef123456' : a)),
-      /never a credential/,
+      /--evidence-ref appears to contain credential-like content/,
     ],
     [
       'missing window',
@@ -230,6 +251,125 @@ describe('argument parsing', () => {
   it('masks GSTINs to state code and last three characters', () => {
     expect(maskGstin(LIVE_GSTIN)).toBe('33**********1Z5');
     expect(maskGstin(LIVE_GSTIN)).not.toContain('AAAAA');
+  });
+});
+
+describe('sensitive operator text', () => {
+  const SENSITIVE: Array<[string, string, 'GSTIN' | 'CREDENTIAL']> = [
+    ['api key assignment', 'x-api-key: abcdef123456', 'CREDENTIAL'],
+    ['password assignment', 'password=hunter2hunter2', 'CREDENTIAL'],
+    ['bearer token', 'Authorization Bearer abcdefghijklmnop', 'CREDENTIAL'],
+    ['hex blob', 'a3f1c9d8e7b6a5948372615f4e3d2c1b', 'CREDENTIAL'],
+    ['aws key id', 'AKIAABCDEFGHIJKLMNOP', 'CREDENTIAL'],
+    ['github token', 'ghp_abcdefghijklmnopqrstuvwxyz', 'CREDENTIAL'],
+    ['url with userinfo', 'https://opsuser:s3cretpw@provider.example/ledger', 'CREDENTIAL'],
+    ['jwt', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl', 'CREDENTIAL'],
+    ['prefixed secret key', 'sk_live_abcdefghijklmnopqrst', 'CREDENTIAL'],
+    ['private key header', '-----BEGIN RSA PRIVATE KEY-----', 'CREDENTIAL'],
+    ['complete GSTIN', 'Matches 33AAAAA0000A1Z5 in the ledger', 'GSTIN'],
+    ['lower-case GSTIN', 'gstin 33aaaaa0000a1z5 seen', 'GSTIN'],
+    ['spaced GSTIN', 'gstin 33 AAAAA 0000 A 1Z5 seen', 'GSTIN'],
+    ['hyphenated GSTIN', 'gstin 33-AAAAA-0000-A-1Z5 seen', 'GSTIN'],
+  ];
+  const ALLOWED = [
+    'Provider ledger shows no request for this window.',
+    'ledger-export-2026-11-02-support-ticket-12345',
+    'Operation 0b8f0c1e-6f55-4a3e-9d6c-2f3a1b7c9d10 reviewed against masked 33**********1Z5',
+    'INV-2026-000123 line 4',
+  ];
+
+  it.each(SENSITIVE)('detects %s', (_name, value, kind) => {
+    expect(findSensitiveContent(value)).toBe(kind);
+  });
+  it.each(ALLOWED)('allows an ordinary reference: %s', (value) => {
+    expect(findSensitiveContent(value)).toBeNull();
+  });
+
+  const base = [
+    '--target',
+    'test',
+    '--expect-database',
+    'd',
+    '--operation-id',
+    'op1',
+    '--claim-fingerprint',
+    'abcdef01',
+    '--expect-outcome',
+    'DISPATCHED',
+    '--operator-email',
+    'ops@example.com',
+    '--decision',
+    'NOT_CHARGED',
+    '--evidence-type',
+    'PROVIDER_DASHBOARD_LEDGER',
+    '--evidence-window-start',
+    '2026-11-02T10:00:00Z',
+    '--evidence-window-end',
+    '2026-11-02T10:30:00Z',
+  ];
+  // `--flag=value` keeps values that start with '-' (e.g. a PEM header) intact.
+  const withFields = (fields: { reason?: string; ref?: string; assessment?: string }) => [
+    ...base,
+    `--reason=${fields.reason ?? 'Reviewed with the provider ledger.'}`,
+    `--evidence-ref=${fields.ref ?? 'ticket-12345'}`,
+    `--no-active-worker-assessment=${fields.assessment ?? 'All API replicas were stopped and the process list checked.'}`,
+  ];
+  const fieldCases = [
+    ['--reason', 'reason', (v: string) => withFields({ reason: v })],
+    ['--evidence-ref', 'evidenceRef', (v: string) => withFields({ ref: v })],
+    [
+      '--no-active-worker-assessment',
+      'noActiveWorkerAssessment',
+      (v: string) => withFields({ assessment: v }),
+    ],
+  ] as const;
+
+  it('accepts ordinary text in every persisted field', () => {
+    expect(() => parseReconcileArgs(withFields({}))).not.toThrow();
+  });
+
+  describe.each(fieldCases)('%s', (flag, _key, build) => {
+    it.each(SENSITIVE)('rejects %s without echoing it', (_name, value, kind) => {
+      let message = '';
+      try {
+        parseReconcileArgs(build(value));
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain(flag);
+      expect(message).toContain(kind === 'GSTIN' ? 'complete GSTIN' : 'credential-like content');
+      expect(message).not.toContain(value);
+      expect(message).not.toMatch(/AAAAA|hunter2|s3cretpw|abcdef123456/i);
+    });
+  });
+
+  it.each(fieldCases)(
+    'the reconcile function enforces the same rule for %s and persists nothing',
+    async (flag, key) => {
+      const held = await createHeldOperation({ kind: 'DISPATCHED', ageMinutes: 30 });
+      const error = await reconcileGstVerificationClaim(
+        await inputFor(held, {
+          noActiveWorkerAssessment: 'All API replicas were stopped and the process list checked.',
+          [key]: 'password=hunter2hunter2',
+        }),
+      ).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(GstReconciliationError);
+      expect((error as Error).message).toContain(flag);
+      expect((error as Error).message).not.toContain('hunter2');
+      expect(await claims()).toBe(1);
+      expect(await prisma.auditLog.count()).toBe(0);
+    },
+  );
+
+  it('keeps a complete GSTIN out of the audit trail even when the operator supplies one', async () => {
+    const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+    await refused(
+      reconcileGstVerificationClaim(
+        await inputFor(held, { reason: `Provider ledger lists ${LIVE_GSTIN} with no charge.` }),
+      ),
+      /complete GSTIN/,
+    );
+    expect(await prisma.auditLog.count()).toBe(0);
   });
 });
 
@@ -353,7 +493,15 @@ describe('reconciliation decisions', () => {
       evidenceType: 'PROVIDER_DASHBOARD_LEDGER',
       evidenceRef: 'ledger-export-2026-11-02-row-17',
       possibleDuplicateCharge: null,
-      eligibility: { advisoryLockHeld: true, operationRowLocked: true, evidenceRowPresent: false },
+      eligibility: {
+        advisoryLockHeld: true,
+        operationRowLocked: true,
+        evidenceRowPresent: false,
+        claimKeyMatchedOperation: true,
+        fingerprintMatched: true,
+        outcomeMatchedExpectation: true,
+        anomalyFlags: [],
+      },
     });
     expect(JSON.stringify(entry!.metadata)).not.toContain(LIVE_GSTIN);
 
@@ -663,6 +811,82 @@ describe('eligibility and safeguards', () => {
         /only DISPATCHED or UNCERTAIN/,
       );
     }
+  });
+
+  it('audit-only entries record the observed state, including the absence of an evidence row', async () => {
+    const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+    await reconcileGstVerificationClaim(
+      await inputFor(held, {
+        decision: 'UNKNOWN',
+        evidenceType: undefined,
+        evidenceRef: undefined,
+        evidenceWindowStart: undefined,
+        evidenceWindowEnd: undefined,
+      }),
+    );
+    expect((await audits(AUDIT_ACTION_REVIEWED))[0]!.metadata).toMatchObject({
+      eligibility: {
+        evidenceRowPresent: false,
+        claimKeyMatchedOperation: true,
+        fingerprintMatched: true,
+        outcomeMatchedExpectation: true,
+        anomalyFlags: [],
+      },
+    });
+  });
+
+  it.each([
+    ['NOT_CHARGED', {}],
+    [
+      'CHARGED_NO_RESULT',
+      {
+        decision: 'CHARGED_NO_RESULT' as const,
+        chargedCredits: 1,
+        evidenceType: 'PROVIDER_INVOICE_STATEMENT' as const,
+        evidenceRef: 'invoice-9912-line-4',
+        evidenceWindowStart: undefined,
+        evidenceWindowEnd: undefined,
+      },
+    ],
+    ['UNKNOWN', { decision: 'UNKNOWN' as const, evidenceType: undefined, evidenceRef: undefined }],
+    [
+      'IN_PROGRESS',
+      { decision: 'IN_PROGRESS' as const, evidenceType: undefined, evidenceRef: undefined },
+    ],
+    ['dry-run NOT_CHARGED', { dryRun: true }],
+  ])(
+    'refuses %s on a held operation that already has an evidence row (anomaly), writing nothing',
+    async (_name, overrides) => {
+      const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+      await addEvidenceRow(held.intent.id);
+      await refused(
+        reconcileGstVerificationClaim(await inputFor(held, overrides as Partial<ReconcileInput>)),
+        /evidence already exists for this operation.*EVIDENCE_PRESENT_ON_HELD_OPERATION.*cannot be reconciled/,
+      );
+      expect(await claims()).toBe(1);
+      expect(await prisma.auditLog.count()).toBe(0);
+    },
+  );
+
+  it('refuses every decision on an UNCERTAIN operation with no completion time (anomaly)', async () => {
+    const held = await createHeldOperation({ kind: 'UNCERTAIN', ageMinutes: 30 });
+    await prisma.gstVerificationOperation.update({
+      where: { id: held.intent.id },
+      data: { completedAt: null },
+    });
+    await refused(
+      reconcileGstVerificationClaim(
+        await inputFor(held, {
+          decision: 'IN_PROGRESS',
+          evidenceType: undefined,
+          evidenceRef: undefined,
+          evidenceWindowStart: undefined,
+          evidenceWindowEnd: undefined,
+        }),
+      ),
+      /UNCERTAIN_WITHOUT_COMPLETION_TIME/,
+    );
+    expect(await prisma.auditLog.count()).toBe(0);
   });
 
   it('refuses a release when evidence already exists for the operation', async () => {
