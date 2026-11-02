@@ -83,6 +83,8 @@ cp apps/api/dist-bundle/historical-import-production.js "$RELEASE_DIR/api/histor
 cp apps/api/dist-bundle/job-order-completion-reconciliation.js "$RELEASE_DIR/api/job-order-completion-reconciliation.js"
 cp apps/api/dist-bundle/document-sequence-baseline.js "$RELEASE_DIR/api/document-sequence-baseline.js"
 cp apps/api/dist-bundle/ei-numbering-preflight.js "$RELEASE_DIR/api/ei-numbering-preflight.js"
+cp apps/api/dist-bundle/gst-verification-review.js "$RELEASE_DIR/api/gst-verification-review.js"
+cp apps/api/dist-bundle/gst-verification-reconcile.js "$RELEASE_DIR/api/gst-verification-reconcile.js"
 # prisma.config.ts supplies datasource.url (schema.prisma's datasource block
 # deliberately has no `url`) — without it on the VPS, `prisma migrate deploy`
 # fails with "The datasource.url property is required in your Prisma config

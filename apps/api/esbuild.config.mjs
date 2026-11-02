@@ -57,6 +57,16 @@ await build({
       in: path.join(__dirname, 'src/cli/ei-numbering-preflight.cli.ts'),
       out: 'ei-numbering-preflight',
     },
+    // GSTINAPI held-claim operations (DEPLOYMENT.md §12.7): read-only review and
+    // audited reconciliation. Neither bundle contains the provider adapter.
+    {
+      in: path.join(__dirname, 'src/cli/gst-verification-review.cli.ts'),
+      out: 'gst-verification-review',
+    },
+    {
+      in: path.join(__dirname, 'src/cli/gst-verification-reconcile.cli.ts'),
+      out: 'gst-verification-reconcile',
+    },
   ],
   outdir: path.join(__dirname, 'dist-bundle'),
   bundle: true,

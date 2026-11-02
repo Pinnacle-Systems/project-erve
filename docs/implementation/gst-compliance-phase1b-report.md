@@ -242,6 +242,10 @@ actor/minute, five execution claims per actor/minute and ten globally/minute.
 Worker-crash/unknown outcome recovery requires explicit operator reconciliation;
 there is no automatic lease takeover, background retry or reconciliation UI.
 
+> Later addition (historical conclusions above are unchanged): the operator procedure
+> for reviewing and reconciling held claims is `DEPLOYMENT.md` §12.7
+> (`gst-verification-review` and `gst-verification-reconcile`).
+
 ## UI integrations and filing presentation
 
 The reusable panel uses ERVE Panel/StatusBadge/ValidationMessage/Button/ConfirmDialog

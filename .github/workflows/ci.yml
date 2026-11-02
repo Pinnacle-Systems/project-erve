@@ -310,6 +310,26 @@ jobs:
           echo "$PREFLIGHT_OUTPUT" | grep -q "CHK_SOURCE_COMPLETENESS"
           echo "$PREFLIGHT_OUTPUT" | grep -q "CHK_PERMISSIONS: Read-Only Database Access Guarantee"
 
+          echo "--- GST claim CLIs: help, guards, read-only review, refused nonexistent operation ---"
+          node gst-verification-review.js --help | grep -q "GST Verification Claim Review CLI"
+          node gst-verification-reconcile.js --help | grep -q "GST Verification Claim Reconciliation CLI"
+          if node gst-verification-review.js --target production --expect-database wrong_db_name; then
+            echo "Expected gst-verification-review.js to refuse the wrong database"; exit 1
+          fi
+          REVIEW_OUTPUT="$(node gst-verification-review.js --target production --expect-database "$EXPECTED_DB")"
+          echo "$REVIEW_OUTPUT" | grep -q "Held operations requiring investigation:"
+          RECONCILE_ARGS=(--target production --operation-id smoke-nonexistent --claim-fingerprint 00000000 --expect-outcome UNCERTAIN
+            --decision UNKNOWN --operator-email smoke@smoke.invalid --reason "Packaged artifact smoke test of the guards")
+          if node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database "$EXPECTED_DB" --expect-schema public; then
+            echo "Expected gst-verification-reconcile.js to refuse without --confirm-production"; exit 1
+          fi
+          set +e
+          RECONCILE_OUTPUT="$(node gst-verification-reconcile.js "${RECONCILE_ARGS[@]}" --expect-database "$EXPECTED_DB" --expect-schema public --confirm-production --dry-run 2>&1)"
+          RECONCILE_EXIT=$?
+          set -e
+          if [ "$RECONCILE_EXIT" -eq 0 ]; then echo "Expected gst-verification-reconcile.js to refuse a nonexistent operation"; exit 1; fi
+          echo "$RECONCILE_OUTPUT" | grep -q "does not exist"
+
           echo "Extracted release-artifact smoke tests passed: standalone executables verified in isolated CI environment"
 
   # Preserve the existing branch-protection check name. A matrix check alone
