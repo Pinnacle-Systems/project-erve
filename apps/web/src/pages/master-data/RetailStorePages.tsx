@@ -184,6 +184,9 @@ export function RetailStoreDetailPage() {
           <GstinVerificationField
             label="GSTIN"
             readOnly
+            // Verifying a saved Retail Store from its detail page is a deliberate,
+            // authorized action (the API enforces the roles), unlike a display-only field.
+            allowVerify
             entity="RETAIL_STORE"
             recordId={s.id}
             savedGstin={s.gstin}

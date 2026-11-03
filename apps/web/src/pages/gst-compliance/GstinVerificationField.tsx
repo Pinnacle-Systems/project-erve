@@ -5,6 +5,7 @@ import {
   type ChangeEvent,
   type FocusEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { CircleCheck, FlaskConical, TriangleAlert } from 'lucide-react';
 import { GST_DRAFT_SOURCE_ID, isValidGstinFormat, normalizeGstin } from '@erve/shared';
@@ -44,7 +45,10 @@ interface VerificationBinding {
   /** The record's persisted GSTIN. Evidence is only attached to the saved record
    * while the input still equals it; any other value is verified as unsaved. */
   savedGstin?: string | null;
-  /** false: show existing evidence only and never offer a lookup. */
+  /** Whether this input may offer a lookup. Defaults to true, except that a
+   * `readOnly` field is display-only unless this is set to `true` explicitly
+   * (a saved-record page where verifying is a deliberate, authorized action).
+   * false: show existing evidence only and never offer a lookup. */
   allowVerify?: boolean;
 }
 
@@ -69,7 +73,7 @@ function useGstinFieldVerification(
   binding: VerificationBinding,
   { disabled, readOnly }: { disabled?: boolean; readOnly?: boolean },
 ) {
-  const allowVerify = binding.allowVerify ?? true;
+  const allowVerify = binding.allowVerify ?? !readOnly;
   const policy = useGstVerificationPolicy(!!binding.entity);
   const online = !!binding.entity && policy.data?.enabled === true;
   const gstin = normalizeGstin(value);
@@ -255,6 +259,7 @@ function GstinVerificationControls({ ui }: { ui: FieldVerification }) {
             source={source}
             verification={verification}
             allowVerify={ui.allowVerify && !ui.disabled}
+            returnFocusTo={statusButton}
             onReverify={() => {
               setProfileOpen(false);
               void verification.verify(true, statusButton.current);
@@ -348,6 +353,7 @@ function GstinProfileDialog({
   source,
   verification,
   allowVerify,
+  returnFocusTo,
   onReverify,
 }: {
   open: boolean;
@@ -356,6 +362,7 @@ function GstinProfileDialog({
   source: GstVerificationSource;
   verification: GstinVerificationController;
   allowVerify: boolean;
+  returnFocusTo: RefObject<HTMLElement | null>;
   onReverify: () => void;
 }) {
   const view = verification.view;
@@ -363,9 +370,17 @@ function GstinProfileDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[85vh] max-w-xl overflow-y-auto"
+        className="max-h-[85vh] w-[calc(100%-2rem)] max-w-xl overflow-y-auto"
         // Portaled content still bubbles React events to the surrounding <form>.
         onKeyDown={(event) => event.stopPropagation()}
+        // Opened from our own button (no Dialog.Trigger), so give focus back to it.
+        onCloseAutoFocus={(event) => {
+          const target = returnFocusTo.current;
+          if (target?.isConnected) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
       >
         <DialogHeader>
           <DialogTitle>GSTIN verification</DialogTitle>

@@ -607,3 +607,50 @@ describe('GstinVerificationInline (saved-record presentation)', () => {
     expect(verificationGets(get)).toHaveLength(0);
   });
 });
+
+describe('GstinVerificationField — display-only versus authorized verification', () => {
+  const staleView = () =>
+    view({ cacheState: 'STALE', evidence: evidence({ expiresAt: '2020-01-01T00:00:00Z' }) });
+
+  it('a readOnly field is display-only by default: evidence shows, no lookup is offered or requested', async () => {
+    mockGets({ enabled: true, mode: 'DEMO', level: 'BASIC' }, () => view({ mode: 'DEMO', cacheState: 'NONE' }));
+    const post = vi.spyOn(apiClient, 'post');
+    await render(<Harness initial={GSTIN} readOnly recordId="dist-1" savedGstin={GSTIN} />);
+    expect(buttonByLabel(/^(Verify|Retrieve|Reverify)/)).toBeUndefined();
+    expect(input().readOnly).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('a readOnly field still shows and explains existing evidence, but offers no re-verify', async () => {
+    mockGets({ enabled: true, mode: 'LIVE' }, () => ({ ...staleView(), canRefresh: true }));
+    await render(<Harness initial={GSTIN} readOnly recordId="dist-1" savedGstin={GSTIN} />);
+    expect(buttonByLabel(/^(Verify|Retrieve|Reverify)/)).toBeUndefined();
+    await click(buttonByLabel(/out of date/));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Synthetic Traders Pvt Ltd');
+    expect([...dialog.querySelectorAll('button')].map((b) => b.textContent)).not.toContain('Reverify GSTIN');
+  });
+  it('a readOnly field never reads an unsaved source', async () => {
+    const get = mockGets({ enabled: true, mode: 'LIVE' }, () => view());
+    await render(<Harness initial={GSTIN} readOnly />);
+    expect(verificationGets(get)).toHaveLength(0);
+  });
+  it('an authorized detail page can opt in explicitly: the same readOnly field then offers Verify', async () => {
+    mockGets({ enabled: true, mode: 'LIVE' }, () => view({ canVerify: true }));
+    const post = vi.spyOn(apiClient, 'post');
+    await render(<Harness initial={GSTIN} readOnly allowVerify recordId="store-1" savedGstin={GSTIN} entity="RETAIL_STORE" />);
+    expect(buttonByLabel('Retrieve Complete Profile')).toBeDefined();
+    expect(input().readOnly).toBe(true);
+    // Offered, not performed.
+    expect(post).not.toHaveBeenCalled();
+  });
+  it('authorization still decides: an opted-in readOnly field offers nothing to a role that cannot verify', async () => {
+    mockGets({ enabled: true, mode: 'LIVE' }, () => view({ canVerify: false }));
+    await render(<Harness initial={GSTIN} readOnly allowVerify recordId="store-1" savedGstin={GSTIN} />);
+    expect(buttonByLabel(/^(Verify|Retrieve|Reverify)/)).toBeUndefined();
+  });
+  it('an editable field offers Verify by default', async () => {
+    mockGets({ enabled: true, mode: 'LIVE' }, () => view());
+    await render(<Harness initial={GSTIN} />);
+    expect(buttonByLabel('Retrieve Complete Profile')).toBeDefined();
+  });
+});
