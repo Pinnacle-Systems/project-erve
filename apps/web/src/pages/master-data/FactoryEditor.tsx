@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import type { ApiSuccessResponse } from '@erve/types';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection } from '@erve/layout';
 import { createEnterToNextHandler } from '@erve/app-components';
 import { apiClient } from '../../lib/api-client.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import type { Factory } from './types.js';
 
 const emptyForm = {
   code: '',
   name: '',
+  gstin: '',
   contactName: '',
   contactEmail: '',
   contactPhone: '',
@@ -25,6 +28,7 @@ type FactoryFormFields = typeof emptyForm;
 const labels: Record<keyof FactoryFormFields, string> = {
   code: 'Code',
   name: 'Name',
+  gstin: 'GSTIN',
   contactName: 'Contact Name',
   contactEmail: 'Contact Email',
   contactPhone: 'Contact Phone',
@@ -57,9 +61,14 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
     mutationFn: async () => {
       setError('');
       if (!form.name.trim()) throw new Error('Name is required');
+      const gstin = normalizeGstin(form.gstin);
+      if (gstin && !isValidGstinFormat(gstin)) {
+        throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
+      }
       const payload = Object.fromEntries(
         Object.entries(form).filter(([key]) => key !== 'code').map(([key, value]) => [key, value.trim() || null]),
       );
+      payload.gstin = gstin || null;
       const response = await apiClient.post<ApiSuccessResponse<Factory>>('/factories', {
         ...payload,
         name: form.name.trim(),
@@ -77,6 +86,18 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
   });
 
   function field(key: keyof FactoryFormFields) {
+    if (key === 'gstin') {
+      return (
+        <GstinVerificationField
+          key={key}
+          label={labels[key]}
+          entity="FACTORY"
+          value={form.gstin}
+          onChange={(event) => setForm((current) => ({ ...current, gstin: event.target.value }))}
+          disabled={mutation.isPending}
+        />
+      );
+    }
     return (
       <TextField
         key={key}
@@ -105,6 +126,7 @@ export function FactoryEditor({ onSaved, onCancel }: { onSaved: (factory: Factor
       <FormSection title="Identity">
         <FormGrid layout="content">
           {field('name')}
+          {field('gstin')}
         </FormGrid>
       </FormSection>
       <FormSection title="Contact">

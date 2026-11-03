@@ -1127,6 +1127,59 @@ describe('factories API', () => {
     expect(duplicateName.status).toBe(409);
   });
 
+  it('supports an optional GSTIN: create, normalize, validate, clear, and NULL for existing factories', async () => {
+    const { token } = await createTestUserAndToken({
+      email: 'admin@test.local',
+      password: 'admin-password',
+      roles: ['ADMIN'],
+    });
+    const legacy = await createTestFactory({ code: 'FAC-LEGACY', name: 'Legacy Factory' });
+    const legacyDetail = await request(app)
+      .get(`/factories/${legacy.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(legacyDetail.body.data.gstin).toBeNull();
+
+    const withoutGstin = await request(app)
+      .post('/factories')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'No GSTIN Factory' })
+      .expect(201);
+    expect(withoutGstin.body.data.gstin).toBeNull();
+
+    const created = await request(app)
+      .post('/factories')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'GST Factory', gstin: ' 33aaaaa0000a1z5 ' })
+      .expect(201);
+    expect(created.body.data.gstin).toBe('33AAAAA0000A1Z5');
+
+    const invalid = await request(app)
+      .post('/factories')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Bad GST Factory', gstin: '123' });
+    expect(invalid.status).toBe(400);
+
+    const updated = await request(app)
+      .patch(`/factories/${legacy.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ gstin: '29AAAAA0000A1Z5' })
+      .expect(200);
+    expect(updated.body.data.gstin).toBe('29AAAAA0000A1Z5');
+    const unrelated = await request(app)
+      .patch(`/factories/${legacy.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ city: 'Tiruppur' })
+      .expect(200);
+    expect(unrelated.body.data.gstin).toBe('29AAAAA0000A1Z5');
+    const cleared = await request(app)
+      .patch(`/factories/${legacy.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ gstin: '' })
+      .expect(200);
+    expect(cleared.body.data.gstin).toBeNull();
+  });
+
   it('returns detail usage, updates, changes status, blocks new style mappings, and audits', async () => {
     const { token } = await createTestUserAndToken({
       email: 'admin@test.local',

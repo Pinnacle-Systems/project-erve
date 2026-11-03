@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -257,6 +257,20 @@ export function SellerRegistrationFormPage() {
         </SelectField>
       );
     }
+    if (key === 'gstin') {
+      return (
+        <GstinVerificationField
+          key={key}
+          label={fieldLabels[key]}
+          required={requiredFieldKeys.has(key)}
+          entity="SELLER_REGISTRATION"
+          recordId={id}
+          savedGstin={registrationQuery.data?.gstin}
+          value={form.gstin}
+          onChange={(event) => setForm((current) => ({ ...current, gstin: event.target.value }))}
+        />
+      );
+    }
     return (
       <TextField
         key={key}
@@ -302,7 +316,6 @@ export function SellerRegistrationFormPage() {
             <FormGrid columns={3}>{gstFieldKeys.map(renderField)}</FormGrid>
           </FormSection>
 
-          <GstinVerificationPanel gstin={form.gstin} savedGstin={registrationQuery.data?.gstin} source={id ? { type: 'SELLER_REGISTRATION', id } : undefined} />
           <FormSection title="Registered Address">
             <FormGrid columns={3}>{addressFieldKeys.map(renderField)}</FormGrid>
           </FormSection>

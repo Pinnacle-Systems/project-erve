@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
@@ -42,6 +42,11 @@ interface LineDraft {
 
 interface DestinationDraft {
   retailStoreId?: string | null;
+  // The linked Retail Store's PERSISTED GSTIN (null: the store has none).
+  // undefined: not known yet (a hydrated draft) — never inferred from the
+  // destination's own editable GSTIN. Only used to decide whether saved
+  // verification evidence may be shown for that destination.
+  storeGstin?: string | null;
   refreshStoreSnapshot?: boolean;
   storeCode?: string | null;
   clientKey: string;
@@ -107,6 +112,49 @@ function emptyLine(): LineDraft {
 
 function emptyDistributorGroup(): DistributorGroupDraft {
   return { clientKey: nextKey('group'), distributorId: '', distributor: null, destinations: [emptyDestination()] };
+}
+
+/**
+ * A Dispatch Order destination's editable GSTIN is a snapshot that can differ
+ * from its Retail Store. Saved verification evidence belongs to the Store's
+ * persisted GSTIN, so it is requested only while the destination GSTIN equals
+ * that value; otherwise (or while the Store's GSTIN is unknown) nothing is
+ * requested. Destinations can never start a verification.
+ */
+function DestinationGstinField({
+  destination,
+  onChange,
+}: {
+  destination: DestinationDraft;
+  onChange: (gstin: string) => void;
+}) {
+  const storeId = destination.retailStoreId ?? null;
+  const needsLookup = !!storeId && destination.storeGstin === undefined;
+  const store = useQuery({
+    queryKey: ['retail-store', storeId],
+    enabled: needsLookup,
+    retry: false,
+    queryFn: async () =>
+      (await apiClient.get<ApiSuccessResponse<RetailStore>>(`/retail-stores/${storeId}`)).data.data,
+  });
+  const persisted =
+    destination.storeGstin !== undefined
+      ? destination.storeGstin
+      : store.data
+        ? (store.data.gstin ?? null)
+        : undefined;
+  return (
+    <GstinVerificationField
+      id={`dest-${destination.clientKey}-gstin`}
+      label="GSTIN"
+      entity="RETAIL_STORE"
+      recordId={persisted === undefined ? null : storeId}
+      savedGstin={persisted ?? null}
+      allowVerify={false}
+      value={destination.gstin}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
 }
 
 export function SaleOrderFormPage() {
@@ -363,11 +411,12 @@ export function SaleOrderFormPage() {
 
   function selectStore(groupKey: string, destKey: string, store: RetailStore | null) {
     if (!store) {
-      updateDestination(groupKey, destKey, { retailStoreId: null, storeCode: null });
+      updateDestination(groupKey, destKey, { retailStoreId: null, storeCode: null, storeGstin: undefined });
       return;
     }
     updateDestination(groupKey, destKey, {
       retailStoreId: store.id,
+      storeGstin: store.gstin ?? null,
       refreshStoreSnapshot: true,
       storeCode: store.code,
       label: store.name,
@@ -751,15 +800,12 @@ export function SaleOrderFormPage() {
                                     value={dest.postalCode}
                                     onChange={(e) => updateDestination(group.clientKey, dest.clientKey, { postalCode: e.target.value })}
                                   />
-                                  <TextField
-                                    id={`dest-${dest.clientKey}-gstin`}
-                                    label="GSTIN"
-                                    value={dest.gstin}
-                                    onChange={(e) => updateDestination(group.clientKey, dest.clientKey, { gstin: e.target.value })}
+                                  <DestinationGstinField
+                                    destination={dest}
+                                    onChange={(gstin) => updateDestination(group.clientKey, dest.clientKey, { gstin })}
                                   />
                                 </FormGrid>
 
-                                <GstinVerificationPanel gstin={dest.gstin} source={dest.retailStoreId ? { type: 'RETAIL_STORE', id: dest.retailStoreId } : undefined} readOnly />
                                 <div className="space-y-3">
                                   {dest.lines.map((line) => {
                                     const resolvedStyle = line.style ? resolveStyleOption(line.style) : null;

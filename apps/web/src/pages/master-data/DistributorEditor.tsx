@@ -5,7 +5,7 @@ import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection } from '@erve/layout';
 import { createEnterToNextHandler } from '@erve/app-components';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import { apiClient } from '../../lib/api-client.js';
 
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
@@ -95,18 +95,30 @@ export function DistributorEditor({
   });
 
   function field(key: Exclude<keyof DistributorFormFields, 'purchaseMode'>) {
+    if (key === 'gstin') {
+      return (
+        <GstinVerificationField
+          key={key}
+          label={labels[key]}
+          required
+          entity="DISTRIBUTOR"
+          value={form.gstin}
+          onChange={(event) => setForm((current) => ({ ...current, gstin: event.target.value }))}
+          errorMessage={error && !form.gstin.trim() ? 'Required' : undefined}
+          disabled={mutation.isPending}
+        />
+      );
+    }
     return (
       <TextField
         key={key}
         label={labels[key]}
-        required={key === 'name' || key === 'gstin'}
+        required={key === 'name'}
         type={key === 'contactEmail' ? 'email' : 'text'}
         value={form[key]}
         onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
         errorMessage={
-          error && (key === 'name' || key === 'gstin') && !form[key].trim()
-            ? 'Required'
-            : undefined
+          error && key === 'name' && !form[key].trim() ? 'Required' : undefined
         }
         disabled={mutation.isPending}
       />
@@ -143,7 +155,6 @@ export function DistributorEditor({
           </SelectField>
         </FormGrid>
       </FormSection>
-      <GstinVerificationPanel gstin={form.gstin} />
       <FormSection title="Contact">
         <FormGrid layout="content">
           {field('contactName')}

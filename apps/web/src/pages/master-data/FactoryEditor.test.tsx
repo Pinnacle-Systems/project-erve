@@ -81,3 +81,31 @@ describe('Factory contained editor (DEMO-015)', () => {
     expect(container.textContent).toContain('Factory code already exists');
   });
 });
+
+describe('Factory contained editor — optional GSTIN', () => {
+  const GSTIN = '33AAAAA0000A1Z5';
+  it('sends a normalized GSTIN, or null when left blank', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValue({ data: { data: { id: 'f', name: 'F', status: 'ACTIVE' } } });
+    await renderEditor();
+    type('Name', 'With GST');
+    type('GSTIN', ` ${GSTIN.toLowerCase()} `);
+    await submit();
+    expect(post.mock.calls[0]![1]).toMatchObject({ name: 'With GST', gstin: GSTIN });
+
+    post.mockClear();
+    type('GSTIN', '');
+    await submit();
+    expect(post.mock.calls[0]![1]).toMatchObject({ gstin: null });
+  });
+  it('rejects a malformed GSTIN without calling the API', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderEditor();
+    type('Name', 'Bad GST');
+    type('GSTIN', '12345');
+    await submit();
+    expect(post).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Enter a valid 15-character GSTIN');
+  });
+});

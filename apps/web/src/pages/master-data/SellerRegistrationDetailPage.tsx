@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationInline } from '../gst-compliance/GstinVerificationField.js';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -87,7 +87,15 @@ export function SellerRegistrationDetailPage() {
   ] as const;
 
   const gstFields = [
-    ['GSTIN', registration.gstin],
+    [
+      'GSTIN',
+      <GstinVerificationInline
+        key="gstin"
+        gstin={registration.gstin}
+        entity="SELLER_REGISTRATION"
+        recordId={registration.id}
+      />,
+    ],
     ['State', registration.state],
     ['State Code', registration.stateCode],
     ['PIN', registration.postalCode],
@@ -156,7 +164,6 @@ export function SellerRegistrationDetailPage() {
         </DescriptionList>
       </Panel>
 
-      <GstinVerificationPanel gstin={registration.gstin} source={{ type: 'SELLER_REGISTRATION', id: registration.id }} />
       <Panel title="Registered Address">
         <DescriptionList columns={3}>
           {addressFields.map(([label, value]) => (

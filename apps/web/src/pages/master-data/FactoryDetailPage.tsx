@@ -13,6 +13,7 @@ import { apiClient } from '../../lib/api-client.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { GstinVerificationInline } from '../gst-compliance/GstinVerificationField.js';
 import { UserLookupField, userLookupQueryKey } from '../users/UserLookupField.js';
 import { InlineUserCreateDialog } from '../users/InlineUserCreateDialog.js';
 import type { AdminUserSummary, Factory, FactoryUser } from './types.js';
@@ -312,6 +313,10 @@ export function FactoryDetailPage() {
   const fields = [
     ['Code', factory.code],
     ['Name', factory.name],
+    [
+      'GSTIN',
+      <GstinVerificationInline key="gstin" gstin={factory.gstin} entity="FACTORY" recordId={factory.id} />,
+    ],
     ['Contact name', factory.contactName ?? '—'],
     ['Contact email', factory.contactEmail ?? '—'],
     ['Contact phone', factory.contactPhone ?? '—'],

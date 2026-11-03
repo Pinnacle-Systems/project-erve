@@ -12,9 +12,15 @@ export type GstVerificationFailure =
   | 'TIMEOUT'
   | 'UNEXPECTED_RESPONSE';
 export type GstSourceType =
-  'DISTRIBUTOR' | 'SELLER_REGISTRATION' | 'RETAIL_STORE' | 'DISPATCH_ORDER';
+  | 'DISTRIBUTOR'
+  | 'SELLER_REGISTRATION'
+  | 'RETAIL_STORE'
+  | 'FACTORY'
+  | 'DISPATCH_ORDER';
 export interface GstVerificationSource {
   type: GstSourceType;
+  /** A saved record id, or `GST_DRAFT_SOURCE_ID` (@erve/shared) for a GSTIN
+   * entered on an authorized create/edit form that has not been saved yet. */
   id: string;
 }
 export interface GstVerificationTarget {

@@ -9,3 +9,11 @@ export function normalizeGstin(value: string): string {
 export function isValidGstinFormat(value: string): boolean {
   return GSTIN_REGEX.test(normalizeGstin(value));
 }
+
+/**
+ * Reserved source id for verification requested from an unsaved (or edited and
+ * not-yet-saved) GSTIN on an authorized master form. Real record ids are
+ * generated and can never equal it; authorization for it is role-based per
+ * source type, never "any source".
+ */
+export const GST_DRAFT_SOURCE_ID = 'NEW';

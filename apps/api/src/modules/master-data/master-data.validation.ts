@@ -136,6 +136,17 @@ export const updateSizeSchema = createSizeSchema
 
 export const updateSizeStatusSchema = z.object({ status: sizeStatusSchema });
 
+// Optional GSTIN: blank clears it, anything else must be a well-formed GSTIN.
+const optionalGstinSchema = z.preprocess(
+  (v) => (typeof v === 'string' && !v.trim() ? null : v),
+  z
+    .string()
+    .overwrite(normalizeGstin)
+    .regex(GSTIN_REGEX, 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)')
+    .nullable()
+    .optional(),
+);
+
 export const createFactorySchema = z.object({
   // Deprecated compatibility field; ordinary creation always allocates a code.
   code: z.string().trim().optional(),
@@ -143,6 +154,7 @@ export const createFactorySchema = z.object({
   contactName: optionalText,
   contactEmail: z.string().trim().pipe(z.email()).optional().nullable(),
   contactPhone: optionalText,
+  gstin: optionalGstinSchema,
   addressLine1: optionalText,
   addressLine2: optionalText,
   city: optionalText,

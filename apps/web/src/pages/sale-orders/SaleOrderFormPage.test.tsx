@@ -1003,3 +1003,248 @@ describe('SaleOrderFormPage edit — excludeSaleOrderId tracks the original Fact
     expect(lastPooledInventoryParams()).toMatchObject({ factoryId: 'fac-1', excludeSaleOrderId: 'so-1' });
   });
 });
+
+describe('Dispatch Order destination GSTIN — saved evidence identity', () => {
+  const STORE_GSTIN = '33AAAAA0000A1Z5';
+  const OTHER_GSTIN = '29BBBBB1111B1Z6';
+  const liveFresh = (gstin: string) => ({
+    enabled: true,
+    mode: 'LIVE',
+    level: 'BASIC',
+    canVerify: true,
+    canRefresh: true,
+    cacheState: 'FRESH',
+    latestFailure: null,
+    evidence: {
+      id: 'e1',
+      requestedGstin: gstin,
+      normalizedGstin: gstin,
+      lookupGstin: gstin,
+      returnedGstin: gstin,
+      mode: 'LIVE',
+      level: 'BASIC',
+      governmentStatus: 'ACTIVE',
+      legalName: 'Store Legal Name',
+      tradeName: null,
+      taxpayerType: 'Regular',
+      registrationDate: null,
+      registeredAddress: null,
+      businessConstitution: null,
+      filingFrequency: null,
+      gstr1FiledTill: null,
+      gstr3bFiledTill: null,
+      partial: false,
+      unavailable: [],
+      retrievedAt: '2026-11-02T06:00:00Z',
+      expiresAt: '2099-01-01T00:00:00Z',
+      ttlSeconds: 604800,
+      estimatedCredits: 1,
+      actualCredits: null,
+      billingCategory: null,
+    },
+  });
+
+  function saleOrderWith(destination: { retailStoreId?: string | null; gstin: string | null }): SaleOrder {
+    const line = {
+      id: 'line-1',
+      destinationId: 'dest-1',
+      styleId: 'style-1',
+      styleNumber: 'ST-001',
+      styleName: 'Classic Tee',
+      primaryImage: null,
+      sizeId: 'size-1',
+      sizeCode: 'M',
+      sizeLabel: 'Medium',
+      quantity: 25,
+      remarks: null,
+    };
+    return {
+      id: 'so-1',
+      saleOrderNumber: 'EISO/26-27/0001',
+      distributors: [{ id: 'dist-1', code: 'D1', name: 'Distributor One', purchaseMode: 'OUTRIGHT' }],
+      factory: { id: 'fac-1', code: 'FAC1', name: 'Factory One' },
+      financialYear: { id: 'fy-1', code: '2026-27' },
+      soDate: '2026-09-08T00:00:00.000Z',
+      status: 'ACTIVE',
+      destinationCount: 1,
+      totalQuantity: 25,
+      createdAt: '2026-09-08T00:00:00.000Z',
+      isLocked: false,
+      version: 1,
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      creator: { id: 'user-1', name: 'Admin', email: 'admin@test.local' },
+      remarks: null,
+      distributorGroups: [
+        {
+          id: 'group-1',
+          distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+          purchaseMode: 'OUTRIGHT',
+          destinations: [
+            {
+              id: 'dest-1',
+              retailStoreId: destination.retailStoreId ?? null,
+              storeCode: destination.retailStoreId ? 'S1' : null,
+              label: 'Primary Warehouse',
+              contactName: null,
+              contactEmail: null,
+              contactPhone: null,
+              addressLine1: '123 Test Industrial Estate',
+              addressLine2: null,
+              city: 'Mumbai',
+              state: 'Maharashtra',
+              country: 'India',
+              postalCode: null,
+              gstin: destination.gstin,
+              canMoveDistributor: true,
+            },
+          ],
+          lines: [line],
+        },
+      ],
+      lines: [line],
+      fulfillment: { stage: 'AWAITING_PACKING', totalQuantity: 25, totalFactoryPackedQuantity: 0 },
+    };
+  }
+
+  /** `store` is the Retail Store's persisted record; an Error simulates a failed/denied lookup. */
+  async function renderEdit(
+    destination: { retailStoreId?: string | null; gstin: string | null },
+    store?: { gstin: string | null } | Error,
+  ) {
+    const so = saleOrderWith(destination);
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
+      if (url === '/sale-orders/so-1') return { data: { data: so } };
+      if (url === '/factories/options') return { data: { data: [{ id: 'fac-1', code: 'FAC1', name: 'Factory One', status: 'ACTIVE' }] } };
+      if (url === '/job-orders/pooled-inventory') return { data: { data: [] } };
+      if (url === '/styles/style-1') return { data: { data: { sizes: [] } } };
+      if (url === '/gst-compliance/verification/policy') return { data: { data: { enabled: true, mode: 'LIVE', level: 'BASIC' } } };
+      if (url === '/gst-compliance/verification') {
+        const gstin = String(config?.params?.gstin);
+        return { data: { data: liveFresh(gstin) } };
+      }
+      if (url === '/retail-stores/store-1') {
+        if (!store || store instanceof Error) throw store ?? new Error('not found');
+        return { data: { data: { id: 'store-1', ...store } } };
+      }
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+    act(() => {
+      root.render(
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+          <MemoryRouter initialEntries={['/sale-orders/so-1/edit']}>
+            <Routes>
+              <Route path="/sale-orders/:id/edit" element={<SaleOrderFormPage />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    await flush();
+    await flush();
+    await flush();
+  }
+  const verificationReads = () =>
+    vi
+      .mocked(apiClient.get)
+      .mock.calls.filter((call) => call[0] === '/gst-compliance/verification')
+      .map((call) => (call[1] as { params: Record<string, string> }).params);
+  const check = () =>
+    Array.from(container.querySelectorAll('button')).find((b) =>
+      (b.getAttribute('aria-label') ?? '').includes('verified. View registration details'),
+    );
+  const verifyAction = () =>
+    Array.from(container.querySelectorAll('button')).find((b) =>
+      /^(Verify|Retrieve|Reverify)/.test(b.getAttribute('aria-label') ?? ''),
+    );
+  const typeGstin = async (value: string) => {
+    await act(async () => {
+      const el = textInput('GSTIN');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+  };
+
+  it('shows saved evidence when the destination GSTIN matches the linked Retail Store’s persisted GSTIN', async () => {
+    const post = vi.spyOn(apiClient, 'post');
+    await renderEdit({ retailStoreId: 'store-1', gstin: STORE_GSTIN }, { gstin: STORE_GSTIN });
+    expect(verificationReads()).toEqual([
+      { gstin: STORE_GSTIN, sourceType: 'RETAIL_STORE', sourceId: 'store-1' },
+    ]);
+    expect(check()).toBeDefined();
+    // Destinations can show evidence but never start a verification.
+    expect(verifyAction()).toBeUndefined();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('requests nothing when the destination GSTIN differs from the Store’s persisted GSTIN', async () => {
+    await renderEdit({ retailStoreId: 'store-1', gstin: OTHER_GSTIN }, { gstin: STORE_GSTIN });
+    expect(verificationReads()).toEqual([]);
+    expect(check()).toBeUndefined();
+    expect(verifyAction()).toBeUndefined();
+  });
+
+  it('stops showing evidence as soon as a matching GSTIN is edited to a different value, and resumes when restored', async () => {
+    await renderEdit({ retailStoreId: 'store-1', gstin: STORE_GSTIN }, { gstin: STORE_GSTIN });
+    expect(check()).toBeDefined();
+    await typeGstin(OTHER_GSTIN);
+    expect(check()).toBeUndefined();
+    expect(verificationReads().some((p) => p.gstin === OTHER_GSTIN)).toBe(false);
+    expect(verifyAction()).toBeUndefined();
+    await typeGstin(STORE_GSTIN);
+    expect(check()).toBeDefined();
+  });
+
+  it('does not infer a match from the Retail Store id alone: unknown or GSTIN-less Stores request nothing', async () => {
+    await renderEdit({ retailStoreId: 'store-1', gstin: STORE_GSTIN }, new Error('Forbidden'));
+    expect(verificationReads()).toEqual([]);
+    expect(check()).toBeUndefined();
+    vi.restoreAllMocks();
+    act(() => root.render(<div />));
+    await renderEdit({ retailStoreId: 'store-1', gstin: STORE_GSTIN }, { gstin: null });
+    expect(verificationReads()).toEqual([]);
+    expect(check()).toBeUndefined();
+  });
+
+  it('a freshly selected Retail Store supplies its persisted GSTIN without an extra lookup', async () => {
+    await renderCreateForm();
+    const original = vi.mocked(apiClient.get).getMockImplementation()!;
+    vi.mocked(apiClient.get).mockImplementation(async (url: string, config?: { params?: Record<string, unknown> }) => {
+      if (url === '/gst-compliance/verification/policy') return { data: { data: { enabled: true, mode: 'LIVE', level: 'BASIC' } } };
+      if (url === '/gst-compliance/verification') return { data: { data: liveFresh(String(config?.params?.gstin)) } };
+      return original(url, config as never);
+    });
+    await selectOption('Factory', 'Factory One');
+    await flush();
+    await chooseDistributor('Distributor One');
+    const lookup = triggerByLabel('Retail Store') as unknown as HTMLInputElement;
+    await act(async () => {
+      lookup.focus();
+      lookup.click();
+    });
+    await flush();
+    await flush();
+    const option = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find((e) =>
+      e.textContent?.includes('Store dist-1'),
+    )!;
+    await act(async () => option.click());
+    await flush();
+    await flush();
+    expect(verificationReads()).toEqual([
+      { gstin: '22AAAAA0000A1Z5', sourceType: 'RETAIL_STORE', sourceId: 'store-dist-1' },
+    ]);
+    expect(check()).toBeDefined();
+    expect(verifyAction()).toBeUndefined();
+    expect(vi.mocked(apiClient.get).mock.calls.some((c) => c[0] === '/retail-stores/store-dist-1')).toBe(false);
+    // Typing a different GSTIN into the snapshot removes the claim.
+    await typeGstin(OTHER_GSTIN);
+    expect(check()).toBeUndefined();
+  });
+
+  it('requests nothing for a destination without a linked Retail Store', async () => {
+    await renderEdit({ retailStoreId: null, gstin: STORE_GSTIN });
+    expect(verificationReads()).toEqual([]);
+    expect(vi.mocked(apiClient.get).mock.calls.some((call) => String(call[0]).startsWith('/retail-stores/'))).toBe(false);
+    expect(check()).toBeUndefined();
+  });
+});
