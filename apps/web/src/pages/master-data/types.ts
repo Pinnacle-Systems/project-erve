@@ -37,6 +37,8 @@ export interface Factory {
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  /** Optional; NULL on Factories created before GSTIN support. */
+  gstin?: string | null;
   city: string | null;
   status: Status;
   addressLine1?: string | null;

@@ -364,3 +364,169 @@ describe('FactoryFormPage — Edit', () => {
     expect(navigateSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('FactoryFormPage — optional GSTIN', () => {
+  const GSTIN = '33AAAAA0000A1Z5';
+  async function renderWithPolicy(
+    factory: Factory,
+    mode: 'create' | 'edit',
+    policy: { enabled: boolean; mode?: 'DEMO' | 'LIVE' },
+    onRequest: (config: InternalAxiosRequestConfig) => void = () => undefined,
+    overrides: AdapterOverrides = {},
+  ) {
+    const base = adapterFor(factory, overrides);
+    apiClient.defaults.adapter = (async (config: InternalAxiosRequestConfig) => {
+      onRequest(config);
+      if (config.url === '/gst-compliance/verification/policy')
+        return ok(config, { success: true, data: policy });
+      if (config.url === '/gst-compliance/verification')
+        return ok(config, {
+          success: true,
+          data: {
+            enabled: true,
+            mode: policy.mode ?? 'LIVE',
+            level: 'BASIC',
+            canVerify: true,
+            canRefresh: false,
+            cacheState: 'NONE',
+            evidence: null,
+            latestFailure: null,
+          },
+        });
+      return base(config);
+    }) as AxiosAdapter;
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const path =
+      mode === 'create' ? '/master-data/factories/new' : `/master-data/factories/${factory.id}/edit`;
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={[path]}>
+          <QueryClientProvider client={queryClient}>
+            <Routes>
+              <Route path="/master-data/factories/new" element={<FactoryFormPage />} />
+              <Route path="/master-data/factories/:id/edit" element={<FactoryFormPage />} />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flush();
+    if (mode === 'edit') await waitForLoaded();
+    await flush();
+  }
+  const submitButton = (label: string) =>
+    Array.from(container.querySelectorAll('button')).find((b) => b.textContent === label)!;
+
+  it('is optional: a Factory with no GSTIN saves with gstin null, even when verification is on', async () => {
+    let body: Record<string, unknown> | undefined;
+    await renderWithPolicy(makeFactory(), 'create', { enabled: true, mode: 'LIVE' }, () => undefined, {
+      post: async (config) => {
+        body = JSON.parse(config.data as string);
+        return ok(config, { success: true, data: makeFactory({ id: 'factory-9' }) });
+      },
+    });
+    expect(findInput('GSTIN').required).toBe(false);
+    setInputValue(findInput('Name *'), 'No GST Factory');
+    await act(async () => submitButton('Create Factory').click());
+    await flush();
+    expect(body).toMatchObject({ name: 'No GST Factory', gstin: null });
+    expect(navigateSpy).toHaveBeenCalledWith('/master-data/factories/factory-9');
+  });
+
+  it('normalizes and sends an entered GSTIN; an unverified GSTIN still saves', async () => {
+    let body: Record<string, unknown> | undefined;
+    const requests: string[] = [];
+    await renderWithPolicy(
+      makeFactory(),
+      'create',
+      { enabled: true, mode: 'LIVE' },
+      (config) => requests.push(`${config.method} ${config.url}`),
+      {
+        post: async (config) => {
+          body = JSON.parse(config.data as string);
+          return ok(config, { success: true, data: makeFactory({ id: 'factory-9' }) });
+        },
+      },
+    );
+    setInputValue(findInput('Name *'), 'GST Factory');
+    setInputValue(findInput('GSTIN'), ` ${GSTIN.toLowerCase()} `);
+    await flush();
+    await act(async () => submitButton('Create Factory').click());
+    await flush();
+    expect(body).toMatchObject({ gstin: GSTIN });
+    // The cache was read; no verification (POST) request was ever made.
+    expect(requests.filter((r) => r.startsWith('post /gst-compliance'))).toEqual([]);
+  });
+
+  it('rejects a malformed GSTIN before calling the API, with verification off', async () => {
+    const post = vi.fn();
+    await renderWithPolicy(makeFactory(), 'create', { enabled: false }, () => undefined, {
+      post: async (config) => {
+        post();
+        return ok(config, { success: true, data: makeFactory() });
+      },
+    });
+    setInputValue(findInput('Name *'), 'Bad GST Factory');
+    setInputValue(findInput('GSTIN'), 'ABC123');
+    await act(async () => submitButton('Create Factory').click());
+    await flush();
+    expect(post).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Enter a valid 15-character GSTIN');
+  });
+
+  it('makes no verification request while verification is off', async () => {
+    const requests: string[] = [];
+    await renderWithPolicy(makeFactory(), 'create', { enabled: false }, (config) =>
+      requests.push(`${config.method} ${config.url}`),
+    );
+    setInputValue(findInput('GSTIN'), GSTIN);
+    await flush();
+    expect(
+      requests.filter((r) => r.includes('/gst-compliance/verification') && !r.endsWith('/policy')),
+    ).toEqual([]);
+    expect(
+      Array.from(container.querySelectorAll('button')).some((b) => /Verify/.test(b.textContent ?? '')),
+    ).toBe(false);
+  });
+
+  it('edits an existing Factory: hydrates a saved GSTIN, reads it as the saved record, and can clear it', async () => {
+    let body: Record<string, unknown> | undefined;
+    const reads: Array<Record<string, unknown> | undefined> = [];
+    await renderWithPolicy(
+      makeFactory({ gstin: GSTIN }),
+      'edit',
+      { enabled: true, mode: 'LIVE' },
+      (config) => {
+        if (config.url === '/gst-compliance/verification') reads.push(config.params);
+      },
+      {
+        patch: async (config) => {
+          body = JSON.parse(config.data as string);
+          return ok(config, { success: true, data: makeFactory() });
+        },
+      },
+    );
+    expect(findInput('GSTIN').value).toBe(GSTIN);
+    expect(reads[0]).toEqual({ gstin: GSTIN, sourceType: 'FACTORY', sourceId: 'factory-1' });
+    setInputValue(findInput('GSTIN'), '');
+    await act(async () => submitButton('Save Changes').click());
+    await flush();
+    expect(body).toMatchObject({ gstin: null });
+  });
+
+  it('leaves a legacy Factory (NULL GSTIN) editable and unchanged', async () => {
+    let body: Record<string, unknown> | undefined;
+    await renderWithPolicy(makeFactory({ gstin: null }), 'edit', { enabled: false }, () => undefined, {
+      patch: async (config) => {
+        body = JSON.parse(config.data as string);
+        return ok(config, { success: true, data: makeFactory() });
+      },
+    });
+    expect(findInput('GSTIN').value).toBe('');
+    await act(async () => submitButton('Save Changes').click());
+    await flush();
+    expect(body).toMatchObject({ gstin: null });
+  });
+});

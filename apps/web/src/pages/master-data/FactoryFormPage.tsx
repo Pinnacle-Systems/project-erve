@@ -2,17 +2,20 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
+import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import type { ApiSuccessResponse } from '@erve/types';
 import { PageHeader, createEnterToNextHandler } from '@erve/app-components';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection, Panel } from '@erve/layout';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import type { Factory } from './types.js';
 
 const emptyForm = {
   code: '',
   name: '',
+  gstin: '',
   contactName: '',
   contactEmail: '',
   contactPhone: '',
@@ -26,7 +29,7 @@ const emptyForm = {
 
 type FactoryFormFields = typeof emptyForm;
 
-const identityFields: Array<keyof FactoryFormFields> = ['code', 'name'];
+const identityFields: Array<keyof FactoryFormFields> = ['code', 'name', 'gstin'];
 const contactFields: Array<keyof FactoryFormFields> = ['contactName', 'contactEmail', 'contactPhone'];
 const addressFields: Array<keyof FactoryFormFields> = [
   'addressLine1',
@@ -40,6 +43,7 @@ const addressFields: Array<keyof FactoryFormFields> = [
 const labels: Record<keyof FactoryFormFields, string> = {
   code: 'Code',
   name: 'Name',
+  gstin: 'GSTIN',
   contactName: 'Contact Name',
   contactEmail: 'Contact Email',
   contactPhone: 'Contact Phone',
@@ -96,9 +100,14 @@ export function FactoryFormPage() {
       if (!form.name.trim()) {
         throw new Error('Name is required');
       }
+      const gstin = normalizeGstin(form.gstin);
+      if (gstin && !isValidGstinFormat(gstin)) {
+        throw new Error('Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)');
+      }
       const payload = {
         ...cleanPayload(form),
         name: form.name.trim(),
+        gstin: gstin || null,
       };
       const response = isEdit
         ? await apiClient.patch<ApiSuccessResponse<Factory>>(`/factories/${id}`, payload)
@@ -119,7 +128,19 @@ export function FactoryFormPage() {
   if (isEdit && query.isError)
     return <ErrorState title="Unable to load factory" description={query.error.message} />;
 
-  const renderField = (key: keyof FactoryFormFields) => (
+  const renderField = (key: keyof FactoryFormFields) =>
+    key === 'gstin' ? (
+      <GstinVerificationField
+        key={key}
+        label={labels[key]}
+        entity="FACTORY"
+        recordId={id}
+        savedGstin={query.data?.gstin ?? null}
+        value={form.gstin}
+        onChange={(event) => setForm({ ...form, gstin: event.target.value })}
+        disabled={mutation.isPending}
+      />
+    ) : (
     <TextField
       key={key}
       label={labels[key]}
@@ -134,7 +155,7 @@ export function FactoryFormPage() {
       }
       onChange={(event) => setForm({ ...form, [key]: event.target.value })}
     />
-  );
+    );
 
   return (
     <div className="space-y-5">

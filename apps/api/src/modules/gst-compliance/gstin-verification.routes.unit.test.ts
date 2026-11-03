@@ -83,6 +83,35 @@ describe('verification HTTP validation and separation', () => {
       .expect(400);
     expect(service.prepare).not.toHaveBeenCalled();
   });
+  it.each(['FACTORY', 'DISTRIBUTOR', 'RETAIL_STORE', 'SELLER_REGISTRATION'])(
+    'accepts a %s source, including the reserved unsaved-form id',
+    async (sourceType) => {
+      const { app, service } = setup();
+      await request(app)
+        .get(`/verification?gstin=33AAAAA0000A1Z5&sourceType=${sourceType}&sourceId=NEW`)
+        .set('x-test-role', 'ADMIN')
+        .expect(200);
+      expect(service.read).toHaveBeenCalledWith(expect.anything(), {
+        gstin: '33AAAAA0000A1Z5',
+        source: { type: sourceType, id: 'NEW' },
+      });
+      await request(app)
+        .post('/verification/prepare')
+        .set('x-test-role', 'ADMIN')
+        .send({ target: { gstin: '33AAAAA0000A1Z5', source: { type: sourceType, id: 'NEW' } } })
+        .expect(200);
+      // Preparing never executes: a provider call needs a separate execute request.
+      expect(service.execute).not.toHaveBeenCalled();
+    },
+  );
+  it('rejects unknown source types', async () => {
+    const { app, service } = setup();
+    await request(app)
+      .get('/verification?gstin=33AAAAA0000A1Z5&sourceType=WAREHOUSE&sourceId=NEW')
+      .set('x-test-role', 'ADMIN')
+      .expect(400);
+    expect(service.read).not.toHaveBeenCalled();
+  });
   it('rejects incomplete source identities and execute payloads that are not exact intents', async () => {
     const { app, service } = setup();
     await request(app)

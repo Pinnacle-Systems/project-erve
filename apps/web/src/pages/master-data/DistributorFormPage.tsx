@@ -11,7 +11,7 @@ import { apiClient } from '../../lib/api-client.js';
 import type { Distributor, Status } from './types.js';
 
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 
 const emptyForm = {
   code: '',
@@ -198,6 +198,21 @@ export function DistributorFormPage() {
         </SelectField>
       );
     }
+    if (key === 'gstin') {
+      return (
+        <GstinVerificationField
+          key={key}
+          label={fieldLabels[key]}
+          required
+          entity="DISTRIBUTOR"
+          recordId={id}
+          savedGstin={distributorQuery.data?.gstin}
+          value={form.gstin}
+          errorMessage={error && !form.gstin ? 'Required' : undefined}
+          onChange={(event) => setForm((current) => ({ ...current, gstin: event.target.value }))}
+        />
+      );
+    }
     return (
       <TextField
         key={key}
@@ -207,11 +222,7 @@ export function DistributorFormPage() {
         value={form[key]}
         readOnly={key === 'code'}
         errorMessage={
-          error &&
-          ((key === 'name' && !form.name) ||
-            (key === 'gstin' && !form.gstin))
-            ? 'Required'
-            : undefined
+          error && key === 'name' && !form.name ? 'Required' : undefined
         }
         onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
       />
@@ -242,7 +253,6 @@ export function DistributorFormPage() {
         >
           <FormSection title="Identity / Business">
             <FormGrid columns={3}>{identityFieldKeys.filter((key) => isEdit || key !== 'code').map(renderField)}</FormGrid>
-            <GstinVerificationPanel gstin={form.gstin} savedGstin={distributorQuery.data?.gstin} source={id ? { type: 'DISTRIBUTOR', id } : undefined} />
           </FormSection>
 
           <FormSection title="Contact">

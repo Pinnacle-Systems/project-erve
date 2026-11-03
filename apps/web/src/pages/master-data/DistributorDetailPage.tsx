@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationInline } from '../gst-compliance/GstinVerificationField.js';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
@@ -341,7 +341,15 @@ export function DistributorDetailPage() {
   const fields = [
     ['Code', distributor.code],
     ['Name', distributor.name],
-    ['GSTIN', distributor.gstin],
+    [
+      'GSTIN',
+      <GstinVerificationInline
+        key="gstin"
+        gstin={distributor.gstin}
+        entity="DISTRIBUTOR"
+        recordId={distributor.id}
+      />,
+    ],
     ['Purchase Mode', distributor.purchaseMode === 'OUTRIGHT' ? 'Outright' : 'Sale or Return'],
     ['Contact Name', distributor.contactName ?? '—'],
     ['Contact Email', distributor.contactEmail ?? '—'],
@@ -403,7 +411,6 @@ export function DistributorDetailPage() {
         </p>
       </Panel>
 
-      <GstinVerificationPanel gstin={distributor.gstin} source={{ type: 'DISTRIBUTOR', id: distributor.id }} />
       {canManageUserMappings ? <UserMappingPanel distributor={distributor} /> : null}
 
       <ConfirmDialog

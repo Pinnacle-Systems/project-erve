@@ -5,7 +5,13 @@ import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
 import type { GstinVerificationService } from './gstin-verification.service.js';
 
-const sourceType = z.enum(['DISTRIBUTOR', 'SELLER_REGISTRATION', 'RETAIL_STORE', 'DISPATCH_ORDER']);
+const sourceType = z.enum([
+  'DISTRIBUTOR',
+  'SELLER_REGISTRATION',
+  'RETAIL_STORE',
+  'FACTORY',
+  'DISPATCH_ORDER',
+]);
 const targetSchema = z
   .object({
     gstin: z.string().trim().min(1).max(30),

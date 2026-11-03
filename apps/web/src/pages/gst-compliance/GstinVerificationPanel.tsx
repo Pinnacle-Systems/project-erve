@@ -1,20 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
-import type {
-  ApiSuccessResponse,
-  GstVerificationPreparation,
-  GstVerificationSource,
-  GstVerificationTarget,
-  GstVerificationView,
-} from '@erve/types';
+import type { GstVerificationSource, GstVerificationTarget, GstVerificationView } from '@erve/types';
 import { Button, TextField, ValidationMessage } from '@erve/primitives';
-import { ConfirmDialog, StatusBadge } from '@erve/app-components';
+import { StatusBadge } from '@erve/app-components';
 import { Panel } from '@erve/layout';
-import { apiClient } from '../../lib/api-client.js';
-import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { GstinLiveConfirmDialog, GstinVerificationHistory } from './GstinVerificationParts.js';
+import { atExpiry, useGstinVerification, useGstVerificationPolicy } from './useGstinVerification.js';
 
-const PATH = '/gst-compliance/verification';
 const UNAVAILABLE = 'Information unavailable';
 export function formatFiledPeriod(period: string | null): string {
   if (!period || !/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) return UNAVAILABLE;
@@ -24,25 +16,7 @@ export function formatFiledPeriod(period: string | null): string {
     timeZone: 'UTC',
   }).format(new Date(`${period}-01T00:00:00Z`));
 }
-const stamp = (value: string) => new Date(value).toLocaleString('en-IN');
-
-// Browser timers cap at ~24.8 days; policy permits 30 days. Reschedule long
-// waits rather than treating a capped timer as the actual expiry instant.
-function atExpiry(expiresAt: string, callback: () => void) {
-  let timer: ReturnType<typeof setTimeout>;
-  const expiry = Date.parse(expiresAt);
-  const schedule = () => {
-    timer = setTimeout(
-      () => {
-        if (Date.now() < expiry) schedule();
-        else callback();
-      },
-      Math.min(2147483647, Math.max(0, expiry - Date.now()) + 10),
-    );
-  };
-  schedule();
-  return () => clearTimeout(timer);
-}
+export const stamp = (value: string) => new Date(value).toLocaleString('en-IN');
 
 export function GstinVerificationResult({ view }: { view: GstVerificationView }) {
   const evidence = view.evidence;
@@ -101,6 +75,18 @@ export function GstinVerificationResult({ view }: { view: GstVerificationView })
         <div>
           <dt className="text-muted-foreground">Taxpayer type</dt>
           <dd>{field('taxpayer_type', evidence.taxpayerType)}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Registration date</dt>
+          <dd>{field('registration_date', evidence.registrationDate)}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Business constitution</dt>
+          <dd>{field('business_constitution', evidence.businessConstitution)}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-muted-foreground">Registered address</dt>
+          <dd>{field('address', evidence.registeredAddress)}</dd>
         </div>
       </dl>
       <p className="text-muted-foreground">
@@ -164,15 +150,12 @@ interface Props {
   standalone?: boolean;
   readOnly?: boolean;
 }
+/**
+ * Standalone, saved-record panel. The editable forms use GstinVerificationField;
+ * this remains the Accountant lookup utility in GST Compliance Settings.
+ */
 export function GstinVerificationPanel(props: Props) {
-  const policy = useQuery({
-    queryKey: ['gst-verification-policy'],
-    staleTime: 30000,
-    refetchOnWindowFocus: false,
-    retry: false,
-    queryFn: async () =>
-      (await apiClient.get<ApiSuccessResponse<{ enabled: boolean }>>(`${PATH}/policy`)).data.data,
-  });
+  const policy = useGstVerificationPolicy();
   if (!policy.data?.enabled) return null;
   const gstin = normalizeGstin(props.gstin);
   if (!gstin) return null;
@@ -207,111 +190,15 @@ function SavedVerification({
   target: GstVerificationTarget;
   readOnly?: boolean;
 }) {
-  const client = useQueryClient();
-  const key = ['gst-verification', target];
-  const query = useQuery({
-    queryKey: key,
-    refetchOnWindowFocus: false,
-    retry: false,
-    queryFn: async () =>
-      (
-        await apiClient.get<ApiSuccessResponse<GstVerificationView>>(PATH, {
-          params: {
-            gstin: target.gstin,
-            sourceType: target.source?.type,
-            sourceId: target.source?.id,
-          },
-        })
-      ).data.data,
-  });
-  const expiresAt = query.data?.evidence?.expiresAt;
-  const refetch = query.refetch;
-  useEffect(() => {
-    if (!expiresAt) return;
-    const delay = Date.parse(expiresAt) - Date.now();
-    if (delay <= 0) return;
-    return atExpiry(expiresAt, () => void refetch());
-  }, [expiresAt, refetch]);
-  const [confirmation, setConfirmation] = useState<Extract<
-    GstVerificationPreparation,
-    { kind: 'CONFIRMATION' }
-  > | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const submitting = useRef(false);
-  const invoker = useRef<HTMLButtonElement | null>(null);
-  const history = useQuery({
-    queryKey: ['gst-verification-history', target],
-    enabled: false,
-    queryFn: async () =>
-      (
-        await apiClient.get<ApiSuccessResponse<import('@erve/types').GstVerificationAttempt[]>>(
-          `${PATH}/history`,
-          {
-            params: {
-              gstin: target.gstin,
-              sourceType: target.source?.type,
-              sourceId: target.source?.id,
-            },
-          },
-        )
-      ).data.data,
-  });
-  async function execute(intentId: string) {
-    const result = (
-      await apiClient.post<ApiSuccessResponse<GstVerificationView>>(`${PATH}/execute`, { intentId })
-    ).data.data;
-    client.setQueryData(key, result);
-    void client.invalidateQueries({ queryKey: ['gst-verification-history', target] });
-  }
-  async function prepare(refresh: boolean, button: HTMLButtonElement) {
-    if (submitting.current) return;
-    submitting.current = true;
-    setBusy(true);
-    setError('');
-    invoker.current = button;
-    try {
-      const result = (
-        await apiClient.post<ApiSuccessResponse<GstVerificationPreparation>>(`${PATH}/prepare`, {
-          target,
-          refresh,
-        })
-      ).data.data;
-      if (result.kind === 'RESULT') client.setQueryData(key, result.view);
-      else if (result.mode === 'DEMO') await execute(result.intentId);
-      else setConfirmation(result);
-    } catch (caught) {
-      setError(getApiErrorMessage(caught, 'Unable to verify GSTIN. Saving remains available.'));
-      void query.refetch();
-    } finally {
-      submitting.current = false;
-      setBusy(false);
-    }
-  }
-  async function confirm() {
-    if (!confirmation || submitting.current) return;
-    submitting.current = true;
-    setBusy(true);
-    setError('');
-    try {
-      await execute(confirmation.intentId);
-    } catch (caught) {
-      setError(getApiErrorMessage(caught, 'Unable to verify GSTIN. Saving remains available.'));
-      void query.refetch();
-    } finally {
-      submitting.current = false;
-      setBusy(false);
-      setConfirmation(null);
-    }
-  }
-  const view = query.data;
-  if (query.isPending)
+  const verification = useGstinVerification(target);
+  const { view, busy, error, confirmation } = verification;
+  if (verification.isPending)
     return <p className="text-xs text-muted-foreground">Loading saved verification…</p>;
-  if (query.isError)
+  if (verification.isError)
     return (
       <ValidationMessage tone="warning">
         Saved verification is unavailable. Saving remains available.{' '}
-        <Button type="button" variant="ghost" onClick={() => void query.refetch()}>
+        <Button type="button" variant="ghost" onClick={() => void verification.refetch()}>
           Retry saved result
         </Button>
       </ValidationMessage>
@@ -334,7 +221,7 @@ function SavedVerification({
             type="button"
             variant="secondary"
             disabled={busy || !!confirmation}
-            onClick={(event) => void prepare(false, event.currentTarget)}
+            onClick={(event) => void verification.verify(false, event.currentTarget)}
           >
             {view.level === 'COMPLETE' ? 'Retrieve Complete Profile' : 'Verify GSTIN'}
           </Button>
@@ -344,63 +231,14 @@ function SavedVerification({
             type="button"
             variant="secondary"
             disabled={busy || !!confirmation}
-            onClick={(event) => void prepare(true, event.currentTarget)}
+            onClick={(event) => void verification.verify(true, event.currentTarget)}
           >
             Reverify GSTIN
           </Button>
         )}
       </div>
-      {view.evidence && (
-        <details
-          onToggle={(event) => {
-            if (event.currentTarget.open && !history.data && !history.isFetching)
-              void history.refetch();
-          }}
-        >
-          <summary className="cursor-pointer text-xs text-muted-foreground">
-            Verification history
-          </summary>
-          {history.isError ? (
-            <p className="text-xs">History unavailable.</p>
-          ) : (
-            <ul className="mt-1 space-y-1 text-xs">
-              {history.data?.map((attempt) => (
-                <li key={attempt.id}>
-                  {stamp(attempt.createdAt)} · {attempt.outcome.replaceAll('_', ' ')}
-                  {attempt.refresh ? ' · Explicit refresh' : ''}
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-      )}
-      <ConfirmDialog
-        open={!!confirmation}
-        onOpenChange={(open) => {
-          if (!busy && !open) setConfirmation(null);
-        }}
-        loading={busy}
-        title={
-          confirmation?.refresh
-            ? 'Reverify GSTIN'
-            : confirmation?.level === 'COMPLETE'
-              ? 'Retrieve Complete Profile'
-              : 'Verify GSTIN — Basic'
-        }
-        description={
-          confirmation
-            ? `${confirmation.gstin} · ${confirmation.level === 'COMPLETE' ? 'Complete Profile' : 'Basic Verification'} · Live Mode. ${confirmation.refresh ? 'Cached information will be bypassed. ' : ''}Fresh cached information is ${confirmation.freshCacheAvailable ? 'available' : 'not available'}. This verification may consume ${confirmation.estimatedCredits} API credit${confirmation.estimatedCredits === 1 ? '' : 's'}. Proceed?`
-            : ''
-        }
-        confirmLabel="Proceed"
-        onConfirm={() => void confirm()}
-        onCloseAutoFocus={(event) => {
-          if (invoker.current?.isConnected && !invoker.current.disabled) {
-            event.preventDefault();
-            invoker.current.focus();
-          }
-        }}
-      />
+      {view.evidence && <GstinVerificationHistory target={target} />}
+      <GstinLiveConfirmDialog verification={verification} />
     </section>
   );
 }

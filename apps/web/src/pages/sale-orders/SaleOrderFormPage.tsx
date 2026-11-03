@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
@@ -751,15 +751,19 @@ export function SaleOrderFormPage() {
                                     value={dest.postalCode}
                                     onChange={(e) => updateDestination(group.clientKey, dest.clientKey, { postalCode: e.target.value })}
                                   />
-                                  <TextField
+                                  {/* Destination verification is read-only in this phase: evidence for
+                                      the linked Retail Store's GSTIN may be shown, never requested here. */}
+                                  <GstinVerificationField
                                     id={`dest-${dest.clientKey}-gstin`}
                                     label="GSTIN"
+                                    entity="RETAIL_STORE"
+                                    recordId={dest.retailStoreId}
+                                    allowVerify={false}
                                     value={dest.gstin}
                                     onChange={(e) => updateDestination(group.clientKey, dest.clientKey, { gstin: e.target.value })}
                                   />
                                 </FormGrid>
 
-                                <GstinVerificationPanel gstin={dest.gstin} source={dest.retailStoreId ? { type: 'RETAIL_STORE', id: dest.retailStoreId } : undefined} readOnly />
                                 <div className="space-y-3">
                                   {dest.lines.map((line) => {
                                     const resolvedStyle = line.style ? resolveStyleOption(line.style) : null;

@@ -499,6 +499,8 @@ model Factory {
   state        String?
   country      String?
   postalCode   String?       @map("postal_code")
+  // Optional. Many Factories predate it; NULL is a valid, permanent value.
+  gstin        String?
   status       FactoryStatus @default(ACTIVE)
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")

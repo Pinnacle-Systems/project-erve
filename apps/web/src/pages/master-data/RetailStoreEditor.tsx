@@ -5,7 +5,7 @@ import type { ApiSuccessResponse, RetailStore } from '@erve/types';
 import { Button, SelectField, SelectItem, TextField, ValidationMessage } from '@erve/primitives';
 import { FormGrid, FormSection } from '@erve/layout';
 import { createEnterToNextHandler } from '@erve/app-components';
-import { GstinVerificationPanel } from '../gst-compliance/GstinVerificationPanel.js';
+import { GstinVerificationField } from '../gst-compliance/GstinVerificationField.js';
 import { DistributorLookupField, type DistributorLookupValue } from './DistributorLookupField.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
@@ -109,6 +109,21 @@ export function RetailStoreEditor({
     onError: (e) => setError(getApiErrorMessage(e, 'Unable to save Retail Store')),
   });
   function field(key: keyof typeof empty) {
+    if (key === 'gstin') {
+      return (
+        <GstinVerificationField
+          key={key}
+          label={labels[key]}
+          width="md"
+          entity="RETAIL_STORE"
+          recordId={store?.id}
+          savedGstin={store ? store.gstin : undefined}
+          value={form.gstin}
+          onChange={(e) => setForm((current) => ({ ...current, gstin: e.target.value }))}
+          disabled={mutation.isPending}
+        />
+      );
+    }
     return (
       <TextField
         key={key}
@@ -163,7 +178,6 @@ export function RetailStoreEditor({
           </SelectField>
         </FormGrid>
       </FormSection>
-      <GstinVerificationPanel gstin={form.gstin} savedGstin={store?.gstin} source={store ? { type: 'RETAIL_STORE', id: store.id } : undefined} />
       <FormSection title="Address">
         <FormGrid layout="content">
           {(

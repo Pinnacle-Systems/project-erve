@@ -198,10 +198,11 @@ describe('Phase 1B integration with the main-branch Style / Size grid', () => {
       expect(quantities.map((input) => input.value)).toEqual(['5', '10']);
       expect(quantities.every((input) => input.readOnly)).toBe(true);
     }
-    const verification = container.querySelector('section[aria-label="GSTIN verification"]');
-    expect(verification).not.toBeNull();
-    expect(verification!.textContent).toContain('Not Verified');
-    expect(verification!.querySelector('button')).toBeNull();
+    // Destination verification is display-only: the GSTIN text, no panel, and no
+    // Verify / Reverify action of any kind.
+    expect(container.textContent).toContain('GSTIN: 33AAAAA0000A1Z5');
+    expect(container.querySelector('section[aria-label="GSTIN verification"]')).toBeNull();
+    expect(Array.from(container.querySelectorAll('button')).map((b) => b.textContent)).not.toContain('Verify');
     expect(apiClient.get).toHaveBeenCalledWith('/gst-compliance/verification', {
       params: { gstin: '33AAAAA0000A1Z5', sourceType: 'DISPATCH_ORDER', sourceId: 'dest-1' },
     });
