@@ -248,7 +248,7 @@ export function AccountantGstinLookup() {
   const [requested, setRequested] = useState('');
   return (
     <Panel title="GSTIN verification">
-      <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <TextField
           label="GSTIN to verify"
           value={gstin}
