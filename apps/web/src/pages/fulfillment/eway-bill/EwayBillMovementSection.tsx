@@ -71,13 +71,15 @@ interface FormProps {
   record: EwayBillMovementRecord;
   /** null = editable; otherwise the reason it is read-only. */
   readOnlyReason: string | null;
+  /** Offered while the block is a status read that failed or is unverified. */
+  onRetry?: () => void;
   save: UseMutationResult<EwayBillMovementRecord, unknown, UpdateEwayBillMovementRequest>;
   onSaved: () => void;
   onEdit: () => void;
   onReload: () => Promise<void>;
 }
 
-function MovementForm({ record, readOnlyReason, save, onSaved, onEdit, onReload }: FormProps) {
+function MovementForm({ record, readOnlyReason, onRetry, save, onSaved, onEdit, onReload }: FormProps) {
   const baseline = movementToForm(record.movement);
   const [form, setForm] = useState<MovementFormState>(baseline);
   const [error, setError] = useState('');
@@ -132,7 +134,16 @@ function MovementForm({ record, readOnlyReason, save, onSaved, onEdit, onReload 
         void submit();
       }}
     >
-      {readOnly && <p className="text-sm text-muted-foreground">{readOnlyReason}</p>}
+      {readOnly && (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">{readOnlyReason}</p>
+          {onRetry && (
+            <Button type="button" variant="secondary" onClick={onRetry}>
+              Retry loading status
+            </Button>
+          )}
+        </div>
+      )}
       {error && (
         <div className="space-y-2">
           <ValidationMessage tone="error">{error}</ValidationMessage>
@@ -330,10 +341,11 @@ function MovementForm({ record, readOnlyReason, save, onSaved, onEdit, onReload 
 interface Props {
   query: UseQueryResult<EwayBillMovementRecord>;
   readOnlyReason: string | null;
+  onRetry?: () => void;
   save: UseMutationResult<EwayBillMovementRecord, unknown, UpdateEwayBillMovementRequest>;
 }
 
-export function EwayBillMovementSection({ query, readOnlyReason, save }: Props) {
+export function EwayBillMovementSection({ query, readOnlyReason, onRetry, save }: Props) {
   const [saved, setSaved] = useState(false);
   const [revision, setRevision] = useState(0);
 
@@ -365,6 +377,7 @@ export function EwayBillMovementSection({ query, readOnlyReason, save }: Props) 
           key={`${query.data.version}:${revision}`}
           record={query.data}
           readOnlyReason={readOnlyReason}
+          onRetry={onRetry}
           save={save}
           onSaved={() => setSaved(true)}
           onEdit={() => setSaved(false)}

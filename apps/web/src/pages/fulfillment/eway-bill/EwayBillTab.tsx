@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { canManageEwayBill } from '@erve/shared';
 import { useAuth } from '../../../auth/AuthContext.js';
 import { EwayBillGenerationSection } from './EwayBillGenerationSection.js';
@@ -11,7 +12,7 @@ import {
   useEwayBillPreview,
   useEwayBillReadiness,
 } from './eway-bill-queries.js';
-import { hasOpenAttempt } from './eway-bill-ui.js';
+import { hasOpenAttempt, isVerifiedRead } from './eway-bill-ui.js';
 
 interface Props {
   invoiceId: string;
@@ -37,8 +38,19 @@ export function EwayBillTab({ invoiceId, invoiceStatus, invoiceNumber }: Props) 
   const { saveMovement, generateDemo, linkExisting, closeDemoAttempt } =
     useEwayBillActions(invoiceId);
 
+  // Set when a generation request starts; reads older than this are unverified.
+  const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
+
+  // Cached attempts are used only to block (an old open attempt keeps blocking),
+  // never to conclude that nothing is open.
   const attempts = history.data?.attempts;
   const openAttempt = attempts ? hasOpenAttempt(attempts) : false;
+  const historyVerified = isVerifiedRead(history, requestStartedAt);
+  const retryStatus = () => {
+    void history.refetch();
+    void preview.refetch();
+    void readiness.refetch();
+  };
 
   const readOnlyReason = !canManage
     ? 'View only — an Accountant maintains movement information.'
@@ -48,7 +60,12 @@ export function EwayBillTab({ invoiceId, invoiceStatus, invoiceNumber }: Props) 
         ? 'An E-Way Bill request for this invoice is unfinished. Resolve it in the attempt history below before changing movement information.'
         : history.isPending
           ? 'Checking for unfinished E-Way Bill requests…'
-          : null;
+          : !historyVerified
+            ? history.isFetching
+              ? 'Refreshing the E-Way Bill request history…'
+              : 'The E-Way Bill request history could not be verified, so movement information cannot be edited. Your unsaved changes are kept.'
+            : null;
+  const canRetryHistory = canManage && !history.isPending && !historyVerified && !history.isFetching;
 
   return (
     <div className="space-y-4">
@@ -63,13 +80,16 @@ export function EwayBillTab({ invoiceId, invoiceStatus, invoiceNumber }: Props) 
       <EwayBillMovementSection
         query={movement}
         readOnlyReason={readOnlyReason}
+        onRetry={canRetryHistory && !openAttempt ? retryStatus : undefined}
         save={saveMovement}
       />
       <EwayBillGenerationSection
         query={preview}
         canManage={canManage}
-        hasOpenAttempt={openAttempt}
-        refreshing={preview.isFetching || history.isFetching}
+        history={history}
+        requestStartedAt={requestStartedAt}
+        onRequestStart={() => setRequestStartedAt(Date.now())}
+        onRefreshStatus={retryStatus}
         generate={generateDemo}
       />
       <EwayBillHistorySection

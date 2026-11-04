@@ -1,3 +1,4 @@
+import type { UseQueryResult } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type {
   EwayBillApplicabilityOutcome,
@@ -262,4 +263,14 @@ export function getFieldErrors(caught: unknown): Record<string, string> {
 
 export function hasOpenAttempt(attempts: readonly EwayBillAttemptView[]): boolean {
   return attempts.some((attempt) => attempt.open);
+}
+
+/**
+ * A read counts as verified only if its latest fetch succeeded and, after a
+ * generation request began, it was completed after that moment. A failed
+ * refetch leaves old data in the cache with an error status, and old data from
+ * before the request must never stand in for the backend's current state.
+ */
+export function isVerifiedRead(query: UseQueryResult<unknown>, since: number | null): boolean {
+  return query.status === 'success' && (since === null || query.dataUpdatedAt >= since);
 }

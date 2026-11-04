@@ -38,6 +38,10 @@ interface Server {
 let container: HTMLDivElement;
 let root: Root;
 let server: Server;
+let client: QueryClient;
+/** Read endpoints (by URL suffix) that currently fail, or never answer. */
+let failing: Set<string>;
+let hanging: Set<string>;
 
 const fresh = (): Server => ({
   readiness: readinessFixture(),
@@ -48,6 +52,8 @@ const fresh = (): Server => ({
 
 beforeEach(() => {
   server = fresh();
+  failing = new Set();
+  hanging = new Set();
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
@@ -74,6 +80,9 @@ const networkFailure = () => new AxiosError('timeout of 30000ms exceeded', 'ECON
 
 function mockServerReads() {
   vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+    const suffix = ['/generation-preview', '/eway-bill/attempts'].find((item) => url.endsWith(item));
+    if (suffix && failing.has(suffix)) throw axiosFailure(503, 'UNAVAILABLE', 'Service unavailable');
+    if (suffix && hanging.has(suffix)) return new Promise(() => undefined);
     if (url.endsWith('/eway-bill-readiness')) return ok(server.readiness);
     if (url.endsWith('/eway-bill/movement')) return ok(server.movement);
     if (url.endsWith('/eway-bill/generation-preview')) return ok(server.preview);
@@ -104,11 +113,10 @@ async function render(
     refreshUser: vi.fn(),
   } as unknown as ReturnType<typeof Auth.useAuth>);
   mockServerReads();
+  client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   await act(async () => {
     root.render(
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}
-      >
+      <QueryClientProvider client={client}>
         <EwayBillTab invoiceId="inv-1" invoiceStatus={invoiceStatus} invoiceNumber="EI/26-27/0001" />
       </QueryClientProvider>,
     );
@@ -847,5 +855,190 @@ describe('Attempt history and Demo closure', () => {
     server.history = historyFixture({ attempts: [attemptFixture()] });
     await render('ADMIN');
     expect(maybeButton('Close Demo Attempt')).toBeUndefined();
+  });
+});
+
+describe('Fail-closed status handling', () => {
+  const PREVIEW = '/generation-preview';
+  const HISTORY = '/eway-bill/attempts';
+  const uncertain = (): EwayBillGenerateResponse => ({
+    outcome: 'UNCERTAIN',
+    attempt: attemptFixture(),
+    ewayBill: null,
+    alreadyExisted: false,
+    failure: { code: 'TIMEOUT', message: 'The provider did not answer in time. The outcome is unknown.' },
+  });
+  const generateButton = () => button('Generate Demo E-Way Bill');
+  async function startGeneration() {
+    await click('Generate Demo E-Way Bill');
+    await click('Confirm Demo generation');
+  }
+
+  it('keeps generation disabled after a network failure when the refresh also fails, then reconciles on a successful refresh', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      failing.add(PREVIEW);
+      failing.add(HISTORY);
+      throw networkFailure();
+    });
+    await render();
+    await startGeneration();
+    // The cached preview still says "ready" and the cached history says nothing is open.
+    expect(text()).toContain('Request ready');
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Latest status could not be confirmed');
+    expect(text()).toContain('Request status unknown');
+    expect(text()).toContain('has not been confirmed yet');
+    expect((field('Vehicle number') as HTMLInputElement).disabled).toBe(true);
+
+    await click('Refresh status'); // the reads still fail
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Request status unknown');
+
+    failing.clear();
+    await click('Refresh status');
+    expect(generateButton().disabled).toBe(false);
+    expect(text()).not.toContain('Latest status could not be confirmed');
+    expect(text()).toContain('Request status unknown'); // never silently dismissed
+    expect(text()).toContain('The attempt history and preview have been reloaded');
+    expect(post).toHaveBeenCalledTimes(1); // nothing retried automatically
+  });
+
+  it('stays disabled after an HTTP 202 UNCERTAIN result when the refresh fails, and follows the backend once it succeeds', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      failing.add(PREVIEW);
+      failing.add(HISTORY);
+      return { status: 202, data: { success: true, data: uncertain() } };
+    });
+    await render();
+    await startGeneration();
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Generation outcome unknown');
+    expect(text()).toContain('Latest status could not be confirmed');
+
+    failing.clear();
+    server.history = historyFixture({ attempts: [attemptFixture()] });
+    server.preview = previewFixture({
+      linkage: { ...noLinkage(), syntheticRecords: { activeDemoBills: 0, openDemoAttempts: 1, demoBill: null } },
+    });
+    await click('Refresh status');
+    expect(generateButton().disabled).toBe(true); // the backend reports an open attempt
+    expect(text()).toContain('Generation outcome unknown');
+    expect(text()).toContain('Close Demo Attempt');
+    expect(text()).not.toContain('Latest status could not be confirmed');
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a fresh preview alone re-enable generation', async () => {
+    vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      failing.add(HISTORY);
+      return { status: 202, data: { success: true, data: uncertain() } };
+    });
+    await render();
+    await startGeneration();
+    expect(server.preview.demo.available).toBe(true);
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Latest status could not be confirmed');
+  });
+
+  it('does not let a fresh history alone re-enable generation', async () => {
+    vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      failing.add(PREVIEW);
+      throw networkFailure();
+    });
+    await render();
+    await startGeneration();
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  it('stays disabled while a refresh has not answered', async () => {
+    vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      hanging.add(PREVIEW);
+      hanging.add(HISTORY);
+      throw networkFailure();
+    });
+    await render();
+    await startGeneration();
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Refreshing the E-Way Bill request history');
+  });
+
+  it('stays blocked after a refresh that reports an active Demo bill', async () => {
+    vi.spyOn(apiClient, 'post').mockImplementation(async () => {
+      failing.add(PREVIEW);
+      failing.add(HISTORY);
+      throw networkFailure();
+    });
+    await render();
+    await startGeneration();
+    failing.clear();
+    server.preview = previewFixture({
+      linkage: { ...noLinkage(), syntheticRecords: { activeDemoBills: 1, openDemoAttempts: 0, demoBill: association() } },
+    });
+    server.history = historyFixture({
+      attempts: [attemptFixture({ outcome: 'SUCCEEDED', open: false, requiresReview: false, ewayBillId: 'bill-1' })],
+      ewayBills: [billFixture()],
+    });
+    await click('Refresh status');
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('A Demo E-Way Bill already exists');
+  });
+
+  it('prevents movement edits and generation when the history cannot be loaded, and recovers on retry', async () => {
+    failing.add(HISTORY);
+    await render();
+    expect((field('Vehicle number') as HTMLInputElement).disabled).toBe(true);
+    expect(maybeButton('Save movement information')).toBeUndefined();
+    expect(text()).toContain('request history could not be verified');
+    expect(generateButton().disabled).toBe(true);
+    expect(text()).toContain('Latest status could not be confirmed');
+
+    failing.clear();
+    await click('Retry loading status');
+    expect((field('Vehicle number') as HTMLInputElement).disabled).toBe(false);
+    expect(generateButton().disabled).toBe(false);
+  });
+
+  it('keeps unsaved movement edits when the history later becomes unverified', async () => {
+    await render();
+    typeInto('Transporter name', 'My unsaved edit');
+    failing.add(HISTORY);
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ['eway-bill', 'inv-1', 'history'] });
+    });
+    await flush();
+    const input = field('Transporter name') as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.value).toBe('My unsaved edit');
+    expect(maybeButton('Save movement information')).toBeUndefined();
+
+    failing.clear();
+    await click('Retry loading status');
+    const restored = field('Transporter name') as HTMLInputElement;
+    expect(restored.disabled).toBe(false);
+    expect(restored.value).toBe('My unsaved edit');
+    expect(maybeButton('Save movement information')!.disabled).toBe(false);
+  });
+
+  it('does not infer "no open attempts" while the history is still loading', async () => {
+    hanging.add(HISTORY);
+    await render();
+    expect((field('Vehicle number') as HTMLInputElement).disabled).toBe(true);
+    expect(text()).toContain('Checking for unfinished E-Way Bill requests');
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  it('still allows another attempt after a definite rejection once the refresh succeeds', async () => {
+    const rejected: EwayBillGenerateResponse = {
+      outcome: 'REJECTED',
+      attempt: attemptFixture({ outcome: 'REJECTED', open: false, requiresReview: false }),
+      ewayBill: null,
+      alreadyExisted: false,
+      failure: { code: 'INVALID_REQUEST', message: 'The provider rejected the request as invalid.' },
+    };
+    vi.spyOn(apiClient, 'post').mockImplementation(async () => ok(rejected));
+    await render();
+    await startGeneration();
+    expect(text()).toContain('Rejected by provider');
+    expect(generateButton().disabled).toBe(false);
   });
 });

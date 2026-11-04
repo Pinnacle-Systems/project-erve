@@ -3,6 +3,7 @@ import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type {
   EwayBillGenerateResponse,
   EwayBillGenerationPreviewResponse,
+  EwayBillHistoryResponse,
   GenerateEwayBillDemoRequest,
 } from '@erve/types';
 import { StatusBadge } from '@erve/app-components';
@@ -24,7 +25,9 @@ import {
   DISPATCH_FROM_LABEL,
   SHIP_TO_LABEL,
   groupBlockers,
+  hasOpenAttempt,
   isOutcomeUnknownError,
+  isVerifiedRead,
   isStaleVersionError,
 } from './eway-bill-ui.js';
 
@@ -43,18 +46,22 @@ type GenerationResult =
 interface Props {
   query: UseQueryResult<EwayBillGenerationPreviewResponse>;
   canManage: boolean;
-  /** The history query has an unfinished attempt (any mode). */
-  hasOpenAttempt: boolean;
-  /** Preview or history is being re-read; no new request is offered meanwhile. */
-  refreshing: boolean;
+  history: UseQueryResult<EwayBillHistoryResponse>;
+  /** When the latest generation request began; reads older than this are unverified. */
+  requestStartedAt: number | null;
+  onRequestStart: () => void;
+  /** Re-reads preview, history and readiness. */
+  onRefreshStatus: () => void;
   generate: UseMutationResult<EwayBillGenerateResponse, unknown, GenerateEwayBillDemoRequest>;
 }
 
 export function EwayBillGenerationSection({
   query,
   canManage,
-  hasOpenAttempt,
-  refreshing,
+  history,
+  requestStartedAt,
+  onRequestStart,
+  onRefreshStatus,
   generate,
 }: Props) {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -67,6 +74,8 @@ export function EwayBillGenerationSection({
     if (submitting.current || !preview || preview.movementVersion === null) return;
     submitting.current = true;
     setResult(null);
+    // From here on, only reads completed after this moment describe the outcome.
+    onRequestStart();
     try {
       // Only the movement version and the acknowledgement are sent: mode,
       // test_mode and credentials are decided by the server, never the browser.
@@ -112,7 +121,15 @@ export function EwayBillGenerationSection({
   else {
     const { request, demo, linkage } = preview;
     const demoBill = linkage.syntheticRecords.demoBill;
-    const openDemoAttempt = linkage.syntheticRecords.openDemoAttempts > 0 || hasOpenAttempt;
+    // Cached data may only block; it never proves that nothing is open.
+    const openDemoAttempt =
+      linkage.syntheticRecords.openDemoAttempts > 0 ||
+      hasOpenAttempt(history.data?.attempts ?? []);
+    const refreshing = query.isFetching || history.isFetching;
+    const verified =
+      isVerifiedRead(query, requestStartedAt) &&
+      isVerifiedRead(history, requestStartedAt) &&
+      !refreshing;
     const groups = groupBlockers(request.blockers, demo.blockers);
     const canGenerate =
       canManage &&
@@ -123,7 +140,7 @@ export function EwayBillGenerationSection({
       !demoBill &&
       preview.movementVersion !== null &&
       !generate.isPending &&
-      !refreshing;
+      verified;
 
     body = (
       <div className="space-y-4">
@@ -205,7 +222,18 @@ export function EwayBillGenerationSection({
         <p className="text-sm text-muted-foreground">
           Live (statutory) E-Way Bill generation is not available in ERVE India.
         </p>
-        {result && <GenerationOutcome result={result} />}
+        {!verified && !refreshing && !generate.isPending && (
+          <EwayBillCallout tone="warning" role="alert" title="Latest status could not be confirmed">
+            <p>
+              The preview or the attempt history could not be read after the last request, so what
+              is shown may be out of date. Generation stays disabled until both are read again.
+            </p>
+            <Button type="button" variant="secondary" onClick={onRefreshStatus}>
+              Refresh status
+            </Button>
+          </EwayBillCallout>
+        )}
+        {result && <GenerationOutcome result={result} reconciled={verified} />}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
@@ -235,7 +263,11 @@ export function EwayBillGenerationSection({
         </div>
         {canManage && !canGenerate && !generate.isPending && (
           <p className="text-sm text-muted-foreground">
-            {demoBill
+            {!verified
+              ? refreshing
+                ? 'Refreshing the latest state…'
+                : 'Generation is disabled until the latest status has been read.'
+              : demoBill
               ? 'A Demo E-Way Bill already exists for this invoice.'
               : openDemoAttempt
                 ? 'An earlier request is unfinished. Resolve it in the attempt history before generating again.'
@@ -309,7 +341,13 @@ export function EwayBillGenerationSection({
   );
 }
 
-function GenerationOutcome({ result }: { result: GenerationResult }) {
+function GenerationOutcome({
+  result,
+  reconciled,
+}: {
+  result: GenerationResult;
+  reconciled: boolean;
+}) {
   if (result.kind === 'unknown') {
     return (
       <EwayBillCallout tone="warning" role="alert" title="Request status unknown">
@@ -318,8 +356,9 @@ function GenerationOutcome({ result }: { result: GenerationResult }) {
           retried, and it is not assumed to have failed.
         </p>
         <p>
-          The attempt history and preview have been reloaded. Check the attempt history below
-          before doing anything else.
+          {reconciled
+            ? 'The attempt history and preview have been reloaded. Check the attempt history below before doing anything else.'
+            : 'The latest state has not been confirmed yet. Refresh the status and check the attempt history before doing anything else.'}
         </p>
       </EwayBillCallout>
     );
