@@ -1,3 +1,4 @@
+import { hasExclusiveTransporterRole } from '@erve/shared';
 import { Outlet } from 'react-router-dom';
 import { canViewGstComplianceSettings } from '@erve/shared';
 import { canViewRetailStores } from '../auth/permissions.js';
@@ -147,7 +148,7 @@ export function AppLayout() {
         ...(canViewErvePackingLists(user)
           ? [{ to: '/fulfillment/erve-packing-lists', label: 'Erve Packing Lists', icon: PackageCheck }]
           : []),
-        ...(canViewErveDispatches(user)
+        ...((canViewErveDispatches(user) || (user && hasExclusiveTransporterRole(user)))
           ? [{ to: '/fulfillment/erve-dispatches', label: 'Dispatches', icon: Truck }]
           : []),
         ...(canViewSaleOrReturnPositions(user)

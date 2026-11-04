@@ -96,3 +96,6 @@ Disposable database: `postgresql://postgres:postgres@localhost:5432/erve_test?sc
 The added direct-API test was run with `pnpm --filter @erve/api test -- master-data.test.ts -t "enforces the size-master read policy for direct API requests"`: 1 file passed, 1 test passed, and 36 tests were filtered. All 17 API test files were then rerun against the disposable database in serial batches because the suite intentionally shares one resettable database: 286 tests passed (auth 16, users 37, master data 37, price lists 37, purchase orders 30, job orders 17, QA 7, and 74 remaining CLI/storage/style-image tests; 31 access/database-safety/health/CORS tests). The absent modules in ERVE-018-03 remain untested until they are implemented with an approved business policy.
 
 No migration or destructive test command was directed at `erve_dev` or production. API authorization remains authoritative even if a web/mobile route or hidden control is bypassed.
+# A2 Transporter addition
+
+See [assigned Transporter access](TRANSPORTER_ACCESS.md) for the narrow transport/assignment matrix and release prerequisites. TRANSPORTER is exclusive and never joins `ERVE_DISPATCH_MUTATION_ROLES`; all pre-existing role permissions below remain in force.

@@ -183,6 +183,18 @@ const legacyInvoiceUrls = [
   '/fulfillment/invoices/not-a-tax-invoice/?print=1',
 ];
 
+it.each(['/fulfillment/erve-dispatches/new', '/fulfillment/erve-packing-lists', '/fulfillment/tax-invoices', '/fulfillment/factory-dispatches', '/fulfillment/distributor-sales-reports', '/master-data/users'])(
+  'denies Transporter navigation to %s', async path => {
+    await renderRoutes('TRANSPORTER', path);
+    expect(getPageContent()).toContain('ForbiddenPage');
+  },
+);
+
+it('denies mixed-role Transporter accounts at the dispatch workspace boundary', async () => {
+  await renderRoutes(['ADMIN', 'TRANSPORTER'], '/fulfillment/erve-dispatches');
+  expect(getPageContent()).toContain('ForbiddenPage');
+});
+
 describe('retired Invoice Handoff routes', () => {
   it.each<Role>(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'])(
     '%s gets only a non-operational fallback at every legacy URL',
