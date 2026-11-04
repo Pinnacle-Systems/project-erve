@@ -103,6 +103,34 @@ describe('readiness', () => {
       expect(codes(finalizedFacts({ movement: completeMovement({ approximateDistanceKm: -1 }) }))).toEqual(['MOVEMENT_DISTANCE_INVALID']);
     });
 
+    it('requires a transport mode, as an application contract rather than a verified statutory rule', () => {
+      const result = evaluate(
+        finalizedFacts({ movement: completeMovement({ transportMode: null, vehicleNumber: null }) }),
+      );
+      expect(result.readiness.outcome).toBe('NOT_READY');
+      expect(result.readiness.blockers).toEqual([
+        expect.objectContaining({
+          source: 'MOVEMENT',
+          field: 'movement.transportMode',
+          code: 'MOVEMENT_TRANSPORT_MODE_MISSING',
+          message: expect.stringContaining('application'),
+        }),
+      ]);
+      // Part-B timing stays explicitly unverified.
+      expect(result.readiness.unverifiedRequirements.map((r) => r.code)).toContain('PART_B_REQUIREMENT_AT_GENERATION');
+    });
+
+    it.each([
+      ['ROAD', { vehicleNumber: 'TN01AB1234' }],
+      ['RAIL', { vehicleNumber: null, transportDocumentNumber: 'RR-1' }],
+      ['AIR', { vehicleNumber: null, transportDocumentNumber: 'AWB-1' }],
+      ['SHIP', { vehicleNumber: null, transportDocumentNumber: 'BL-1' }],
+    ] as const)('accepts a complete %s movement', (transportMode, extra) => {
+      const result = evaluate(finalizedFacts({ movement: completeMovement({ transportMode, ...extra }) }));
+      expect(result.readiness.blockers).toEqual([]);
+      expect(result.readiness.outcome).toBe('READY');
+    });
+
     it('requires a vehicle number for road transport', () => {
       expect(codes(finalizedFacts({ movement: completeMovement({ vehicleNumber: '  ' }) }))).toEqual(['MOVEMENT_VEHICLE_NUMBER_REQUIRED']);
     });

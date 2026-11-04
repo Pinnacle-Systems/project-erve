@@ -139,7 +139,7 @@ export const EWAY_BILL_UNVERIFIED_REQUIREMENTS: readonly EwayBillUnverifiedRequi
   {
     code: 'PART_B_REQUIREMENT_AT_GENERATION',
     message:
-      'Whether transport mode / vehicle / transporter ID are mandatory when the bill is generated (versus a later Part-B update) is not enforced beyond the mode-specific rules.',
+      'Whether transport mode / vehicle / transporter ID are statutorily mandatory when the bill is generated (versus a later Part-B update) is unverified. Transport mode is required here only by this application\'s full-movement contract (MOVEMENT_TRANSPORT_MODE_MISSING); vehicle / transporter ID are enforced only by the mode-specific rules.',
     basis: 'Conflicting provider documentation; NIC page not retrievable.',
   },
   {
@@ -354,6 +354,14 @@ function checkMovement(facts: EwayBillFacts, blockers: EwayBillBlocker[]): void 
     blockers.push(blocker('MOVEMENT', 'movement.approximateDistanceKm', 'MOVEMENT_DISTANCE_INVALID', 'The approximate distance must be a whole number of kilometres, 0 or more.'));
   }
 
+  // Required by THIS application's full-movement readiness contract (the
+  // supported request is prepared with a transport mode), not an
+  // independently verified statutory requirement. Whether NIC permits a
+  // Part-A-only bill with Part B supplied later remains unverified — see
+  // PART_B_REQUIREMENT_AT_GENERATION.
+  if (movement.transportMode === null) {
+    blockers.push(blocker('MOVEMENT', 'movement.transportMode', 'MOVEMENT_TRANSPORT_MODE_MISSING', 'The transport mode is not captured. It is needed to prepare the supported E-Way Bill request; this is an application requirement, and whether a bill may be generated without it (Part B supplied later) is not verified.'));
+  }
   if (movement.transportMode === 'ROAD' && !present(movement.vehicleNumber)) {
     blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_NUMBER_REQUIRED', 'A vehicle number is required for road transport.'));
   }
