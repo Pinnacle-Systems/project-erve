@@ -1,3 +1,7 @@
+import { canEditErveDispatchTransport, canConfirmErveDispatchDelivery, canManageErveDispatchAssignment, hasExclusiveTransporterRole } from '@erve/shared';
+import { AssignedTransportWorkspace } from './dispatch-workspace/AssignedTransportWorkspace.js';
+import { TransportFields } from './dispatch-workspace/TransportFields.js';
+import { TransporterAssignmentPanel } from './dispatch-workspace/TransporterAssignmentPanel.js';
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,7 +23,7 @@ import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
-import { canMutateErveDispatches, canViewSaleOrReturnPositions } from '../../auth/permissions.js';
+import { canViewSaleOrReturnPositions } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { isAxiosError } from 'axios';
 import { DispatchOverviewTab } from './dispatch-workspace/DispatchOverviewTab.js';
@@ -29,6 +33,10 @@ import type { ErveDispatchView } from './types.js';
 
 export function ErveDispatchDetailPage() {
   const { id } = useParams();
+  const { user } = useAuth();
+  if (user?.roles.includes('TRANSPORTER')) return hasExclusiveTransporterRole(user)
+    ? <AssignedTransportWorkspace key={id} id={id!} />
+    : <ErrorState title="Transport access unavailable" />;
   return <ErveDispatchDetailContent key={id} id={id!} />;
 }
 
@@ -40,12 +48,14 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canUpdateLr = canMutateErveDispatches(user);
+  const canUpdateLr = Boolean(user && canEditErveDispatchTransport(user));
+  const canConfirmDelivery = Boolean(user && canConfirmErveDispatchDelivery(user));
 
   const [transporter, setTransporter] = useState<string | null>(null);
   const [vehicleNumber, setVehicleNumber] = useState<string | null>(null);
   const [lrNumber, setLrNumber] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
+  const [transportSaved, setTransportSaved] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
 
   const [receivedQuantities, setReceivedQuantities] = useState<Record<string, string>>({});
@@ -84,6 +94,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
       setTransporter(null);
       setVehicleNumber(null);
       setLrNumber(null);
+      setTransportSaved(true);
       return queryClient.invalidateQueries({ queryKey: ['erve-dispatch', id] });
     },
     onError: (caught) => {
@@ -221,6 +232,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
               )}
             </DescriptionList>
           </Panel>
+          {transportSaved && <p role="status">Transport information saved.</p>}
           {formError && <ValidationMessage tone="error">{formError}</ValidationMessage>}
           {needsRefresh && (
             <div className="space-y-2" role="alert">
@@ -244,7 +256,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
               </Button>
             </div>
           )}
-          {canUpdateLr && dispatch.status !== 'DELIVERED' && (
+          {canConfirmDelivery && dispatch.status !== 'DELIVERED' && (
             <Panel title="Confirm Delivery">
               {deliveryFormError && (
                 <ValidationMessage tone="error">{deliveryFormError}</ValidationMessage>
@@ -330,23 +342,16 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
           {canUpdateLr && (
             <Panel title="Update Transport / LR Information">
               <div onKeyDown={createEnterToNextHandler()}>
-                <fieldset disabled={updateLrMutation.isPending} className="flex flex-wrap gap-3">
-                  <TextField
-                    label="Transporter"
-                    value={transporter ?? dispatch.transporter ?? ''}
-                    onChange={(e) => setTransporter(e.target.value)}
-                  />
-                  <TextField
-                    label="Vehicle Number"
-                    value={vehicleNumber ?? dispatch.vehicleNumber ?? ''}
-                    onChange={(e) => setVehicleNumber(e.target.value)}
-                  />
-                  <TextField
-                    label="LR Number"
-                    value={lrNumber ?? dispatch.lrNumber ?? ''}
-                    onChange={(e) => setLrNumber(e.target.value)}
-                  />
-                </fieldset>
+                <TransportFields
+                  value={{ transporter: transporter ?? dispatch.transporter ?? '', vehicleNumber: vehicleNumber ?? dispatch.vehicleNumber ?? '', lrNumber: lrNumber ?? dispatch.lrNumber ?? '' }}
+                  onChange={(field, value) => {
+                    setTransportSaved(false);
+                    if (field === 'transporter') setTransporter(value);
+                    if (field === 'vehicleNumber') setVehicleNumber(value);
+                    if (field === 'lrNumber') setLrNumber(value);
+                  }}
+                  disabled={updateLrMutation.isPending}
+                />
                 <div className="mt-3 flex justify-end">
                   <Button
                     onClick={() => {
@@ -361,6 +366,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
               </div>
             </Panel>
           )}
+          {user && canManageErveDispatchAssignment(user) && <TransporterAssignmentPanel id={id} version={dispatch.version} disabled={needsRefresh || updateLrMutation.isPending || confirmDeliveryMutation.isPending} onConflict={() => setNeedsRefresh(true)} />}
         </TabsContent>
         <TabsContent value="distributor-receipt" className="pt-4">
           <DispatchReceiptTab dispatch={dispatch} />

@@ -72,11 +72,12 @@ export function RolesPanel({
     },
   });
 
-  const assignableRoles = ROLES.filter((role) => !user.roles.includes(role));
+  const assignableRoles = ROLES.filter((role) => !user.roles.includes(role) && !user.roles.includes('TRANSPORTER') && (role !== 'TRANSPORTER' || user.roles.length === 0));
   const isSelf = user.id === currentUserId;
 
   return (
     <Panel title="Roles">
+      <p className="mb-3 text-sm">TRANSPORTER accounts cannot hold any other role. Provision a separate account for transport work.</p>
       <div className="space-y-4">
         <div className="flex flex-wrap gap-2">
           {user.roles.length === 0 ? (

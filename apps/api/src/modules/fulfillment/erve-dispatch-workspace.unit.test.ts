@@ -16,7 +16,9 @@ vi.mock('../price-lists/price-lookup.js', () => ({
   resolveDistributorPricingForSnapshot: vi.fn(),
 }));
 vi.mock('../../config/env.js', () => ({ env: {} }));
-import { getErveDispatchDetail } from './erve-dispatch.service.js';
+vi.mock('./erve-dispatch-transport.service.js', () => ({ updateDispatchTransport: vi.fn(async () => ({ id: 'dispatch', version: 2, lrNumber: 'LR' })) }));
+import { getErveDispatchDetail, updateErveDispatchLr } from './erve-dispatch.service.js';
+import { updateDispatchTransport } from './erve-dispatch-transport.service.js';
 
 const actor = (role: CurrentUser['roles'][number], distributorIds = ['dist-1']): CurrentUser => ({
   id: 'user',
@@ -137,4 +139,17 @@ it('rejects unauthorized roles and handles absent dispatches', async () => {
   await expect(getErveDispatchDetail(actor('ADMIN'), 'missing')).rejects.toMatchObject({
     statusCode: 404,
   });
+});
+
+it('never hydrates full dispatch data for the Transporter PATCH response', async () => {
+  vi.mocked(updateDispatchTransport).mockResolvedValue({ id: 'dispatch', version: 2, lrNumber: 'LR' } as Awaited<ReturnType<typeof updateDispatchTransport>>);
+  expect(await updateErveDispatchLr(actor('TRANSPORTER'), 'dispatch', { expectedVersion: 1, lrNumber: 'LR' })).toEqual({ id: 'dispatch', version: 2, lrNumber: 'LR' });
+  expect(db.erveDispatch.findUnique).not.toHaveBeenCalled();
+  expect(db.invoiceHandoff.findMany).not.toHaveBeenCalled();
+});
+
+it.each(['ADMIN', 'MERCHANDISER'] as const)('preserves the full PATCH response for %s', async role => {
+  const result = await updateErveDispatchLr(actor(role), 'dispatch', { expectedVersion: 1, lrNumber: 'LR' });
+  expect(result).toHaveProperty('quantityLines');
+  expect(result).toHaveProperty('invoiceHandoffs');
 });

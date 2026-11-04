@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createId } from '@erve/shared';
 import { ROLES } from '@erve/types';
-import { prisma } from '../db/prisma.js';
+import { prisma, type Prisma } from '../db/prisma.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { resetDatabase } from '../test/helpers.js';
 import { ROLE_DESCRIPTIONS } from './roles.js';
@@ -65,7 +65,7 @@ describe('runAdminBootstrap', () => {
 
     const roles = await prisma.role.findMany();
     expect(roles.map((r) => r.name).sort()).toEqual(
-      ['ACCOUNTANT', 'ADMIN', 'DISTRIBUTOR', 'FACTORY_USER', 'MERCHANDISER', 'QA_USER', 'SENIOR_MANAGEMENT'].sort(),
+      ['ACCOUNTANT', 'ADMIN', 'DISTRIBUTOR', 'FACTORY_USER', 'MERCHANDISER', 'QA_USER', 'SENIOR_MANAGEMENT', 'TRANSPORTER'].sort(),
     );
   });
 
@@ -142,7 +142,7 @@ describe('runAdminBootstrap', () => {
     expect(roles).toHaveLength(1);
   });
 
-  it('ensures all 7 roles even when the admin is already fully configured and only the ADMIN role row exists', async () => {
+  it('ensures all configured roles even when the admin is already fully configured and only the ADMIN role row exists', async () => {
     // Reproduces a database bootstrapped by an older version of this
     // command (or roles otherwise pruned down to just ADMIN): the admin
     // user already exists, already has the ADMIN role, and nothing about
@@ -333,16 +333,18 @@ describe('runAdminBootstrap', () => {
       update: {},
       create: { id: createId(), name: 'ADMIN', description: 'Full administrative access' },
     });
-    // The role mapping already exists at the DB level. The fake client
-    // below reports it as absent (a stale read), forcing runAdminBootstrap
-    // down the "add the role" path — so the real tx.userRole.create() call
-    // hits a genuine Postgres unique-constraint violation partway through
-    // the transaction. This exercises real transaction rollback rather
-    // than a mocked one.
+    // Keep a real duplicate mapping as a constraint-failure trigger. Fail after
+    // bootstrap's writes inside the same real transaction, so the password
+    // update must roll back even though bootstrap now reloads roles under lock.
     await prisma.userRole.create({ data: { id: createId(), userId, roleId: adminRole.id } });
 
-    const staleReadClient: AdminBootstrapPrismaClient = {
-      $transaction: prisma.$transaction.bind(prisma),
+    const failingWriteClient: AdminBootstrapPrismaClient = {
+      $transaction: (async (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        prisma.$transaction(async (tx) => {
+          const result = await fn(tx);
+          await tx.userRole.create({ data: { id: createId(), userId, roleId: adminRole.id } });
+          return result;
+        })) as AdminBootstrapPrismaClient['$transaction'],
       user: {
         findUnique: prisma.user.findUnique.bind(prisma.user),
         update: prisma.user.update.bind(prisma.user),
@@ -359,7 +361,7 @@ describe('runAdminBootstrap', () => {
           resetPassword: true,
           getPassword: async () => 'rolled-back-pw1',
         }),
-        { prisma: staleReadClient, databaseUrl: DB_URL },
+        { prisma: failingWriteClient, databaseUrl: DB_URL },
       ),
     ).rejects.toThrow();
 

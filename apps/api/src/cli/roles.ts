@@ -12,6 +12,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   ACCOUNTANT: 'Manages invoicing and financial records',
   DISTRIBUTOR: 'Manages distributor-facing orders and stock',
   SENIOR_MANAGEMENT: 'Cross-functional oversight and reporting',
+  TRANSPORTER: 'Maintains transport information for explicitly assigned dispatches',
 };
 
 // Deliberately plain Promise-returning signature (not Prisma's generated
@@ -40,7 +41,7 @@ export interface EnsureAllRolesResult {
 // /users.validation.ts's own source of truth for valid role names) has a
 // corresponding Role row — never deletes, renames, or touches any other
 // table. Safe to call whether the roles table currently has 0, some, or
-// all 7 rows already. Returns each role's id, for callers (like
+// all supported rows already. Returns each role's id, for callers (like
 // admin-bootstrap) that need to attach a UserRole mapping without a
 // second round-trip.
 export async function ensureAllRoles(client: RoleUpsertClient): Promise<EnsureAllRolesResult> {

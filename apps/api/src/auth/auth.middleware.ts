@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { isValidTransporterRoleCombination } from '@erve/shared';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { asyncHandler } from '../middleware/async-handler.js';
@@ -55,6 +56,9 @@ export const requireAuth = asyncHandler(
     }
 
     req.user = toCurrentUser(record);
+    if (!isValidTransporterRoleCombination(req.user.roles)) {
+      throw HttpError.forbidden('TRANSPORTER must be the only account role');
+    }
     next();
   },
 );
