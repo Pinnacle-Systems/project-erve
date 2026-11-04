@@ -23,18 +23,34 @@ import { absPaise, paiseToNumber, toPaiseHalfUp } from './eway-bill-money.js';
 // Tax Invoice -> NIC generate-E-Way-Bill request (Track B / B2A).
 //
 // Pure and database-free. It builds a request ONLY from the finalized invoice
-// snapshot and the captured E-Way-Bill movement; nothing is defaulted,
-// guessed or invented. Where a value cannot be derived the result is a
-// blocker (fail closed) naming the exact missing field or decision.
+// snapshot, the captured E-Way-Bill movement and an explicit transaction
+// arrangement; nothing is defaulted, guessed or invented. Where a value cannot
+// be derived the result is a blocker (fail closed) naming the exact field.
 //
 // Confirmed business decisions applied here:
 //  - Every line is invoiced in pieces: UQC "PCS".
-//  - OUTRIGHT and SALE_RETURN are BOTH outward sales (supplyType O, sub-supply
-//    1 "Supply", docType INV). SALE_RETURN is ERVE's commercial purchase-mode
-//    term, never a statutory sales-return movement, so purchaseMode is
-//    deliberately NOT read when classifying (a test pins this).
-//  - transactionType follows the actual bill-to / ship-to / dispatch-from
-//    arrangement, never the purchase mode.
+//  - OUTRIGHT and SALE_RETURN are BOTH outward sales (supplyType O, docType
+//    INV). SALE_RETURN is ERVE's commercial purchase-mode term, never a
+//    statutory sales return (NIC sub-supply "Sales Return" is a different
+//    movement), so purchaseMode is deliberately NOT read (a test pins this).
+//  - transactionType comes from the bill-to / ship-to / dispatch-from
+//    arrangement, never from the purchase mode.
+//
+// SOURCES of the NIC constraints enforced below (the official generate page,
+// docs.ewaybillgst.gov.in/apidocs/version1.03/generate-eway-bill.html, returns
+// HTTP 403 to this tooling, so its text was not read directly):
+//  [NIC-EINV] NIC's own e-invoice sandbox, "EWB Generation by IRN" v1.03
+//     (einv-apisandbox.nic.in): distance 0 / +-10% / <= 4000; road needs
+//     vehicle number and type; rail/air/ship need transport document number
+//     and date with vehicle fields omitted; vehicle number 4-20 alphanumeric.
+//  [NIC-RULES] A published reproduction of the NIC generate schema and its
+//     numbered validation rules (developer.sandbox.co.in): field limits, enums,
+//     max 250 items, document date not in the future and within 180 days,
+//     same-pincode distance cap, intra/inter tax split, services-only block,
+//     total-value rule. NIC release notes (via search) corroborate the 180-day
+//     limit and the e-invoice restriction.
+//  Each blocker's message names its basis; anything NOT confirmed stays in
+//  EWAY_BILL_REQUEST_ASSUMPTIONS.
 //
 // The B1 readiness evaluator is reused for every check it already owns, so the
 // two cannot drift apart; this module only adds what request-building needs.
@@ -42,11 +58,35 @@ import { absPaise, paiseToNumber, toPaiseHalfUp } from './eway-bill-money.js';
 
 const UQC_PIECES = 'PCS';
 const HSN_DIGITS = /^\d{4,8}$/;
-const DOCUMENT_AGE_WARNING_DAYS = 180;
+const TRANSPORTER_ID = /^[0-9]{2}[0-9A-Z]{13}$/;
+const TRANSPORT_DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,15}$/;
+const VEHICLE_NUMBER = /^[A-Z0-9]{4,20}$/;
+
+const MAX_ITEMS = 250;
+const MAX_DISTANCE_KM = 4000;
+const SAME_PINCODE_MAX_DISTANCE_KM = 100;
+const MAX_DOCUMENT_AGE_DAYS = 180;
+const MIN_PINCODE = 100_000;
+const MAX_PINCODE = 999_999;
 /** Tolerated difference between rounded and exact aggregates, in paise. */
 const ROUNDING_TOLERANCE_PAISE = 1n;
 /** Tolerated difference between derived otherValue and the stored round-off, in paise. */
 const ROUND_OFF_TOLERANCE_PAISE = 2n;
+
+const FIELD_LIMITS = { address: 120, place: 50, name: 100 } as const;
+
+/**
+ * An explicit, typed classification of who receives the goods and where they
+ * leave from. The invoice snapshot carries no ship-to party identity (no
+ * GSTIN), so this cannot be inferred from addresses: it must be captured and
+ * is then cross-checked against the data. Missing -> blocker.
+ */
+export interface EwayBillArrangement {
+  /** BILLED_PARTY: delivered to the party billed. DIFFERENT_PARTY: a third-party consignee. */
+  shipTo: 'BILLED_PARTY' | 'DIFFERENT_PARTY';
+  /** SUPPLIER_REGISTERED_PREMISES: ships from the invoice's supplier address. DIFFERENT_PLACE: from the captured dispatch-from address. */
+  dispatchFrom: 'SUPPLIER_REGISTERED_PREMISES' | 'DIFFERENT_PLACE';
+}
 
 export interface EwayBillRequestLineFacts extends EwayBillFactLine {
   /** Decimal as string, e.g. "5.00"; null on a line whose snapshot is incomplete. */
@@ -64,6 +104,8 @@ export interface EwayBillRequestFacts {
     finalizedAt: Date | null;
     /** Carried for traceability only. Never used to classify the request. */
     purchaseMode: 'OUTRIGHT' | 'SALE_RETURN';
+    /** Snapshot of the supplier's e-invoice applicability at finalization. */
+    sellerEinvoiceApplicable: boolean;
     gstTreatment: 'INTRA' | 'INTER' | null;
     subtotal: string | null;
     totalCgst: string | null;
@@ -98,12 +140,23 @@ export interface EwayBillRequestFacts {
   };
   lines: EwayBillRequestLineFacts[];
   movement: EwayBillMovementInfo | null;
+  arrangement: EwayBillArrangement | null;
 }
 
 export interface EwayBillRequestClassification {
   transactionType: 1 | 2 | 3 | 4;
-  shipToDiffersFromBillTo: boolean;
-  dispatchFromDiffersFromSupplier: boolean;
+  shipTo: EwayBillArrangement['shipTo'];
+  dispatchFrom: EwayBillArrangement['dispatchFrom'];
+}
+
+/**
+ * What stands between this request and a LIVE statutory E-Way Bill. Always
+ * present, on success and failure alike, so a future Live integration cannot
+ * obtain a payload without being handed these. Preparing a Demo request never
+ * satisfies any of them.
+ */
+export interface EwayBillLiveGate {
+  blockers: EwayBillBlocker[];
 }
 
 export type EwayBillRequestPreparation =
@@ -116,51 +169,70 @@ export type EwayBillRequestPreparation =
       classification: EwayBillRequestClassification;
       warnings: EwayBillReason[];
       assumptions: readonly EwayBillUnverifiedRequirement[];
+      live: EwayBillLiveGate;
     }
   | {
       ok: false;
       blockers: EwayBillBlocker[];
       warnings: EwayBillReason[];
       assumptions: readonly EwayBillUnverifiedRequirement[];
+      live: EwayBillLiveGate;
     };
 
 /**
- * Mappings that ARE applied but could not be verified against NIC's own
- * documentation (docs.ewaybillgst.gov.in returns 403 to automated fetches).
- * Reported with every preparation so a reviewer sees them, never hidden.
+ * The single question a Live caller must ask. False for every Demo-only
+ * preparation (B2): the Live gate always carries LIVE_GENERATION_NOT_AUTHORIZED.
+ */
+export function isLiveGenerationPermitted(preparation: EwayBillRequestPreparation): boolean {
+  return preparation.ok && preparation.live.blockers.length === 0;
+}
+
+/**
+ * Behaviour that is applied or relied on but NOT confirmed by NIC / the
+ * provider. Reported with every preparation so a reviewer sees it, never hidden.
  */
 export const EWAY_BILL_REQUEST_ASSUMPTIONS: readonly EwayBillUnverifiedRequirement[] = [
   {
-    code: 'OUTWARD_SALE_CODES',
-    message: 'supplyType "O", subSupplyType "1" (Supply) and docType "INV" are used for every purchase mode.',
-    basis: 'GSTINAPI generate example and the Vayana GSP v1.03 sample; NIC master-code page not retrievable.',
+    code: 'SUB_SUPPLY_TYPE_CODE',
+    message: 'subSupplyType "1" is used as "Supply" for every purchase mode.',
+    basis: 'GSTINAPI and GSP samples only; the NIC sub-supply annexure was not retrieved. supplyType "O" and docType "INV" are confirmed NIC enum values.',
   },
   {
-    code: 'TRANSACTION_TYPE_INFERRED_FROM_LOCATIONS',
+    code: 'TRANSACTION_TYPE_CODES',
     message:
-      'The ship-to GSTIN is not captured, so "ship-to differs from bill-to" is inferred from the state and pincode of the two locations, and "dispatch-from differs from supplier" from the captured dispatch-from address.',
-    basis: 'Data-model limit; transaction types 1-4 per ClearTax documentation.',
-  },
-  {
-    code: 'WIRE_VALUE_TYPES',
-    message: 'Pincodes, state codes, transactionType, hsnCode and quantity are sent as numbers; transMode, transDistance and vehicleType as strings.',
-    basis: 'Vayana GSP v1.03 sample payload only.',
+      'transactionType 1-4 (Regular, Bill To-Ship To, Bill From-Dispatch From, Combination) and the fields used for a different consignee are not confirmed. For a different ship-to party only the delivery address is sent: no separate ship-to GSTIN or trade name.',
+    basis: 'NIC transaction-type annexure not retrieved; codes per ClearTax. A mandatory ship-to GSTIN has been reported as on hold (unverified).',
   },
   {
     code: 'VALUATION_BASIS',
     message:
-      'totalValue is the sum of the 2-decimal-rounded line taxable values; totInvValue is the frozen payable total and otherValue the derived round-off.',
-    basis: 'No source states which total NIC compares or its tolerance.',
+      'totalValue is the sum of the 2-decimal-rounded line taxable values, totInvValue the frozen payable total, otherValue the derived round-off. This satisfies NIC\'s "sum of values <= totInvValue (+2 rupees)" exactly; whether the GSTR-1 reporting of these fields matches is unconfirmed.',
+    basis: 'NIC total-value rule confirmed; the payable-total basis is an application choice.',
   },
   {
-    code: 'HSN_DIGIT_RANGE',
-    message: 'HSN codes are required to be 4 to 8 digits.',
-    basis: 'Third-party documentation (goods: 4, 6 or 8 digits); the 5- and 7-digit cases are not blocked here.',
+    code: 'DISTANCE_PIN_TOLERANCE',
+    message: 'A non-zero distance must be within +-10% of NIC\'s stored PIN-to-PIN distance; this cannot be checked here and the provider will refuse it.',
+    basis: 'NIC distance table is not available to the application.',
   },
   {
-    code: 'ROAD_VEHICLE_TYPE_REQUIRED',
-    message: 'Road transport requires a vehicle number and a vehicle type; the type is never defaulted.',
-    basis: 'Third-party documentation; vehicle-number format is not validated.',
+    code: 'ALLOWED_TAX_RATES',
+    message: 'NIC accepts only its list of tax rates; the list is not encoded and rates are sent as invoiced.',
+    basis: 'List not retrieved.',
+  },
+  {
+    code: 'HSN_VALIDITY',
+    message: 'HSN codes are checked as 4 to 8 digits without a leading zero (NIC takes a number); validity against the GST master is checked by NIC.',
+    basis: 'Application rule on top of NIC\'s numeric hsnCode.',
+  },
+  {
+    code: 'SUPPLIER_REGISTRATION_RESTRICTIONS',
+    message: 'NIC refuses TDS/TCS GSTINs and enrolled transporters as supplier or buyer; the data model does not identify them.',
+    basis: 'NIC rules (reproduction); not detectable here.',
+  },
+  {
+    code: 'VEHICLE_NUMBER_FORMAT',
+    message: 'Only 4-20 alphanumeric characters are enforced; NIC also checks the Indian format and the Vahan database.',
+    basis: 'NIC states 4-20 characters; a reproduction states 7-15.',
   },
 ];
 
@@ -184,6 +256,11 @@ function blocker(
 
 /** "YYYY-MM-DD" -> "DD/MM/YYYY". */
 const ddmmyyyy = (iso: string): string => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+
+const pincodeInRange = (pincode: string): boolean => {
+  const value = Number(pincode);
+  return Number.isInteger(value) && value >= MIN_PINCODE && value <= MAX_PINCODE;
+};
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -256,9 +333,32 @@ export function prepareEwayBillRequest(
   facts: EwayBillRequestFacts,
   deps: { now?: () => Date } = {},
 ): EwayBillRequestPreparation {
-  const { invoice, lines, movement } = facts;
+  const { invoice, lines, movement, arrangement } = facts;
   const now = (deps.now ?? (() => new Date()))();
   const warnings: EwayBillReason[] = [];
+
+  // Live gate: independent of whether a Demo payload can be built.
+  const live: EwayBillLiveGate = {
+    blockers: [
+      blocker(
+        'INVOICE',
+        'integrationMode',
+        'LIVE_GENERATION_NOT_AUTHORIZED',
+        'Only Demo preparation exists. A Demo result is synthetic and never statutory clearance; Live generation needs its own approved, separately authorized integration.',
+      ),
+    ],
+  };
+  const recipientGstin = invoice.billTo.gstin?.trim().toUpperCase() ?? '';
+  if (invoice.sellerEinvoiceApplicable && recipientGstin !== 'URP') {
+    live.blockers.push(
+      blocker(
+        'INVOICE',
+        'supplier.einvoiceApplicable',
+        'EINVOICE_ENABLED_SUPPLIER_DIRECT_GENERATION_RESTRICTED',
+        'The supplier is e-invoice applicable: NIC does not allow the Generate E-Way Bill API to be used directly for its B2B / export invoices dated on or after 1 October 2020. The E-Way Bill must be generated through the IRN (e-invoice) route, which is not implemented.',
+      ),
+    );
+  }
 
   // 1. Everything B1 already owns (status, document identity, party / item /
   //    movement data presence, mode-specific transport rules).
@@ -269,21 +369,21 @@ export function prepareEwayBillRequest(
     blockers,
     warnings,
     assumptions: EWAY_BILL_REQUEST_ASSUMPTIONS,
+    live,
   });
   if (invoice.status !== 'FINALIZED') return fail();
 
-  // 2. Document identity.
+  // 2. Document identity and age.
   const documentNumber = invoice.invoiceNumber?.trim() ?? '';
   const documentDateIso = invoice.finalizedAt ? isoDate(invoice.finalizedAt) : null;
   if (documentDateIso && documentNumber && DOCUMENT_NUMBER.test(documentNumber)) {
     const ageDays = Math.floor(
       (Date.parse(isoDate(now)) - Date.parse(documentDateIso)) / 86_400_000,
     );
-    if (ageDays > DOCUMENT_AGE_WARNING_DAYS) {
-      warnings.push({
-        code: 'DOCUMENT_OLDER_THAN_180_DAYS',
-        message: `The invoice is ${ageDays} days old; third-party documentation reports NIC refusing documents older than 180 days (not verified).`,
-      });
+    if (ageDays < 0) {
+      blockers.push(blocker('INVOICE', 'document.date', 'DOCUMENT_DATE_IN_FUTURE', 'The document date cannot be later than the current date (NIC).'));
+    } else if (ageDays > MAX_DOCUMENT_AGE_DAYS) {
+      blockers.push(blocker('INVOICE', 'document.date', 'DOCUMENT_TOO_OLD', `The invoice is ${ageDays} days old; NIC does not generate an E-Way Bill more than ${MAX_DOCUMENT_AGE_DAYS} days after the document date.`));
     }
   }
 
@@ -330,12 +430,16 @@ export function prepareEwayBillRequest(
       pincode: trimmed(seller.postalCode)!,
       stateCode: supplierState,
     };
+    // The supplier address is required, not optional: never silently omitted.
+    if (!origin.addr1) {
+      blockers.push(blocker('PARTY', 'supplier.addressLine1', 'SUPPLIER_ADDRESS_LINE1_MISSING', 'The supplier address line 1 is missing; it is required in the request and is never invented.'));
+    }
+    if (!origin.place) {
+      blockers.push(blocker('PARTY', 'supplier.city', 'SUPPLIER_PLACE_MISSING', 'The supplier place (city) is missing; it is required in the request and is never invented.'));
+    }
   }
-  if (origin && (!origin.addr1 || !origin.place)) {
-    warnings.push({
-      code: 'FROM_ADDRESS_PARTIAL',
-      message: 'The dispatch-from address line or place is empty and is omitted from the request, not invented.',
-    });
+  if (origin && !pincodeInRange(origin.pincode)) {
+    blockers.push(blocker('MOVEMENT', 'dispatchFrom.postalCode', 'DISPATCH_FROM_PINCODE_OUT_OF_RANGE', 'The dispatch-from pincode must be between 100000 and 999999.'));
   }
   if (
     seller.gstin &&
@@ -352,7 +456,6 @@ export function prepareEwayBillRequest(
   // 4. Recipient and delivery location.
   const billToStateCode = trimmed(billTo.stateCode);
   const shipToStateCode = resolveGstStateCode(shipTo.state);
-  const recipientGstin = billTo.gstin?.trim().toUpperCase() ?? '';
   if (
     recipientGstin !== 'URP' &&
     isValidGstinFormat(recipientGstin) &&
@@ -364,54 +467,79 @@ export function prepareEwayBillRequest(
       message: 'The recipient state code differs from the first two digits of the recipient GSTIN.',
     });
   }
-  if (!trimmed(shipTo.addressLine1) || !trimmed(shipTo.city)) {
-    warnings.push({
-      code: 'TO_ADDRESS_PARTIAL',
-      message: 'The ship-to address line or place is empty and is omitted from the request, not invented.',
-    });
+  if (!trimmed(shipTo.addressLine1)) {
+    blockers.push(blocker('PARTY', 'shipTo.addressLine1', 'RECIPIENT_ADDRESS_LINE1_MISSING', 'The ship-to address line 1 is missing; it is required in the request and is never invented.'));
+  }
+  if (!trimmed(shipTo.city)) {
+    blockers.push(blocker('PARTY', 'shipTo.city', 'RECIPIENT_PLACE_MISSING', 'The ship-to place (city) is missing; it is required in the request and is never invented.'));
+  }
+  if (trimmed(shipTo.postalCode) && !pincodeInRange(trimmed(shipTo.postalCode)!)) {
+    blockers.push(blocker('PARTY', 'shipTo.postalCode', 'RECIPIENT_PINCODE_OUT_OF_RANGE', 'The ship-to pincode must be between 100000 and 999999.'));
   }
 
-  // 5. Transaction type, from the actual arrangement (never the purchase mode).
-  const shipToDiffersFromBillTo =
-    shipToStateCode !== billToStateCode ||
-    trimmed(shipTo.postalCode) !== trimmed(billTo.postalCode);
-  const dispatchFromDiffersFromSupplier =
-    origin !== null &&
-    override !== null &&
-    (origin.stateCode !== supplierState || origin.pincode !== trimmed(seller.postalCode));
-  const transactionType: 1 | 2 | 3 | 4 = shipToDiffersFromBillTo
-    ? dispatchFromDiffersFromSupplier
-      ? 4
-      : 2
-    : dispatchFromDiffersFromSupplier
-      ? 3
-      : 1;
+  // 5. Transaction type from an explicit, cross-checked arrangement.
+  let transactionType: 1 | 2 | 3 | 4 | null = null;
+  if (!arrangement) {
+    blockers.push(blocker('PARTY', 'arrangement', 'TRANSACTION_ARRANGEMENT_NOT_CLASSIFIED', 'Whether the goods are delivered to the billed party or a different consignee, and whether they ship from the supplier premises or a different place, has not been classified. It cannot be inferred from addresses and is never defaulted.'));
+  } else {
+    let consistent = true;
+    if (arrangement.dispatchFrom === 'DIFFERENT_PLACE' && !override) {
+      consistent = false;
+      blockers.push(blocker('MOVEMENT', 'arrangement.dispatchFrom', 'DISPATCH_FROM_ARRANGEMENT_UNSUPPORTED', 'The arrangement says goods ship from a different place but no dispatch-from address is captured.'));
+    }
+    if (arrangement.dispatchFrom === 'SUPPLIER_REGISTERED_PREMISES' && override) {
+      consistent = false;
+      blockers.push(blocker('MOVEMENT', 'arrangement.dispatchFrom', 'DISPATCH_FROM_ARRANGEMENT_CONTRADICTED', 'The arrangement says goods ship from the supplier premises but a dispatch-from address is captured. Remove the address or classify the dispatch as a different place.'));
+    }
+    if (
+      arrangement.shipTo === 'BILLED_PARTY' &&
+      shipToStateCode !== null &&
+      billToStateCode !== undefined &&
+      shipToStateCode !== billToStateCode
+    ) {
+      consistent = false;
+      blockers.push(blocker('PARTY', 'arrangement.shipTo', 'TRANSACTION_ARRANGEMENT_AMBIGUOUS', 'The arrangement says the goods go to the billed party, but the delivery state differs from the billed party\'s state. Classify the consignee as a different party or correct the data.'));
+    }
+    if (consistent) {
+      const differentParty = arrangement.shipTo === 'DIFFERENT_PARTY';
+      const differentPlace = arrangement.dispatchFrom === 'DIFFERENT_PLACE';
+      transactionType = differentParty ? (differentPlace ? 4 : 2) : differentPlace ? 3 : 1;
+    }
+  }
 
   // 6. Items.
   const itemPaise: bigint[] = [];
   const badHsn: string[] = [];
+  const leadingZeroHsn: string[] = [];
   const badQuantity: string[] = [];
   const badValue: string[] = [];
   const missingRate: string[] = [];
   const missingName: string[] = [];
+  const longName: string[] = [];
+  const longDescription: string[] = [];
   const items: EwayBillItemPayload[] = [];
   for (const line of lines) {
     const hsn = trimmed(line.hsnCode);
     if (hsn && !HSN_DIGITS.test(hsn)) badHsn.push(line.id);
+    else if (hsn && hsn.startsWith('0')) leadingZeroHsn.push(line.id);
     if (!Number.isInteger(line.quantity) || line.quantity <= 0) badQuantity.push(line.id);
     const paise = present(line.taxableValue) ? toPaiseHalfUp(line.taxableValue) : null;
     if (present(line.taxableValue) && (paise === null || paise < 0n)) badValue.push(line.id);
     const percent = present(line.gstPercent) ? Number(line.gstPercent) : Number.NaN;
     if (!Number.isFinite(percent) || percent < 0) missingRate.push(line.id);
-    if (!trimmed(line.productName)) missingName.push(line.id);
+    const productName = trimmed(line.productName);
+    const productDescription = trimmed(line.productDescription);
+    if (!productName) missingName.push(line.id);
+    else if (productName.length > FIELD_LIMITS.name) longName.push(line.id);
+    if (productDescription && productDescription.length > FIELD_LIMITS.name) longDescription.push(line.id);
     if (paise !== null && paise >= 0n) itemPaise.push(paise);
 
     const rate = Number.isFinite(percent) ? percent : 0;
     const half = Math.round((rate / 2) * 10_000) / 10_000;
     const isInter = invoice.gstTreatment === 'INTER';
     items.push({
-      productName: trimmed(line.productName) ?? '',
-      ...(trimmed(line.productDescription) ? { productDesc: trimmed(line.productDescription) } : {}),
+      productName: productName ?? '',
+      ...(productDescription ? { productDesc: productDescription } : {}),
       hsnCode: hsn && HSN_DIGITS.test(hsn) ? Number(hsn) : 0,
       quantity: line.quantity,
       qtyUnit: UQC_PIECES,
@@ -423,8 +551,20 @@ export function prepareEwayBillRequest(
       taxableAmount: paise !== null ? paiseToNumber(paise) : 0,
     });
   }
+  if (lines.length > MAX_ITEMS) {
+    blockers.push(blocker('ITEMS', 'items', 'ITEMS_EXCEED_MAXIMUM', `The invoice has ${lines.length} lines; NIC accepts at most ${MAX_ITEMS} items per E-Way Bill. The invoice is not split automatically.`));
+  }
   if (badHsn.length > 0) {
     blockers.push(blocker('ITEMS', 'items[].hsnCode', 'ITEM_HSN_FORMAT_INVALID', `${badHsn.length} line(s) have an HSN code that is not 4 to 8 digits.`, badHsn));
+  }
+  if (leadingZeroHsn.length > 0) {
+    blockers.push(blocker('ITEMS', 'items[].hsnCode', 'ITEM_HSN_LEADING_ZERO', `${leadingZeroHsn.length} line(s) have an HSN code with a leading zero, which cannot be represented exactly because NIC takes hsnCode as a number.`, leadingZeroHsn));
+  }
+  if (
+    lines.length > 0 &&
+    lines.every((line) => trimmed(line.hsnCode)?.startsWith('99'))
+  ) {
+    blockers.push(blocker('ITEMS', 'items[].hsnCode', 'ITEMS_SERVICES_ONLY', 'Every line carries a services (SAC 99) code; NIC does not generate an E-Way Bill unless at least one item is goods.'));
   }
   if (badQuantity.length > 0) {
     blockers.push(blocker('ITEMS', 'items[].quantity', 'ITEM_QUANTITY_INVALID', `${badQuantity.length} line(s) have a quantity that is not a positive whole number.`, badQuantity));
@@ -437,6 +577,12 @@ export function prepareEwayBillRequest(
   }
   if (missingName.length > 0) {
     blockers.push(blocker('ITEMS', 'items[].productName', 'ITEM_PRODUCT_NAME_MISSING', `${missingName.length} line(s) have no product name in the issued document snapshot (legacy invoices have none); a description is not invented.`, missingName));
+  }
+  if (longName.length > 0) {
+    blockers.push(blocker('ITEMS', 'items[].productName', 'FIELD_TOO_LONG', `${longName.length} line(s) have a product name over ${FIELD_LIMITS.name} characters (NIC limit); it is not truncated.`, longName));
+  }
+  if (longDescription.length > 0) {
+    blockers.push(blocker('ITEMS', 'items[].productDesc', 'FIELD_TOO_LONG', `${longDescription.length} line(s) have a product description over ${FIELD_LIMITS.name} characters (NIC limit); it is not truncated.`, longDescription));
   }
 
   // 7. Valuation.
@@ -488,25 +634,71 @@ export function prepareEwayBillRequest(
       }
     }
   }
+  // NIC: same state -> CGST + SGST; different state (or an SEZ party) -> IGST.
+  // The SEZ status of a party is not modelled, so an inter-state treatment
+  // within one state cannot be justified and is blocked rather than assumed.
+  if (supplierState && billToStateCode && invoice.gstTreatment) {
+    const sameState = supplierState === billToStateCode;
+    if (invoice.gstTreatment === 'INTRA' && !sameState) {
+      blockers.push(blocker('INVOICE', 'totals.gstTreatment', 'GST_TREATMENT_STATE_MISMATCH', 'The invoice is intra-state (CGST + SGST) but the supplier and recipient states differ; NIC requires IGST between different states.'));
+    } else if (invoice.gstTreatment === 'INTER' && sameState) {
+      blockers.push(blocker('INVOICE', 'totals.gstTreatment', 'GST_TREATMENT_STATE_MISMATCH', 'The invoice is inter-state (IGST) but the supplier and recipient are in the same state; NIC requires CGST + SGST within a state unless a party is in an SEZ, which is not modelled.'));
+    }
+  }
 
   // 8. Transport.
   const mode = movement?.transportMode ?? null;
+  const vehicleNumber = trimmed(movement?.vehicleNumber)?.toUpperCase().replace(/[\s-]/g, '');
   if (movement && mode === 'ROAD') {
     if (movement.vehicleType === null) {
-      blockers.push(blocker('MOVEMENT', 'movement.vehicleType', 'MOVEMENT_VEHICLE_TYPE_REQUIRED', 'A vehicle type is required for road transport and is never defaulted.'));
+      blockers.push(blocker('MOVEMENT', 'movement.vehicleType', 'MOVEMENT_VEHICLE_TYPE_REQUIRED', 'A vehicle type is required for road transport (NIC) and is never defaulted.'));
+    }
+    if (vehicleNumber && !VEHICLE_NUMBER.test(vehicleNumber)) {
+      blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_NUMBER_INVALID', 'The vehicle number must be 4 to 20 letters or digits (NIC); the format and Vahan registration are checked by NIC.'));
     }
   }
+  const distance = movement?.approximateDistanceKm ?? null;
+  if (distance !== null && Number.isInteger(distance) && distance >= 0) {
+    if (distance > MAX_DISTANCE_KM) {
+      blockers.push(blocker('MOVEMENT', 'movement.approximateDistanceKm', 'MOVEMENT_DISTANCE_EXCEEDS_MAXIMUM', `NIC does not accept a distance above ${MAX_DISTANCE_KM} km.`));
+    }
+    const toPincode = trimmed(shipTo.postalCode);
+    if (origin && toPincode && origin.pincode === toPincode && distance > SAME_PINCODE_MAX_DISTANCE_KM) {
+      blockers.push(blocker('MOVEMENT', 'movement.approximateDistanceKm', 'MOVEMENT_DISTANCE_EXCEEDS_SAME_PINCODE_LIMIT', `The dispatch and delivery pincodes are the same; NIC allows at most ${SAME_PINCODE_MAX_DISTANCE_KM} km (300 km only for Line Sales, which is not modelled).`));
+    }
+  }
+  const transDocNo = trimmed(movement?.transportDocumentNumber);
+  if (transDocNo && !TRANSPORT_DOCUMENT_NUMBER.test(transDocNo)) {
+    blockers.push(blocker('MOVEMENT', 'movement.transportDocumentNumber', 'MOVEMENT_TRANSPORT_DOCUMENT_INVALID', 'The transport document number must be at most 15 letters, digits, "/" or "-" (NIC).'));
+  }
   const transporterId = trimmed(movement?.transporterId)?.toUpperCase();
-  if (transporterId && !isValidGstinFormat(transporterId)) {
-    blockers.push(blocker('MOVEMENT', 'movement.transporterId', 'MOVEMENT_TRANSPORTER_ID_INVALID', 'The transporter ID is not a valid GSTIN.'));
+  if (transporterId && !TRANSPORTER_ID.test(transporterId)) {
+    blockers.push(blocker('MOVEMENT', 'movement.transporterId', 'MOVEMENT_TRANSPORTER_ID_INVALID', 'The transporter ID must be a 15-character GSTIN / TRANSIN: two digits followed by 13 letters or digits (NIC).'));
   }
 
-  if (blockers.length > 0) return fail();
+  // 9. Field length limits: reported, never truncated.
+  const longFields: Array<[string, string | undefined, number]> = [
+    ['supplier.name', trimmed(seller.tradeName) ?? seller.legalName.trim(), FIELD_LIMITS.name],
+    ['supplier.addressLine1', origin?.addr1, FIELD_LIMITS.address],
+    ['supplier.addressLine2', origin?.addr2, FIELD_LIMITS.address],
+    ['supplier.place', origin?.place, FIELD_LIMITS.place],
+    ['recipient.name', trimmed(billTo.name), FIELD_LIMITS.name],
+    ['shipTo.addressLine1', trimmed(shipTo.addressLine1), FIELD_LIMITS.address],
+    ['shipTo.addressLine2', trimmed(shipTo.addressLine2), FIELD_LIMITS.address],
+    ['shipTo.place', trimmed(shipTo.city), FIELD_LIMITS.place],
+    ['movement.transporterName', trimmed(movement?.transporterName), FIELD_LIMITS.name],
+  ];
+  for (const [field, value, max] of longFields) {
+    if (value && value.length > max) {
+      blockers.push(blocker('PARTY', field, 'FIELD_TOO_LONG', `${field} is longer than the NIC limit of ${max} characters; it is not truncated.`));
+    }
+  }
+
+  if (blockers.length > 0 || transactionType === null) return fail();
 
   // ---- Every blocker is clear: all values below are present and valid. ----
   const m = movement!;
   const o = origin!;
-  const vehicleNumber = trimmed(m.vehicleNumber)?.toUpperCase().replace(/[\s-]/g, '');
   const payload: EwayBillGeneratePayload = {
     supplyType: 'O',
     subSupplyType: '1',
@@ -515,17 +707,17 @@ export function prepareEwayBillRequest(
     docDate: ddmmyyyy(documentDateIso!),
     fromGstin: seller.gstin!.trim().toUpperCase(),
     fromTrdName: trimmed(seller.tradeName) ?? seller.legalName.trim(),
-    ...(o.addr1 ? { fromAddr1: o.addr1 } : {}),
+    fromAddr1: o.addr1!,
     ...(o.addr2 ? { fromAddr2: o.addr2 } : {}),
-    ...(o.place ? { fromPlace: o.place } : {}),
+    fromPlace: o.place!,
     fromPincode: Number(o.pincode),
     actFromStateCode: Number(o.stateCode),
     fromStateCode: Number(supplierState),
     toGstin: recipientGstin,
     toTrdName: billTo.name.trim(),
-    ...(trimmed(shipTo.addressLine1) ? { toAddr1: trimmed(shipTo.addressLine1) } : {}),
+    toAddr1: trimmed(shipTo.addressLine1)!,
     ...(trimmed(shipTo.addressLine2) ? { toAddr2: trimmed(shipTo.addressLine2) } : {}),
-    ...(trimmed(shipTo.city) ? { toPlace: trimmed(shipTo.city) } : {}),
+    toPlace: trimmed(shipTo.city)!,
     toPincode: Number(shipTo.postalCode!.trim()),
     actToStateCode: Number(shipToStateCode),
     toStateCode: Number(billToStateCode),
@@ -542,9 +734,9 @@ export function prepareEwayBillRequest(
     transDistance: String(m.approximateDistanceKm!),
     ...(transporterId ? { transporterId } : {}),
     ...(trimmed(m.transporterName) ? { transporterName: trimmed(m.transporterName) } : {}),
-    ...(trimmed(m.transportDocumentNumber) ? { transDocNo: trimmed(m.transportDocumentNumber) } : {}),
+    ...(transDocNo ? { transDocNo } : {}),
     ...(m.transportDocumentDate ? { transDocDate: ddmmyyyy(m.transportDocumentDate) } : {}),
-    // The vehicle fields describe road movement only.
+    // The vehicle fields describe road movement only (NIC: omit for rail / air / ship).
     ...(mode === 'ROAD' && vehicleNumber
       ? { vehicleNo: vehicleNumber, vehicleType: VEHICLE_TYPE_CODE[m.vehicleType!] }
       : {}),
@@ -556,8 +748,13 @@ export function prepareEwayBillRequest(
     payload,
     fingerprint: fingerprintPayload(payload),
     document: { type: 'INV', number: documentNumber, date: documentDateIso! },
-    classification: { transactionType, shipToDiffersFromBillTo, dispatchFromDiffersFromSupplier },
+    classification: {
+      transactionType,
+      shipTo: arrangement!.shipTo,
+      dispatchFrom: arrangement!.dispatchFrom,
+    },
     warnings,
     assumptions: EWAY_BILL_REQUEST_ASSUMPTIONS,
+    live,
   };
 }

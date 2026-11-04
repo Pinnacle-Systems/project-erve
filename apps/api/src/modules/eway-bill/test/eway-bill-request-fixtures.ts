@@ -1,4 +1,4 @@
-import type { EwayBillRequestFacts } from '../eway-bill-request.mapper.js';
+import type { EwayBillArrangement, EwayBillRequestFacts } from '../eway-bill-request.mapper.js';
 import { completeMovement, RECIPIENT_GSTIN, SELLER_GSTIN } from './eway-bill-fixtures.js';
 
 // A fully populated FINALIZED INTER-state OUTRIGHT invoice that maps cleanly.
@@ -8,6 +8,7 @@ export function requestFacts(overrides: {
   invoice?: Partial<EwayBillRequestFacts['invoice']>;
   lines?: EwayBillRequestFacts['lines'];
   movement?: EwayBillRequestFacts['movement'];
+  arrangement?: EwayBillArrangement | null;
 } = {}): EwayBillRequestFacts {
   return {
     invoice: {
@@ -16,6 +17,7 @@ export function requestFacts(overrides: {
       invoiceNumber: 'EI/26-27/0001',
       finalizedAt: new Date('2026-11-04T06:00:00.000Z'),
       purchaseMode: 'OUTRIGHT',
+      sellerEinvoiceApplicable: false,
       gstTreatment: 'INTER',
       subtotal: '100000.000000',
       totalCgst: null,
@@ -69,5 +71,9 @@ export function requestFacts(overrides: {
       },
     ],
     movement: overrides.movement === undefined ? completeMovement() : overrides.movement,
+    arrangement:
+      overrides.arrangement === undefined
+        ? { shipTo: 'BILLED_PARTY', dispatchFrom: 'SUPPLIER_REGISTERED_PREMISES' }
+        : overrides.arrangement,
   };
 }

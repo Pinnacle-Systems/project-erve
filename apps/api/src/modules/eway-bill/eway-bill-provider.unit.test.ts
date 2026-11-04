@@ -113,6 +113,23 @@ describe('GSTINAPI E-Way Bill adapter — success handling', () => {
     await expect(provider.generate(payload)).rejects.toMatchObject({ code: 'NOT_SYNTHETIC_RESPONSE', uncertain: true });
   });
 
+  it("does not weaken synthetic validation to accept GSTINAPI's published sample that says billed_to:'paid'", async () => {
+    const published = {
+      success: true,
+      ewaybill_no: '123456789012',
+      ewaybill_date: '04/11/2026 11:30:00 AM',
+      valid_upto: '05/11/2026 11:59:00 PM',
+      doc_no: payload.docNo,
+      already_existed: false,
+      billed_to: 'paid',
+      credits_remaining: 97,
+    };
+    const { provider } = setup(published);
+    await expect(provider.generate(payload)).rejects.toMatchObject({ code: 'NOT_SYNTHETIC_RESPONSE', uncertain: true });
+    const lookup = setup(published);
+    await expect(lookup.provider.lookup(lookupInput)).rejects.toMatchObject({ code: 'NOT_SYNTHETIC_RESPONSE', uncertain: true });
+  });
+
   it('refuses a reply about a different document', async () => {
     const { provider } = setup(sample({ doc_no: 'EI/26-27/9999' }));
     await expect(provider.generate(payload)).rejects.toMatchObject({ code: 'UNEXPECTED_RESPONSE', uncertain: true });
