@@ -38,7 +38,7 @@ export type GstVerifiableEntity = GstSourceType;
 export const GSTIN_FORMAT_MESSAGE = 'Enter a valid 15-character GSTIN (e.g., 22AAAAA0000A1Z5)';
 
 interface VerificationBinding {
-  /** Which master this GSTIN belongs to. Without it nothing is verifiable. */
+  /** Master type for a record-bound GSTIN. Omitted for the standalone Accountant utility. */
   entity?: GstVerifiableEntity;
   /** Source-less Accountant lookup in GST Compliance Settings. Never grants permission itself. */
   standalone?: boolean;
@@ -86,7 +86,9 @@ function useGstinFieldVerification(
   const source = online && formatValid && !standalone ? resolveSource(binding, gstin, allowVerify) : null;
   const target: GstVerificationTarget | null =
     online && formatValid && (standalone || source)
-      ? source ? { gstin, source } : { gstin }
+      ? source
+        ? { gstin, source }
+        : { gstin }
       : null;
   const verification = useGstinVerification(target);
   const view = verification.view;
