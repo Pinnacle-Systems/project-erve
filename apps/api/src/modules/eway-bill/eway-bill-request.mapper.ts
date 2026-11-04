@@ -42,7 +42,8 @@ import { absPaise, paiseToNumber, toPaiseHalfUp } from './eway-bill-money.js';
 //  [NIC-EINV] NIC's own e-invoice sandbox, "EWB Generation by IRN" v1.03
 //     (einv-apisandbox.nic.in): distance 0 / +-10% / <= 4000; road needs
 //     vehicle number and type; rail/air/ship need transport document number
-//     and date with vehicle fields omitted; vehicle number 4-20 alphanumeric.
+//     and date with vehicle fields omitted (the IRN route's 4-20 vehicle length
+//     is superseded for this request by the generate schema's 7-15).
 //  [NIC-RULES] A published reproduction of the NIC generate schema and its
 //     numbered validation rules (developer.sandbox.co.in): field limits, enums,
 //     max 250 items, document date not in the future and within 180 days,
@@ -60,7 +61,9 @@ const UQC_PIECES = 'PCS';
 const HSN_DIGITS = /^\d{4,8}$/;
 const TRANSPORTER_ID = /^[0-9]{2}[0-9A-Z]{13}$/;
 const TRANSPORT_DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,15}$/;
-const VEHICLE_NUMBER = /^[A-Z0-9]{4,20}$/;
+// NIC generate schema: vehicleNo is 7-15 characters. (The IRN-route page says 4-20;
+// it describes a different endpoint, so the generate schema is the rule here.)
+const VEHICLE_NUMBER = /^[A-Z0-9]{7,15}$/;
 
 const MAX_ITEMS = 250;
 const MAX_DISTANCE_KM = 4000;
@@ -231,8 +234,13 @@ export const EWAY_BILL_REQUEST_ASSUMPTIONS: readonly EwayBillUnverifiedRequireme
   },
   {
     code: 'VEHICLE_NUMBER_FORMAT',
-    message: 'Only 4-20 alphanumeric characters are enforced; NIC also checks the Indian format and the Vahan database.',
-    basis: 'NIC states 4-20 characters; a reproduction states 7-15.',
+    message: 'Only 7-15 letters or digits (after removing spaces and hyphens) are enforced; NIC also checks the Indian registration format and the Vahan record, and "TMXXXXXX" for temporary registrations.',
+    basis: 'The generate JSON schema states 7-15; the IRN-route page states 4-20 for a different endpoint. The official generate page itself was not directly readable.',
+  },
+  {
+    code: 'SHIP_ODC_VEHICLE_TYPE_CODE',
+    message: 'Ship transport with over-dimensional cargo sends vehicleType "O" plus the vehicle number (NIC rules 47-48). Some documentation spells the ship value "ODC".',
+    basis: 'NIC release notes say vehicle type "O" (ODC) for TransMode 4; the schema reproduction lists "ODC". Regular vehicle type for ship is blocked, not mapped.',
   },
 ];
 
@@ -648,13 +656,48 @@ export function prepareEwayBillRequest(
 
   // 8. Transport.
   const mode = movement?.transportMode ?? null;
-  const vehicleNumber = trimmed(movement?.vehicleNumber)?.toUpperCase().replace(/[\s-]/g, '');
+  // Vehicle: normalised FIRST, and every rule below runs on the normalised
+  // value, so an input that normalises to nothing (e.g. " - ") is a blocker and
+  // can never become a payload without a vehicle number.
+  const vehicleRaw = trimmed(movement?.vehicleNumber);
+  const vehicleNumber = vehicleRaw?.toUpperCase().replace(/[\s-]/g, '') || undefined;
+  let vehicle: { vehicleNo: string; vehicleType: 'R' | 'O' } | null = null;
+  const checkVehicleNumber = (): string | null => {
+    // A blank captured value is B1's MOVEMENT_VEHICLE_NUMBER_REQUIRED; only the
+    // "present but empty after normalisation" case is added here.
+    if (vehicleNumber === undefined) {
+      if (vehicleRaw !== undefined) {
+        blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_NUMBER_INVALID', 'The vehicle number contains no letters or digits once spaces and hyphens are removed.'));
+      }
+      return null;
+    }
+    if (!VEHICLE_NUMBER.test(vehicleNumber)) {
+      blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_NUMBER_INVALID', 'The vehicle number must be 7 to 15 letters or digits once spaces and hyphens are removed (NIC generate schema); the registration format and Vahan record are checked by NIC.'));
+      return null;
+    }
+    return vehicleNumber;
+  };
   if (movement && mode === 'ROAD') {
+    const number = checkVehicleNumber();
     if (movement.vehicleType === null) {
       blockers.push(blocker('MOVEMENT', 'movement.vehicleType', 'MOVEMENT_VEHICLE_TYPE_REQUIRED', 'A vehicle type is required for road transport (NIC) and is never defaulted.'));
+    } else if (number) {
+      vehicle = { vehicleNo: number, vehicleType: VEHICLE_TYPE_CODE[movement.vehicleType] };
     }
-    if (vehicleNumber && !VEHICLE_NUMBER.test(vehicleNumber)) {
-      blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_NUMBER_INVALID', 'The vehicle number must be 4 to 20 letters or digits (NIC); the format and Vahan registration are checked by NIC.'));
+  } else if (movement && mode === 'SHIP') {
+    // NIC rules 47-48: for Ship the vehicle type can only be ODC, and then the
+    // vehicle number must be provided. Rail and air carry no vehicle fields.
+    if (movement.vehicleType === 'REGULAR') {
+      blockers.push(blocker('MOVEMENT', 'movement.vehicleType', 'MOVEMENT_VEHICLE_TYPE_NOT_SUPPORTED_FOR_SHIP', 'A regular vehicle type is not provisioned for ship transport; only over-dimensional cargo (ODC) is. Change the vehicle type or clear it.'));
+    } else if (movement.vehicleType === 'OVER_DIMENSIONAL') {
+      const number = checkVehicleNumber();
+      if (vehicleRaw === undefined) {
+        blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_ODC_VEHICLE_NUMBER_REQUIRED', 'A vehicle number is required when over-dimensional cargo (ODC) is moved by ship (NIC); it is not omitted.'));
+      } else if (number) {
+        vehicle = { vehicleNo: number, vehicleType: 'O' };
+      }
+    } else if (vehicleRaw !== undefined) {
+      blockers.push(blocker('MOVEMENT', 'movement.vehicleType', 'MOVEMENT_VEHICLE_TYPE_REQUIRED', 'A vehicle number is captured for ship transport without a vehicle type; it is neither sent without a type nor silently dropped.'));
     }
   }
   const distance = movement?.approximateDistanceKm ?? null;
@@ -692,6 +735,13 @@ export function prepareEwayBillRequest(
     if (value && value.length > max) {
       blockers.push(blocker('PARTY', field, 'FIELD_TOO_LONG', `${field} is longer than the NIC limit of ${max} characters; it is not truncated.`));
     }
+  }
+
+  // Invariant: a mode that requires a vehicle never yields a payload without one.
+  const needsVehicle =
+    mode === 'ROAD' || (mode === 'SHIP' && movement?.vehicleType === 'OVER_DIMENSIONAL');
+  if (needsVehicle && vehicle === null && blockers.length === 0) {
+    blockers.push(blocker('MOVEMENT', 'movement.vehicleNumber', 'MOVEMENT_VEHICLE_REQUIRED', 'A vehicle number and type are required for this transport mode and could not be prepared.'));
   }
 
   if (blockers.length > 0 || transactionType === null) return fail();
@@ -736,10 +786,8 @@ export function prepareEwayBillRequest(
     ...(trimmed(m.transporterName) ? { transporterName: trimmed(m.transporterName) } : {}),
     ...(transDocNo ? { transDocNo } : {}),
     ...(m.transportDocumentDate ? { transDocDate: ddmmyyyy(m.transportDocumentDate) } : {}),
-    // The vehicle fields describe road movement only (NIC: omit for rail / air / ship).
-    ...(mode === 'ROAD' && vehicleNumber
-      ? { vehicleNo: vehicleNumber, vehicleType: VEHICLE_TYPE_CODE[m.vehicleType!] }
-      : {}),
+    // Road and ship-ODC carry vehicle fields (guaranteed above); rail and air omit them (NIC).
+    ...(vehicle ?? {}),
     itemList: items,
   };
 

@@ -428,6 +428,91 @@ describe('prepareEwayBillRequest — NIC validations', () => {
   });
 });
 
+describe('prepareEwayBillRequest — vehicle (road and ship ODC)', () => {
+  const road = (vehicleNumber: string | null) =>
+    requestFacts({ movement: completeMovement({ vehicleNumber }) });
+  const ship = (vehicleType: 'REGULAR' | 'OVER_DIMENSIONAL' | null, vehicleNumber: string | null) =>
+    requestFacts({
+      movement: completeMovement({
+        transportMode: 'SHIP',
+        transportDocumentNumber: 'BL-778',
+        vehicleType,
+        vehicleNumber,
+      }),
+    });
+
+  it.each([' - ', '---', ' -  - '])(
+    'blocks a road vehicle number that normalises to nothing (%j) and never prepares a payload without one',
+    (input) => {
+      const result = blocked(prepare(road(input)));
+      expect(result.blockers.map((entry) => entry.code)).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+    },
+  );
+
+  it('reports a blank road vehicle number once, through the B1 readiness blocker', () => {
+    const result = blocked(prepare(road('   ')));
+    expect(result.blockers.map((entry) => entry.code)).toEqual(['MOVEMENT_VEHICLE_NUMBER_REQUIRED']);
+  });
+
+  it('validates the length after normalisation: 7 to 15 letters or digits', () => {
+    expect(codes(prepare(road('AB1234')))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+    expect(codes(prepare(road('A'.repeat(16))))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+    expect(codes(prepare(road('AB-1 2 3')))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID'); // 6 once normalised
+    expect(ready(prepare(road('AB12345'))).payload.vehicleNo).toBe('AB12345');
+    expect(ready(prepare(road('A'.repeat(15)))).payload.vehicleNo).toBe('A'.repeat(15));
+    expect(ready(prepare(road('TM123456'))).payload.vehicleNo).toBe('TM123456'); // temporary registration
+    expect(codes(prepare(road('TN01*AB1234')))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+  });
+
+  it('always sends vehicleNo and vehicleType for road', () => {
+    const { payload } = ready(prepare(road(' tn-01 ab-1234 ')));
+    expect(payload).toMatchObject({ vehicleNo: 'TN01AB1234', vehicleType: 'R' });
+  });
+
+  it('sends an over-dimensional ship movement with its vehicle number (NIC rules 47-48)', () => {
+    const { payload } = ready(prepare(ship('OVER_DIMENSIONAL', 'mh 04 ab 1234')));
+    expect(payload).toMatchObject({ transMode: '4', transDocNo: 'BL-778', vehicleNo: 'MH04AB1234', vehicleType: 'O' });
+  });
+
+  it('blocks an ODC ship movement without a usable vehicle number instead of omitting it', () => {
+    expect(codes(prepare(ship('OVER_DIMENSIONAL', null)))).toEqual(['MOVEMENT_ODC_VEHICLE_NUMBER_REQUIRED']);
+    expect(codes(prepare(ship('OVER_DIMENSIONAL', ' - ')))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+    expect(codes(prepare(ship('OVER_DIMENSIONAL', 'AB12')))).toContain('MOVEMENT_VEHICLE_NUMBER_INVALID');
+  });
+
+  it('blocks a regular vehicle type for ship, even with a vehicle number, instead of dropping or mapping it', () => {
+    expect(codes(prepare(ship('REGULAR', 'MH04AB1234')))).toEqual(['MOVEMENT_VEHICLE_TYPE_NOT_SUPPORTED_FOR_SHIP']);
+    expect(codes(prepare(ship('REGULAR', null)))).toEqual(['MOVEMENT_VEHICLE_TYPE_NOT_SUPPORTED_FOR_SHIP']);
+  });
+
+  it('blocks a ship vehicle number captured without a type, and allows a ship movement with no vehicle data', () => {
+    expect(codes(prepare(ship(null, 'MH04AB1234')))).toEqual(['MOVEMENT_VEHICLE_TYPE_REQUIRED']);
+    const { payload } = ready(prepare(ship(null, null)));
+    expect(payload).toMatchObject({ transMode: '4' });
+    expect(payload).not.toHaveProperty('vehicleNo');
+    expect(payload).not.toHaveProperty('vehicleType');
+  });
+
+  it('still omits vehicle fields for rail and air, as NIC requires', () => {
+    for (const transportMode of ['RAIL', 'AIR'] as const) {
+      const { payload } = ready(
+        prepare(
+          requestFacts({
+            movement: completeMovement({
+              transportMode,
+              transportDocumentNumber: 'DOC-1',
+              vehicleNumber: 'TN01AB1234',
+              vehicleType: 'REGULAR',
+            }),
+          }),
+        ),
+      );
+      expect(payload).not.toHaveProperty('vehicleNo');
+      expect(payload).not.toHaveProperty('vehicleType');
+    }
+  });
+});
+
 describe('prepareEwayBillRequest — fail closed on data', () => {
   it.each(['DRAFT', 'CANCELLED'] as const)('does not prepare a %s invoice', (status) => {
     const result = blocked(prepare(requestFacts({ invoice: { status } })));
