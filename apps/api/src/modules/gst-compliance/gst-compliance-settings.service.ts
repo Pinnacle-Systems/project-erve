@@ -37,14 +37,20 @@ function valuesOf(record: GstComplianceValues): GstComplianceValues {
   };
 }
 
-export function createGstComplianceSettingsService(repository: SettingsRepository, liveAuthorized: () => boolean, verificationAvailable: () => boolean = () => false) {
+export function createGstComplianceSettingsService(
+  repository: SettingsRepository,
+  liveAuthorized: () => boolean,
+  verificationAvailable: () => boolean = () => false,
+  // Server-side: Demo E-Way Bill generation is authorized AND a provider key is configured.
+  ewayBillDemoAvailable: () => boolean = () => false,
+) {
   const effective = (record: SettingsRecord | null): SettingsRecord => record ?? {
     ...DEFAULT_GST_COMPLIANCE_VALUES, version: 0, updatedAt: null, updatedBy: null,
   };
   const view = (record: SettingsRecord): GstComplianceSettings => ({
     ...record,
     capabilities: {
-      liveActivationAvailable: liveAuthorized(), onlineVerificationAvailable: verificationAvailable(), ewayBillGenerationAvailable: false,
+      liveActivationAvailable: liveAuthorized(), onlineVerificationAvailable: verificationAvailable(), ewayBillGenerationAvailable: ewayBillDemoAvailable(),
     },
   });
   function assertRead(actor: CurrentUser) {
@@ -69,7 +75,17 @@ export function createGstComplianceSettingsService(repository: SettingsRepositor
           throw HttpError.conflict('GST Compliance Settings changed. Reload the latest settings before saving.', { currentVersion: previous.version });
         }
         const next = { ...valuesOf(previous), ...changes };
-        if (next.ewayBillGenerationEnabled) throw HttpError.badRequest('E-Way Bill generation is not yet available');
+        // Only synthetic Demo generation exists. Enabling it needs the
+        // server-side authorization and Demo mode; Live E-Way Bill filing is
+        // never available, so it cannot be enabled while in Live mode.
+        if (next.ewayBillGenerationEnabled && !previous.ewayBillGenerationEnabled) {
+          if (!ewayBillDemoAvailable()) {
+            throw HttpError.forbidden('Demo E-Way Bill generation is not authorized on this server, so it cannot be enabled.');
+          }
+          if (next.integrationMode !== 'DEMO') {
+            throw HttpError.badRequest('E-Way Bill generation can be enabled only in Demo mode. Live E-Way Bill filing is not available.');
+          }
+        }
         if (next.integrationMode === 'LIVE' && !liveAuthorized()) {
           throw HttpError.forbidden('Live Mode cannot be activated because server-side production authorization is not enabled. Demo Mode remains available.');
         }

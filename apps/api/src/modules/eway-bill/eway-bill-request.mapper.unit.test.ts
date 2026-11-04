@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { EwayBillRequestPreparation } from './eway-bill-request.mapper.js';
-import { isLiveGenerationPermitted, prepareEwayBillRequest } from './eway-bill-request.mapper.js';
+import {
+  arrangementFromMovement,
+  isLiveGenerationPermitted,
+  prepareEwayBillRequest,
+} from './eway-bill-request.mapper.js';
 import { toPaiseHalfUp } from './eway-bill-money.js';
 import { completeMovement } from './test/eway-bill-fixtures.js';
 import { requestFacts } from './test/eway-bill-request-fixtures.js';
@@ -606,5 +610,34 @@ describe('prepareEwayBillRequest — Demo is never statutory clearance', () => {
       },
     });
     expect(ready(prepare(facts)).live.blockers.map((entry) => entry.code)).toEqual(['LIVE_GENERATION_NOT_AUTHORIZED']);
+  });
+});
+
+describe('arrangement taken from the captured movement (B2B)', () => {
+  it('exists only when BOTH halves are classified', () => {
+    expect(arrangementFromMovement(null)).toBeNull();
+    expect(arrangementFromMovement(completeMovement({ shipToArrangement: null }))).toBeNull();
+    expect(arrangementFromMovement(completeMovement({ dispatchFromArrangement: null }))).toBeNull();
+    expect(arrangementFromMovement(completeMovement())).toEqual({
+      shipTo: 'BILLED_PARTY',
+      dispatchFrom: 'SUPPLIER_REGISTERED_PREMISES',
+    });
+  });
+
+  it('reports an unclassified arrangement exactly once, with or without a captured movement', () => {
+    for (const movement of [completeMovement({ shipToArrangement: null }), null]) {
+      const result = blocked(prepare(requestFacts({ movement, arrangement: null })));
+      expect(result.blockers.filter((entry) => entry.code === 'TRANSACTION_ARRANGEMENT_NOT_CLASSIFIED')).toHaveLength(1);
+    }
+  });
+
+  it('judges readiness by the explicit arrangement, not by a stale copy on the movement', () => {
+    const result = prepare(
+      requestFacts({
+        movement: completeMovement({ shipToArrangement: null, dispatchFromArrangement: null }),
+        arrangement: { shipTo: 'BILLED_PARTY', dispatchFrom: 'SUPPLIER_REGISTERED_PREMISES' },
+      }),
+    );
+    expect(result.ok).toBe(true);
   });
 });

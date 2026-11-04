@@ -85,6 +85,11 @@ export async function resetDatabase(): Promise<void> {
   // user/distributor/sellerRegistration deletes further down this function
   // (TaxInvoice also FKs onDelete: Restrict to all three). TaxInvoiceLine
   await prisma.$executeRawUnsafe('UPDATE "tax_invoices" SET "replaces_invoice_id" = NULL');
+  // E-Way Bill rows FK (Restrict) to TaxInvoice and to User; bills reference
+  // their request attempt, so bills go first.
+  await prisma.ewayBill.deleteMany();
+  await prisma.ewayBillRequestAttempt.deleteMany();
+  await prisma.ewayBillMovement.deleteMany();
   await prisma.taxInvoice.deleteMany();
   // Fulfillment rows must go before Sale Order/StockAllocation/Factory
   // below — every FK in this chain (ErveDispatch -> ErvePackingList ->

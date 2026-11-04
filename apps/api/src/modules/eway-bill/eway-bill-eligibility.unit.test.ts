@@ -44,7 +44,7 @@ describe('invoice status gates', () => {
       finalizedFacts({
         invoice: { status: 'CANCELLED' },
         bills: [
-          { id: 'b1', source: 'PROVIDER_GENERATED', status: 'ACTIVE', integrationMode: 'LIVE', ewayBillNumber: '111122223333', generatedAt: null, validUntil: null },
+          { id: 'b1', source: 'PROVIDER_GENERATED', status: 'ACTIVE', integrationMode: 'LIVE', verificationStatus: 'PROVIDER_VERIFIED', ewayBillNumber: '111122223333', generatedAt: null, validUntil: null },
         ],
       }),
     );
@@ -83,18 +83,40 @@ describe('readiness', () => {
     expect(result.evaluatedAt).toBe('2026-11-05T00:00:00.000Z');
   });
 
-  it('advertises that generation and external linking are not available in B1', () => {
-    const result = evaluate(finalizedFacts({ settings: { ewayBillGenerationEnabled: true } }));
-    expect(result.capabilities).toEqual({
+  it('reports the implemented backend capabilities: Demo generation only when told it is available, never Live', () => {
+    const facts = finalizedFacts({ settings: { ewayBillGenerationEnabled: true, integrationMode: 'DEMO' } });
+    expect(evaluate(facts).capabilities).toEqual({
       providerGenerationEnabled: true,
-      providerGenerationAvailable: false,
-      externalLinkAvailable: false,
+      demoGenerationAvailable: false,
+      liveGenerationAvailable: false,
+      externalLinkAvailable: true,
     });
+    const available = evaluateEwayBillReadiness(facts, { now: () => new Date('2026-11-05T00:00:00.000Z'), demoGenerationAvailable: true });
+    expect(available.capabilities).toMatchObject({ demoGenerationAvailable: true, liveGenerationAvailable: false });
+  });
+
+  it('no longer lists the decided UQC or purchase-mode questions as unverified, but keeps the NIC code assumptions visible', () => {
+    const codes = evaluate(finalizedFacts()).readiness.unverifiedRequirements.map((r) => r.code);
+    expect(codes).not.toContain('ITEM_QUANTITY_UNIT');
+    expect(codes).not.toContain('SUPPLY_AND_DOCUMENT_TYPE_MAPPING');
+    expect(codes).not.toContain('TRANSACTION_TYPE_AND_DISPATCH_FROM');
+    expect(codes).toContain('SUB_SUPPLY_AND_TRANSACTION_TYPE_CODES');
+    expect(codes).toContain('STATUTORY_APPLICABILITY');
   });
 
   describe('movement', () => {
     it('requires movement information to be captured', () => {
       expect(codes(finalizedFacts({ movement: null }))).toEqual(['MOVEMENT_NOT_CAPTURED']);
+    });
+
+    it.each([
+      [{ shipToArrangement: null }],
+      [{ dispatchFromArrangement: null }],
+      [{ shipToArrangement: null, dispatchFromArrangement: null }],
+    ] as const)('requires BOTH halves of the arrangement to be classified (%j)', (missing) => {
+      expect(codes(finalizedFacts({ movement: completeMovement(missing) }))).toEqual([
+        'TRANSACTION_ARRANGEMENT_NOT_CLASSIFIED',
+      ]);
     });
 
     it('requires a distance, accepts 0 and rejects negatives', () => {
@@ -263,6 +285,7 @@ describe('linkage and DEMO/LIVE separation', () => {
     source: 'PROVIDER_GENERATED',
     status: 'ACTIVE',
     integrationMode: 'LIVE',
+    verificationStatus: 'PROVIDER_VERIFIED',
     ewayBillNumber: '111122223333',
     generatedAt: new Date('2026-11-04T07:00:00.000Z'),
     validUntil: new Date('2026-11-05T23:59:00.000Z'),
@@ -272,18 +295,71 @@ describe('linkage and DEMO/LIVE separation', () => {
   it.each([
     ['PROVIDER_GENERATED', 'GENERATED'],
     ['EXTERNALLY_LINKED', 'LINKED_EXTERNAL'],
-  ] as const)('reports an active LIVE %s bill as %s and blocks a new request', (source, state) => {
+  ] as const)('reports an active PROVIDER_VERIFIED LIVE %s bill as %s, as clearance, and blocks a new request', (source, state) => {
     const result = evaluate(finalizedFacts({ bills: [bill({ source })] }));
     expect(result.linkage.state).toBe(state);
-    expect(result.linkage.ewayBill).toMatchObject({ ewayBillNumber: '111122223333', integrationMode: 'LIVE' });
+    expect(result.linkage.satisfiesStatutoryClearance).toBe(true);
+    expect(result.linkage.unverifiedReference).toBeNull();
+    expect(result.linkage.ewayBill).toMatchObject({
+      ewayBillNumber: '111122223333',
+      integrationMode: 'LIVE',
+      verificationStatus: 'PROVIDER_VERIFIED',
+    });
     expect(result.readiness.blockers.map((b) => b.code)).toEqual(['EWAY_BILL_ALREADY_ASSOCIATED']);
   });
 
-  it('does not let an active DEMO bill satisfy or block a LIVE bill', () => {
-    const result = evaluate(finalizedFacts({ bills: [bill({ integrationMode: 'DEMO', ewayBillNumber: 'TEST-1' })] }));
+  it('reports a hand-entered LIVE reference as LINKED_UNVERIFIED and never as clearance', () => {
+    const result = evaluate(
+      finalizedFacts({
+        bills: [bill({ source: 'EXTERNALLY_LINKED', verificationStatus: 'UNVERIFIED_REFERENCE' })],
+      }),
+    );
+    expect(result.linkage.state).toBe('LINKED_UNVERIFIED');
+    expect(result.linkage.state).not.toBe('GENERATED');
+    expect(result.linkage.state).not.toBe('LINKED_EXTERNAL');
+    expect(result.linkage.satisfiesStatutoryClearance).toBe(false);
+    expect(result.linkage.ewayBill).toBeNull();
+    expect(result.linkage.unverifiedReference).toMatchObject({
+      ewayBillNumber: '111122223333',
+      verificationStatus: 'UNVERIFIED_REFERENCE',
+    });
+    expect(result.readiness.blockers.map((b) => b.code)).toEqual(['UNVERIFIED_EWAY_BILL_REFERENCE_LINKED']);
+  });
+
+  it.each(['SYNTHETIC_DEMO', 'UNVERIFIED_REFERENCE'] as const)(
+    'never treats a LIVE bill that is %s as clearance, whatever its source',
+    (verificationStatus) => {
+      const result = evaluate(finalizedFacts({ bills: [bill({ verificationStatus })] }));
+      expect(result.linkage.satisfiesStatutoryClearance).toBe(false);
+      expect(result.linkage.ewayBill).toBeNull();
+      expect(result.linkage.state).toBe('LINKED_UNVERIFIED');
+    },
+  );
+
+  it('flags an unverified reference on a cancelled invoice for review too', () => {
+    const result = evaluate(
+      finalizedFacts({
+        invoice: { status: 'CANCELLED' },
+        bills: [bill({ source: 'EXTERNALLY_LINKED', verificationStatus: 'UNVERIFIED_REFERENCE' })],
+      }),
+    );
+    expect(result.reviewFlags.map((f) => f.code)).toEqual(['LIVE_EWAY_BILL_ON_CANCELLED_INVOICE']);
+  });
+
+  it('does not let an active DEMO bill satisfy or block a LIVE bill, and reports it separately', () => {
+    const result = evaluate(
+      finalizedFacts({
+        bills: [bill({ integrationMode: 'DEMO', verificationStatus: 'SYNTHETIC_DEMO', ewayBillNumber: 'TEST-1' })],
+      }),
+    );
     expect(result.linkage.state).toBe('NONE');
     expect(result.linkage.ewayBill).toBeNull();
-    expect(result.linkage.syntheticRecords).toEqual({ activeDemoBills: 1, openDemoAttempts: 0 });
+    expect(result.linkage.satisfiesStatutoryClearance).toBe(false);
+    expect(result.linkage.syntheticRecords).toMatchObject({
+      activeDemoBills: 1,
+      openDemoAttempts: 0,
+      demoBill: { ewayBillNumber: 'TEST-1', verificationStatus: 'SYNTHETIC_DEMO' },
+    });
     expect(result.readiness.outcome).toBe('READY');
   });
 
