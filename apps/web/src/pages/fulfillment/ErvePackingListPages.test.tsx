@@ -230,7 +230,7 @@ describe('ErvePackingListDetailPage', () => {
     expect(buttonByText('Record Dispatch')).toBeNull();
   });
 
-  it('FINALIZED status shows the Record Dispatch form and records a dispatch', async () => {
+  it('FINALIZED status navigates to recording without creating a dispatch', async () => {
     mockAuth('MERCHANDISER');
     const detail = buildDetail({ status: 'FINALIZED', finalizedBy: { id: 'user-1', name: 'Test User', email: 'user@test.local' }, finalizedAt: '2026-09-02T00:00:00.000Z' });
     vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
@@ -248,7 +248,7 @@ describe('ErvePackingListDetailPage', () => {
     dispatchButton!.click();
     await flush();
 
-    expect(postSpy).toHaveBeenCalledWith('/erve-dispatches', expect.objectContaining({ ervePackingListId: 'epl-1' }));
+    expect(postSpy).not.toHaveBeenCalled();
   });
 
   it('DISPATCHED status shows a link to the resulting Erve Dispatch and no mutation actions', async () => {
