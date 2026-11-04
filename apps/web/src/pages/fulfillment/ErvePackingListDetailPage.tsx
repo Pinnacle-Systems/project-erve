@@ -4,16 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiSuccessResponse } from '@erve/types';
 import {
   ConfirmDialog,
-  createEnterToNextHandler,
   PageHeader,
   StatusBadge,
 } from '@erve/app-components';
-import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
 import { DataTable, LoadingState, EmptyState, ErrorState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
-import { getLocalDateString } from '../../lib/dates.js';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
@@ -102,11 +100,6 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
   // never drift from the backend's real authorization.
   const canMutate = canMutateErveDispatches(user);
 
-  const [dispatchDate, setDispatchDate] = useState(() => getLocalDateString());
-  const [transporter, setTransporter] = useState('');
-  const [vehicleNumber, setVehicleNumber] = useState('');
-  const [lrNumber, setLrNumber] = useState('');
-  const [remarks, setRemarks] = useState('');
   const [formError, setFormError] = useState('');
   const [addSelected, setAddSelected] = useState<Map<string, EligibleErveCartonView>>(new Map());
 
@@ -165,26 +158,6 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
     },
     onError: (caught) =>
       setFormError(getApiErrorMessage(caught, 'Unable to finalize this Erve Packing List.')),
-  });
-
-  const dispatchMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiClient.post<ApiSuccessResponse<{ id: string }>>('/erve-dispatches', {
-        ervePackingListId: id,
-        dispatchDate,
-        transporter: transporter || null,
-        vehicleNumber: vehicleNumber || null,
-        lrNumber: lrNumber || null,
-        remarks: remarks || null,
-      });
-      return res.data.data;
-    },
-    onSuccess: (created) => {
-      invalidate();
-      navigate(`/fulfillment/erve-dispatches/${created.id}`);
-    },
-    onError: (caught) =>
-      setFormError(getApiErrorMessage(caught, 'Unable to record this dispatch.')),
   });
 
   const eligibleForAdd = discovery.cartons;
@@ -257,6 +230,12 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
               loading={finalizeMutation.isPending}
             >
               Finalize Packing List
+            </Button>
+          ) : packingList.status === 'FINALIZED' && canMutate ? (
+            <Button
+              onClick={() => navigate(`/fulfillment/erve-dispatches/new?ervePackingListId=${encodeURIComponent(id)}`)}
+            >
+              Record Dispatch
             </Button>
           ) : undefined
         }
@@ -506,50 +485,6 @@ function ErvePackingListDetailContent({ id }: { id: string }) {
             >
               Add Selected Cartons
             </Button>
-          </div>
-        </Panel>
-      )}
-
-      {packingList.status === 'FINALIZED' && canMutate && (
-        <Panel title="Record Erve Dispatch">
-          <div onKeyDown={createEnterToNextHandler()}>
-            <div className="flex flex-wrap gap-3">
-              <DatePicker
-                label="Dispatch Date"
-                value={dispatchDate}
-                onValueChange={(value) => setDispatchDate(value ?? '')}
-                width="sm"
-              />
-              <TextField
-                label="Transporter (optional)"
-                value={transporter}
-                onChange={(e) => setTransporter(e.target.value)}
-              />
-              <TextField
-                label="Vehicle Number (optional)"
-                value={vehicleNumber}
-                onChange={(e) => setVehicleNumber(e.target.value)}
-              />
-              <TextField
-                label="LR Number (optional)"
-                value={lrNumber}
-                onChange={(e) => setLrNumber(e.target.value)}
-              />
-              <TextField
-                label="Remarks (optional)"
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-              />
-            </div>
-            <div className="mt-3 flex justify-end">
-              <Button
-                onClick={() => dispatchMutation.mutate()}
-                disabled={!dispatchDate}
-                loading={dispatchMutation.isPending}
-              >
-                Record Dispatch
-              </Button>
-            </div>
           </div>
         </Panel>
       )}

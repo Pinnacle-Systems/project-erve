@@ -193,7 +193,7 @@ describe('ErvePackingListDetailPage mutation gating (UXAUTH-007)', () => {
 
   it('ADMIN still sees Record Dispatch on a FINALIZED Erve Packing List', async () => {
     await renderPage(buildPackingList({ status: 'FINALIZED' }), 'ADMIN');
-    expect(content()).toContain('Record Erve Dispatch');
+    expect(content()).toContain('Record Dispatch');
     expect(buttonByText('Record Dispatch')).not.toBeNull();
   });
 });

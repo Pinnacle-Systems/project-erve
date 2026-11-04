@@ -1159,7 +1159,45 @@ async function loadErveDispatch(id: string): Promise<ErveDispatchRecord> {
 export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
   const record = await loadErveDispatch(id);
   assertDispatchViewAccess(actor, record.distributor.id);
-  return toErveDispatchView(record);
+  // Detail-only, after ownership authorization. Do not widen the history/PDF response
+  // or expose factory provenance. Style image reads already permit these three roles.
+  const canReadImages = actor.roles.some((role) =>
+    role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT');
+  const [view, packedLines, deliveryLines] = await Promise.all([
+    toErveDispatchView(record),
+    prisma.factoryPackingCartonLine.findMany({
+      where: { carton: { ervePackingListId: record.ervePackingListId, retiredAt: null } },
+      select: {
+        saleOrderLineId: true,
+        quantity: true,
+        saleOrderLine: { select: {
+          style: { select: { id: true, styleNumber: true, styleName: true,
+            images: { ...stylePrimaryImageInclude, take: canReadImages ? 1 : 0 } } },
+          size: { select: { id: true, code: true, label: true, sortOrder: true } },
+        } },
+      },
+      orderBy: [{ saleOrderLineId: 'asc' }, { id: 'asc' }],
+    }),
+    prisma.erveDispatchDeliveryLine.findMany({
+      where: { erveDispatchId: id },
+      select: { saleOrderLineId: true, receivedQuantity: true },
+      orderBy: { saleOrderLineId: 'asc' },
+    }),
+  ]);
+  const byLine = new Map<string, import('@erve/types').ErveDispatchQuantityLine>();
+  for (const line of packedLines) {
+    const existing = byLine.get(line.saleOrderLineId);
+    if (existing) { existing.quantity += line.quantity; continue; }
+    const { style, size } = line.saleOrderLine;
+    byLine.set(line.saleOrderLineId, {
+      saleOrderLineId: line.saleOrderLineId,
+      styleId: style.id, styleNumber: style.styleNumber, styleName: style.styleName,
+      primaryImage: canReadImages ? toPrimaryImageView(style.images ?? []) : null,
+      sizeId: size.id, sizeCode: size.code, sizeLabel: size.label, sizeSortOrder: size.sortOrder,
+      quantity: line.quantity,
+    });
+  }
+  return { ...view, quantityLines: [...byLine.values()], deliveryLines };
 }
 
 export async function getErveDispatchList(

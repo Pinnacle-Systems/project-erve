@@ -696,7 +696,25 @@ export interface ErveDispatchSaleOrReturnLine {
   returnableQuantity: number;
 }
 
+/** Physical carton quantities, retaining delivery-action identity across repeated cartons. */
+export interface ErveDispatchQuantityLine {
+  saleOrderLineId: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  primaryImage: StylePrimaryImageView | null;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  sizeSortOrder?: number;
+  quantity: number;
+}
+
 export interface ErveDispatchView extends VersionedResource {
+  /** Detail-only additive projection; older responses and history lists omit it. */
+  quantityLines?: ErveDispatchQuantityLine[];
+  /** Persisted fallback evidence, never inferred from dispatched quantities. */
+  deliveryLines?: Array<{ saleOrderLineId: string; receivedQuantity: number }>;
   id: string;
   destination?: ErvePackingListDestinationSnapshot;
   erveDispatchNumber: string;

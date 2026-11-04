@@ -69,6 +69,7 @@ import { ErvePackingListListPage } from '../pages/fulfillment/ErvePackingListLis
 import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListCreatePage.js';
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
+import { ErveDispatchRecordPage } from '../pages/fulfillment/ErveDispatchRecordPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
 import { RetiredInvoiceHandoffPage } from '../pages/fulfillment/RetiredInvoiceHandoffPage.js';
 import { FactoryInvoiceListPage } from '../pages/fulfillment/FactoryInvoiceListPage.js';
@@ -748,6 +749,14 @@ export function AppRoutes() {
         }
       >
         <Route index element={<ErveDispatchListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={ERVE_DISPATCH_MUTATION_ROLES}>
+              <ErveDispatchRecordPage />
+            </RoleRoute>
+          }
+        />
         <Route path=":id" element={<ErveDispatchDetailPage />} />
       </Route>
       <Route
