@@ -12,6 +12,12 @@ const envSchema = z.object({
   GST_VERIFICATION_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(10000),
   GST_VERIFICATION_BASIC_TTL_SECONDS: z.coerce.number().int().min(60).max(2592000).default(604800),
   GST_VERIFICATION_COMPLETE_TTL_SECONDS: z.coerce.number().int().min(60).max(2592000).default(604800),
+  // E-Way Bill provider (Track B). Server-side only; the GSTINAPI key above is
+  // reused. The portal credentials are the E-Way Bill API user for the acting
+  // GSTIN, are sent per request and are never stored or logged.
+  EWAY_BILL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
+  EWAY_BILL_PORTAL_USERNAME: z.string().default(''),
+  EWAY_BILL_PORTAL_PASSWORD: z.string().default(''),
   HOST: z.string().min(1).default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),

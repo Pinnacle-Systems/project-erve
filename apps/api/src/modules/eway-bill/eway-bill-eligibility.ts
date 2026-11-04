@@ -184,13 +184,13 @@ export const EWAY_BILL_UNVERIFIED_REQUIREMENTS: readonly EwayBillUnverifiedRequi
 
 const POSTAL_CODE = /^\d{6}$/;
 const STATE_CODE = /^\d{2}$/;
-const DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,16}$/;
+export const DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,16}$/;
 const UNREGISTERED_PARTY = 'URP';
 
 const present = (value: string | null | undefined): value is string =>
   value !== null && value !== undefined && value.trim().length > 0;
 
-const isoDate = (instant: Date): string => toBusinessCalendarDate(instant).toISOString().slice(0, 10);
+export const isoDate = (instant: Date): string => toBusinessCalendarDate(instant).toISOString().slice(0, 10);
 
 function blocker(
   source: EwayBillBlocker['source'],
