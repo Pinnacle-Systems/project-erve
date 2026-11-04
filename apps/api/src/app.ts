@@ -52,6 +52,9 @@ import { invoiceHandoffsRouter } from './modules/fulfillment/invoice-handoff.rou
 import { saleOrReturnPositionsRouter, distributorSalesReportsRouter } from './modules/fulfillment/distributor-sales-report.routes.js';
 import { distributorReturnsRouter } from './modules/fulfillment/distributor-return.routes.js';
 import { taxInvoicesRouter } from './modules/fulfillment/tax-invoice.routes.js';
+import { createEwayBillRouter } from './modules/eway-bill/eway-bill.routes.js';
+import { createEwayBillEligibilityService } from './modules/eway-bill/eway-bill-eligibility.service.js';
+import { ewayBillFactsRepository } from './modules/eway-bill/eway-bill-eligibility.repository.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
 import {
   qualityFormsRouter,
@@ -171,6 +174,7 @@ export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
   app.use('/distributor-returns', distributorReturnsRouter);
   app.use('/tax-invoices', taxInvoicesRouter);
+  app.use('/tax-invoices', createEwayBillRouter(createEwayBillEligibilityService({ repository: ewayBillFactsRepository })));
   app.use('/qa', qaRouter);
   app.use('/reports', reportsRouter);
 

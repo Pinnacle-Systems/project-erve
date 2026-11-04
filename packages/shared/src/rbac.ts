@@ -592,6 +592,23 @@ export function canViewTaxInvoice(user: RoleHolder): boolean {
 }
 
 /**
+ * E-Way Bill (Track B). Same finance-trusted audience as Tax Invoice reads.
+ * Every future mutation (link an external bill, generate, cancel, capture
+ * movement data) is ACCOUNTANT-only — ADMIN keeps oversight, never statutory
+ * action, mirroring TAX_INVOICE_MUTATION_ROLES. B1 ships reads only.
+ */
+export const EWAY_BILL_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+export const EWAY_BILL_MANAGE_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canViewEwayBill(user: RoleHolder): boolean {
+  return hasAnyRole(user, EWAY_BILL_VIEW_ROLES);
+}
+
+export function canManageEwayBill(user: RoleHolder): boolean {
+  return hasAnyRole(user, EWAY_BILL_MANAGE_ROLES);
+}
+
+/**
  * V1 management/aggregate reporting audience (RPT0). Distinct from every
  * transaction domain's own view/mutation roles above — this is who may
  * reach `/reports/*` and the management Dashboard at all. Being in this
