@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { isValidGstinFormat, normalizeGstin } from '@erve/shared';
 import type { GstVerificationSource, GstVerificationTarget, GstVerificationView } from '@erve/types';
-import { Button, TextField, ValidationMessage } from '@erve/primitives';
+import { Button, ValidationMessage } from '@erve/primitives';
 import { StatusBadge } from '@erve/app-components';
-import { Panel } from '@erve/layout';
 import { GstinLiveConfirmDialog, GstinVerificationHistory } from './GstinVerificationParts.js';
 import { atExpiry, useGstinVerification, useGstVerificationPolicy } from './useGstinVerification.js';
 
@@ -240,37 +239,5 @@ function SavedVerification({
       {view.evidence && <GstinVerificationHistory target={target} />}
       <GstinLiveConfirmDialog verification={verification} />
     </section>
-  );
-}
-
-export function AccountantGstinLookup() {
-  const [gstin, setGstin] = useState('');
-  const [requested, setRequested] = useState('');
-  return (
-    <Panel title="GSTIN verification">
-      <div className="flex flex-wrap items-center gap-2">
-        <TextField
-          label="GSTIN to verify"
-          value={gstin}
-          onChange={(event) => {
-            setGstin(event.target.value);
-            setRequested('');
-          }}
-        />
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={!isValidGstinFormat(gstin)}
-          onClick={() => setRequested(normalizeGstin(gstin))}
-        >
-          View saved verification
-        </Button>
-      </div>
-      {requested && (
-        <div className="mt-3">
-          <GstinVerificationPanel gstin={requested} standalone />
-        </div>
-      )}
-    </Panel>
   );
 }
