@@ -52,7 +52,7 @@ describe('settings HTTP contract without a database', () => {
   it('rejects unsafe activation, unknown keys and stale writes without persisting', async () => {
     for (const [payload, status] of [
       [{ expectedVersion: 0, integrationMode: 'LIVE', confirmLiveActivation: true }, 403],
-      [{ expectedVersion: 0, ewayBillGenerationEnabled: true }, 400],
+      [{ expectedVersion: 0, ewayBillGenerationEnabled: true }, 403], // Demo generation not authorized on this server
       [{ expectedVersion: 0, apiKey: 'secret' }, 400],
       [{ expectedVersion: 5, gstinVerificationLevel: 'COMPLETE' }, 409],
     ] as const) {

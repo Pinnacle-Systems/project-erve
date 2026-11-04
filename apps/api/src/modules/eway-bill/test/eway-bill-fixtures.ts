@@ -14,6 +14,8 @@ export const completeMovement = (overrides: Partial<EwayBillMovementInfo> = {}):
   transportDocumentNumber: null,
   transportDocumentDate: null,
   approximateDistanceKm: 350,
+  shipToArrangement: 'BILLED_PARTY',
+  dispatchFromArrangement: 'SUPPLIER_REGISTERED_PREMISES',
   dispatchFrom: null,
   ...overrides,
 });
@@ -50,6 +52,6 @@ export function finalizedFacts(overrides: {
     movement: overrides.movement === undefined ? completeMovement() : overrides.movement,
     bills: overrides.bills ?? [],
     attempts: overrides.attempts ?? [],
-    settings: overrides.settings ?? { ewayBillGenerationEnabled: false },
+    settings: overrides.settings ?? { ewayBillGenerationEnabled: false, integrationMode: 'DEMO' },
   };
 }

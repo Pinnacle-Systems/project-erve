@@ -10,6 +10,7 @@ import type {
   EwayBillSource,
   EwayBillStatus,
   EwayBillUnverifiedRequirement,
+  EwayBillVerificationStatus,
   GstIntegrationMode,
 } from '@erve/types';
 import { isValidGstinFormat, resolveGstStateCode } from '@erve/shared';
@@ -70,6 +71,7 @@ export interface EwayBillFactBill {
   source: EwayBillSource;
   status: EwayBillStatus;
   integrationMode: GstIntegrationMode;
+  verificationStatus: EwayBillVerificationStatus;
   ewayBillNumber: string;
   generatedAt: Date | null;
   validUntil: Date | null;
@@ -101,7 +103,7 @@ export interface EwayBillFacts {
   movement: EwayBillMovementInfo | null;
   bills: EwayBillFactBill[];
   attempts: EwayBillFactAttempt[];
-  settings: { ewayBillGenerationEnabled: boolean };
+  settings: { ewayBillGenerationEnabled: boolean; integrationMode: GstIntegrationMode };
 }
 
 export interface ApplicabilityDecision {
@@ -148,11 +150,6 @@ export const EWAY_BILL_UNVERIFIED_REQUIREMENTS: readonly EwayBillUnverifiedRequi
     basis: 'Single third-party source.',
   },
   {
-    code: 'ITEM_QUANTITY_UNIT',
-    message: 'Unit quantity code (UQC) per item: the Style/HSN masters hold none, and requiredness is unverified.',
-    basis: 'No source of the value exists in the data model.',
-  },
-  {
     code: 'ADDRESS_LINES_AND_PLACE',
     message: 'Whether from/to address lines and place names are mandatory is not enforced.',
     basis: 'Not stated in retrievable documentation.',
@@ -164,16 +161,10 @@ export const EWAY_BILL_UNVERIFIED_REQUIREMENTS: readonly EwayBillUnverifiedRequi
     basis: 'Single third-party source (+/-2) and rounding policy unresolved.',
   },
   {
-    code: 'SUPPLY_AND_DOCUMENT_TYPE_MAPPING',
+    code: 'SUB_SUPPLY_AND_TRANSACTION_TYPE_CODES',
     message:
-      'Supply / sub-supply / document type for each purchase mode (including SALE_RETURN consignment) is not decided.',
-    basis: 'Business and legal decision.',
-  },
-  {
-    code: 'TRANSACTION_TYPE_AND_DISPATCH_FROM',
-    message:
-      'Regular vs bill-to/ship-to vs dispatch-from transaction type, and the dispatch-from default (seller registration address), are not decided.',
-    basis: 'Business decision; the seller address is only a provisional default.',
+      'Business-decided: every item is invoiced in PCS, OUTRIGHT and SALE_RETURN are both outward sales, and the transaction type comes from the captured bill-to / ship-to / dispatch-from arrangement. The NIC sub-supply and transaction-type codes used to express this are provider-sample assumptions, listed with every generation preview.',
+    basis: 'Business decision confirmed; NIC annexure codes not retrieved from the official page.',
   },
   {
     code: 'VEHICLE_NUMBER_FORMAT',
@@ -210,6 +201,7 @@ function summarize(bill: EwayBillFactBill): EwayBillAssociationSummary {
     source: bill.source,
     integrationMode: bill.integrationMode,
     ewayBillNumber: bill.ewayBillNumber,
+    verificationStatus: bill.verificationStatus,
     generatedAt: bill.generatedAt ? bill.generatedAt.toISOString() : null,
     validUntil: bill.validUntil ? bill.validUntil.toISOString() : null,
   };
@@ -224,24 +216,45 @@ function evaluateLinkage(facts: EwayBillFacts): EwayBillReadinessResponse['linka
   const openLive = facts.attempts.filter(
     (attempt) => attempt.integrationMode === 'LIVE' && OPEN_ATTEMPT.includes(attempt.outcome),
   );
+  const activeDemo = facts.bills.filter(
+    (bill) => bill.status === 'ACTIVE' && bill.integrationMode === 'DEMO',
+  );
   const syntheticRecords = {
-    activeDemoBills: facts.bills.filter(
-      (bill) => bill.status === 'ACTIVE' && bill.integrationMode === 'DEMO',
-    ).length,
+    activeDemoBills: activeDemo.length,
     openDemoAttempts: facts.attempts.filter(
       (attempt) => attempt.integrationMode === 'DEMO' && OPEN_ATTEMPT.includes(attempt.outcome),
     ).length,
+    demoBill: activeDemo[0] ? summarize(activeDemo[0]) : null,
   };
   const bill = activeLive[0] ?? null;
   if (bill) {
+    // Only a PROVIDER_VERIFIED bill is clearance. A hand-entered reference (or
+    // anything not positively verified) is reported, never trusted.
+    if (bill.verificationStatus === 'PROVIDER_VERIFIED') {
+      return {
+        state: bill.source === 'EXTERNALLY_LINKED' ? 'LINKED_EXTERNAL' : 'GENERATED',
+        ewayBill: summarize(bill),
+        unverifiedReference: null,
+        satisfiesStatutoryClearance: true,
+        syntheticRecords,
+      };
+    }
     return {
-      state: bill.source === 'EXTERNALLY_LINKED' ? 'LINKED_EXTERNAL' : 'GENERATED',
-      ewayBill: summarize(bill),
+      state: 'LINKED_UNVERIFIED',
+      ewayBill: null,
+      unverifiedReference: summarize(bill),
+      satisfiesStatutoryClearance: false,
       syntheticRecords,
     };
   }
   const state: EwayBillLinkageState = openLive.length > 0 ? 'UNRECONCILED_ATTEMPT' : 'NONE';
-  return { state, ewayBill: null, syntheticRecords };
+  return {
+    state,
+    ewayBill: null,
+    unverifiedReference: null,
+    satisfiesStatutoryClearance: false,
+    syntheticRecords,
+  };
 }
 
 function checkParties(facts: EwayBillFacts, blockers: EwayBillBlocker[]): void {
@@ -340,11 +353,25 @@ function checkDocumentAndItems(facts: EwayBillFacts, blockers: EwayBillBlocker[]
   }
 }
 
+/** Shared with the request mapper so the two never report the same gap twice. */
+export const ARRANGEMENT_NOT_CLASSIFIED_CODE = 'TRANSACTION_ARRANGEMENT_NOT_CLASSIFIED';
+export const arrangementNotClassifiedBlocker = (): EwayBillBlocker =>
+  blocker(
+    'PARTY',
+    'arrangement',
+    ARRANGEMENT_NOT_CLASSIFIED_CODE,
+    'Whether the goods are delivered to the billed party or a different consignee, and whether they ship from the supplier premises or a different place, has not been classified. It cannot be inferred from addresses and is never defaulted.',
+  );
+
 function checkMovement(facts: EwayBillFacts, blockers: EwayBillBlocker[]): void {
   const movement = facts.movement;
   if (!movement) {
     blockers.push(blocker('MOVEMENT', 'movement', 'MOVEMENT_NOT_CAPTURED', 'No E-Way Bill movement information has been captured for this invoice.'));
     return;
+  }
+
+  if (movement.shipToArrangement === null || movement.dispatchFromArrangement === null) {
+    blockers.push(arrangementNotClassifiedBlocker());
   }
 
   const distance = movement.approximateDistanceKm;
@@ -385,6 +412,12 @@ function checkMovement(facts: EwayBillFacts, blockers: EwayBillBlocker[]): void 
 export interface EwayBillEvaluationDeps {
   applicability?: EwayBillApplicabilityEvaluator;
   now?: () => Date;
+  /**
+   * Whether synthetic Demo generation is possible right now (server-side Demo
+   * authorization, provider key, Demo mode and the setting). Reported in
+   * capabilities only; it never changes this invoice's readiness.
+   */
+  demoGenerationAvailable?: boolean;
 }
 
 export function evaluateEwayBillReadiness(
@@ -416,7 +449,7 @@ export function evaluateEwayBillReadiness(
       ruleSetVersion: null,
     };
     blockers.push(blocker('INVOICE', 'invoice.status', 'INVOICE_CANCELLED', 'The Tax Invoice is cancelled; an E-Way Bill cannot be generated against it.'));
-    if (linkage.ewayBill) {
+    if (linkage.ewayBill || linkage.unverifiedReference) {
       reviewFlags.push({
         code: 'LIVE_EWAY_BILL_ON_CANCELLED_INVOICE',
         message:
@@ -432,6 +465,8 @@ export function evaluateEwayBillReadiness(
     };
     if (linkage.state === 'LINKED_EXTERNAL' || linkage.state === 'GENERATED') {
       blockers.push(blocker('ASSOCIATION', 'linkage', 'EWAY_BILL_ALREADY_ASSOCIATED', 'An active live E-Way Bill is already associated with this invoice.'));
+    } else if (linkage.state === 'LINKED_UNVERIFIED') {
+      blockers.push(blocker('ASSOCIATION', 'linkage', 'UNVERIFIED_EWAY_BILL_REFERENCE_LINKED', 'An E-Way Bill number was recorded by hand for this invoice and has not been verified with a provider. It is not statutory clearance, and no other live bill can be associated while it is active.'));
     } else if (linkage.state === 'UNRECONCILED_ATTEMPT') {
       blockers.push(blocker('ASSOCIATION', 'linkage', 'UNRECONCILED_ATTEMPT_PENDING', 'A previous live generation attempt is unfinished or its outcome is unknown; it must be reconciled before a new request.'));
     } else {
@@ -456,8 +491,9 @@ export function evaluateEwayBillReadiness(
     reviewFlags,
     capabilities: {
       providerGenerationEnabled: facts.settings.ewayBillGenerationEnabled,
-      providerGenerationAvailable: false,
-      externalLinkAvailable: false,
+      demoGenerationAvailable: deps.demoGenerationAvailable ?? false,
+      liveGenerationAvailable: false,
+      externalLinkAvailable: true,
     },
     evaluatedAt: now.toISOString(),
   };

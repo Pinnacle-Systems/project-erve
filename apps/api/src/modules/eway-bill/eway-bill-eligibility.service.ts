@@ -17,6 +17,12 @@ export interface EwayBillEligibilityServiceDeps {
   repository: EwayBillFactsRepository;
   applicability?: EwayBillApplicabilityEvaluator;
   now?: () => Date;
+  /**
+   * The server side of Demo generation is ready: Demo generation is
+   * authorized and a provider key is configured. Combined with the stored
+   * setting and mode to report the demoGenerationAvailable capability.
+   */
+  demoServerReady?: () => boolean;
 }
 
 export type EwayBillEligibilityService = ReturnType<typeof createEwayBillEligibilityService>;
@@ -36,6 +42,10 @@ export function createEwayBillEligibilityService(deps: EwayBillEligibilityServic
       return evaluateEwayBillReadiness(facts, {
         applicability: deps.applicability,
         now: deps.now,
+        demoGenerationAvailable:
+          facts.settings.ewayBillGenerationEnabled &&
+          facts.settings.integrationMode === 'DEMO' &&
+          (deps.demoServerReady?.() ?? false),
       });
     },
   };

@@ -100,10 +100,58 @@ describe('GST compliance settings', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
-  it('rejects unsupported generation even when Live is authorized', async () => {
-    const { service, repository } = setup(true);
-    await expect(service.update(actor(), { expectedVersion: 0, ewayBillGenerationEnabled: true })).rejects.toMatchObject({ statusCode: 400 });
-    expect(repository.snapshot().row).toBeNull();
+  describe('E-Way Bill generation setting', () => {
+    const withDemo = (demoAvailable: boolean, liveAuthorized = false) => {
+      const repository = createMemorySettingsRepository();
+      const service = createGstComplianceSettingsService(repository, () => liveAuthorized, () => true, () => demoAvailable);
+      return { repository, service };
+    };
+
+    it('cannot be enabled unless the server authorizes Demo generation, even when Live is authorized', async () => {
+      for (const liveAuthorized of [false, true]) {
+        const { service, repository } = withDemo(false, liveAuthorized);
+        await expect(service.update(actor(), { expectedVersion: 0, ewayBillGenerationEnabled: true })).rejects.toMatchObject({ statusCode: 403 });
+        expect(repository.snapshot().row).toBeNull();
+      }
+    });
+
+    it('can be enabled in Demo mode once the server authorizes Demo generation, and is audited', async () => {
+      const { service, repository } = withDemo(true);
+      const saved = await service.update(actor(), { expectedVersion: 0, ewayBillGenerationEnabled: true });
+      expect(saved).toMatchObject({
+        integrationMode: 'DEMO', ewayBillGenerationEnabled: true, version: 1,
+        capabilities: { ewayBillGenerationAvailable: true },
+      });
+      expect(repository.snapshot().audits[0]).toMatchObject({
+        metadata: { previous: { ewayBillGenerationEnabled: false }, next: { ewayBillGenerationEnabled: true } },
+      });
+    });
+
+    it('cannot be enabled together with Live mode: Live E-Way Bill filing never exists', async () => {
+      const { service, repository } = withDemo(true, true);
+      await expect(service.update(actor(), {
+        expectedVersion: 0, ewayBillGenerationEnabled: true, integrationMode: 'LIVE', confirmLiveActivation: true,
+      })).rejects.toMatchObject({ statusCode: 400 });
+      expect(repository.snapshot().row).toBeNull();
+    });
+
+    it('cannot be enabled while the stored mode is Live', async () => {
+      const { service } = withDemo(true, true);
+      await service.update(actor(), { expectedVersion: 0, integrationMode: 'LIVE', confirmLiveActivation: true });
+      await expect(service.update(actor(), { expectedVersion: 1, ewayBillGenerationEnabled: true })).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it('reports the capability from the server configuration, not from the stored value', async () => {
+      expect((await withDemo(false).service.read(actor())).capabilities.ewayBillGenerationAvailable).toBe(false);
+      expect((await withDemo(true).service.read(actor())).capabilities.ewayBillGenerationAvailable).toBe(true);
+    });
+
+    it('does not block unrelated updates once it is already enabled', async () => {
+      const { service } = withDemo(true);
+      await service.update(actor(), { expectedVersion: 0, ewayBillGenerationEnabled: true });
+      const saved = await service.update(actor(), { expectedVersion: 1, gstinVerificationLevel: 'COMPLETE' });
+      expect(saved).toMatchObject({ ewayBillGenerationEnabled: true, gstinVerificationLevel: 'COMPLETE' });
+    });
   });
 
   it.each([

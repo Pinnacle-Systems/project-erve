@@ -16,6 +16,10 @@ const envSchema = z.object({
   // reused. The portal credentials are the E-Way Bill API user for the acting
   // GSTIN, are sent per request and are never stored or logged.
   EWAY_BILL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
+  // Permits SYNTHETIC (provider test_mode) E-Way Bill generation on this
+  // server. Defaults to false. It authorizes nothing Live: no Live E-Way Bill
+  // filing or lookup exists regardless of this flag or the integration mode.
+  EWAY_BILL_DEMO_GENERATION_AUTHORIZED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   EWAY_BILL_PORTAL_USERNAME: z.string().default(''),
   EWAY_BILL_PORTAL_PASSWORD: z.string().default(''),
   HOST: z.string().min(1).default('0.0.0.0'),

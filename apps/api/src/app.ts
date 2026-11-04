@@ -55,6 +55,10 @@ import { taxInvoicesRouter } from './modules/fulfillment/tax-invoice.routes.js';
 import { createEwayBillRouter } from './modules/eway-bill/eway-bill.routes.js';
 import { createEwayBillEligibilityService } from './modules/eway-bill/eway-bill-eligibility.service.js';
 import { ewayBillFactsRepository } from './modules/eway-bill/eway-bill-eligibility.repository.js';
+import { createEwayBillOperationsService } from './modules/eway-bill/eway-bill-operations.service.js';
+import { ewayBillOperationsRepository } from './modules/eway-bill/eway-bill-operations.repository.js';
+import { GstinApiEwayBillProvider } from './integrations/gst/gstin-api-eway-bill.provider.js';
+import type { EwayBillProvider } from './integrations/gst/eway-bill-provider.js';
 import { qaRouter } from './modules/qa/qa.routes.js';
 import {
   qualityFormsRouter,
@@ -81,7 +85,13 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<
   });
 }
 
-export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider?: GstUsageProvider } = {}) {
+export function createApp(
+  options: {
+    gstProvider?: GstProvider;
+    gstUsageProvider?: GstUsageProvider;
+    ewayBillProvider?: EwayBillProvider;
+  } = {},
+) {
   const app = express();
 
   // Exactly one hop of trust: the local CloudPanel-managed Nginx reverse
@@ -89,6 +99,11 @@ export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider
   // req.protocol from the first (nearest) X-Forwarded-* entry instead of
   // trusting arbitrary client-supplied values (which `true` would do).
   app.set('trust proxy', 1);
+
+  // Synthetic Demo E-Way Bill generation is permitted on this server only when
+  // explicitly authorized AND a provider key exists. Says nothing about Live.
+  const ewayBillDemoServerReady = () =>
+    env.EWAY_BILL_DEMO_GENERATION_AUTHORIZED && !!env.GST_VERIFICATION_API_KEY.trim();
 
   app.use(helmet());
   app.use(cors(corsOptions));
@@ -147,7 +162,7 @@ export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider
   app.use('/hsns', hsnsRouter);
   app.use('/gst-rule-sets', gstRuleSetsRouter);
   app.use('/gst-compliance/settings', createGstComplianceSettingsRouter(
-    createGstComplianceSettingsService(gstComplianceSettingsRepository, () => env.GST_COMPLIANCE_LIVE_AUTHORIZED, () => !!env.GST_VERIFICATION_API_KEY.trim()),
+    createGstComplianceSettingsService(gstComplianceSettingsRepository, () => env.GST_COMPLIANCE_LIVE_AUTHORIZED, () => !!env.GST_VERIFICATION_API_KEY.trim(), ewayBillDemoServerReady),
   ));
   app.use('/gst-compliance/verification', createGstinVerificationRouter(createGstinVerificationService({
     repository: gstinVerificationRepository,
@@ -174,7 +189,24 @@ export function createApp(options: { gstProvider?: GstProvider; gstUsageProvider
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
   app.use('/distributor-returns', distributorReturnsRouter);
   app.use('/tax-invoices', taxInvoicesRouter);
-  app.use('/tax-invoices', createEwayBillRouter(createEwayBillEligibilityService({ repository: ewayBillFactsRepository })));
+  app.use('/tax-invoices', createEwayBillRouter(
+    createEwayBillEligibilityService({ repository: ewayBillFactsRepository, demoServerReady: ewayBillDemoServerReady }),
+    createEwayBillOperationsService({
+      repository: ewayBillOperationsRepository,
+      // DEMO ONLY: this adapter hardcodes test_mode and has no Live counterpart.
+      provider: options.ewayBillProvider ?? new GstinApiEwayBillProvider({
+        apiKey: env.GST_VERIFICATION_API_KEY,
+        timeoutMs: env.EWAY_BILL_TIMEOUT_MS,
+        portalUsername: env.EWAY_BILL_PORTAL_USERNAME,
+        portalPassword: env.EWAY_BILL_PORTAL_PASSWORD,
+      }),
+      config: {
+        demoGenerationAuthorized: () => env.EWAY_BILL_DEMO_GENERATION_AUTHORIZED,
+        providerConfigured: () => !!env.GST_VERIFICATION_API_KEY.trim(),
+        providerTimeoutMs: env.EWAY_BILL_TIMEOUT_MS,
+      },
+    }),
+  ));
   app.use('/qa', qaRouter);
   app.use('/reports', reportsRouter);
 
