@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { CircleCheck, FlaskConical, TriangleAlert } from 'lucide-react';
 import { GST_DRAFT_SOURCE_ID, isValidGstinFormat, normalizeGstin } from '@erve/shared';
-import type { GstSourceType, GstVerificationSource } from '@erve/types';
+import type { GstSourceType, GstVerificationSource, GstVerificationTarget } from '@erve/types';
 import { StatusBadge } from '@erve/app-components';
 import {
   Button,
@@ -40,6 +40,8 @@ export const GSTIN_FORMAT_MESSAGE = 'Enter a valid 15-character GSTIN (e.g., 22A
 interface VerificationBinding {
   /** Which master this GSTIN belongs to. Without it nothing is verifiable. */
   entity?: GstVerifiableEntity;
+  /** Source-less Accountant lookup in GST Compliance Settings. Never grants permission itself. */
+  standalone?: boolean;
   /** The saved record's id on edit/detail pages. Absent on create forms. */
   recordId?: string | null;
   /** The record's persisted GSTIN. Evidence is only attached to the saved record
@@ -74,18 +76,25 @@ function useGstinFieldVerification(
   { disabled, readOnly }: { disabled?: boolean; readOnly?: boolean },
 ) {
   const allowVerify = binding.allowVerify ?? !readOnly;
-  const policy = useGstVerificationPolicy(!!binding.entity);
-  const online = !!binding.entity && policy.data?.enabled === true;
+  // Standalone is only meaningful without a master entity. The API independently
+  // enforces Accountant-only source-less read, prepare, history and execution.
+  const standalone = binding.standalone === true && !binding.entity;
+  const policy = useGstVerificationPolicy(!!binding.entity || standalone);
+  const online = (!!binding.entity || standalone) && policy.data?.enabled === true;
   const gstin = normalizeGstin(value);
   const formatValid = isValidGstinFormat(gstin);
-  const source = online && formatValid ? resolveSource(binding, gstin, allowVerify) : null;
-  const verification = useGstinVerification(source ? { gstin, source } : null);
+  const source = online && formatValid && !standalone ? resolveSource(binding, gstin, allowVerify) : null;
+  const target: GstVerificationTarget | null =
+    online && formatValid && (standalone || source)
+      ? source ? { gstin, source } : { gstin }
+      : null;
+  const verification = useGstinVerification(target);
   const view = verification.view;
-  const status: GstinFieldStatus = source
+  const status: GstinFieldStatus = target
     ? deriveGstinFieldStatus(view, gstin)
     : { kind: 'none' };
   const canOfferVerify =
-    !!source &&
+    !!target &&
     allowVerify &&
     !disabled &&
     !!view?.enabled &&
@@ -102,6 +111,7 @@ function useGstinFieldVerification(
     gstin,
     formatValid,
     source,
+    target,
     verification,
     status,
     canOfferVerify,
@@ -109,7 +119,7 @@ function useGstinFieldVerification(
     allowVerify,
     disabled,
     readOnly,
-    note: fieldNote({ status, verification, allowVerify, hasSource: !!source }),
+    note: fieldNote({ status, verification, allowVerify, hasTarget: !!target }),
   };
 }
 type FieldVerification = ReturnType<typeof useGstinFieldVerification>;
@@ -137,6 +147,7 @@ export function GstinVerificationField({
   entity,
   recordId,
   savedGstin,
+  standalone,
   allowVerify,
   errorMessage,
   helpText,
@@ -147,7 +158,7 @@ export function GstinVerificationField({
 }: GstinVerificationFieldProps) {
   const ui = useGstinFieldVerification(
     value,
-    { entity, recordId, savedGstin, allowVerify },
+    { entity, recordId, savedGstin, standalone, allowVerify },
     { disabled, readOnly },
   );
   const [touched, setTouched] = useState(false);
@@ -222,7 +233,7 @@ export function GstinVerificationInline({
 }
 
 function GstinVerificationControls({ ui }: { ui: FieldVerification }) {
-  const { verification, status, gstin, source } = ui;
+  const { verification, status, gstin, target } = ui;
   const [profileOpen, setProfileOpen] = useState(false);
   const statusButton = useRef<HTMLButtonElement | null>(null);
   const view = verification.view;
@@ -250,13 +261,13 @@ function GstinVerificationControls({ ui }: { ui: FieldVerification }) {
           Verify
         </Button>
       )}
-      {source && view?.enabled && (
+      {target && view?.enabled && (
         <>
           <GstinProfileDialog
             open={profileOpen}
             onOpenChange={setProfileOpen}
             gstin={gstin}
-            source={source}
+            target={target}
             verification={verification}
             allowVerify={ui.allowVerify && !ui.disabled}
             returnFocusTo={statusButton}
@@ -276,14 +287,14 @@ function fieldNote({
   status,
   verification,
   allowVerify,
-  hasSource,
+  hasTarget,
 }: {
   status: GstinFieldStatus;
   verification: GstinVerificationController;
   allowVerify: boolean;
-  hasSource: boolean;
+  hasTarget: boolean;
 }): ReactNode {
-  if (!hasSource) return null;
+  if (!hasTarget) return null;
   if (verification.error)
     return (
       <span role="alert" className="text-warning">
@@ -350,7 +361,7 @@ function GstinProfileDialog({
   open,
   onOpenChange,
   gstin,
-  source,
+  target,
   verification,
   allowVerify,
   returnFocusTo,
@@ -359,7 +370,7 @@ function GstinProfileDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   gstin: string;
-  source: GstVerificationSource;
+  target: GstVerificationTarget;
   verification: GstinVerificationController;
   allowVerify: boolean;
   returnFocusTo: RefObject<HTMLElement | null>;
@@ -392,7 +403,7 @@ function GstinProfileDialog({
         <GstinVerificationResult view={view} />
         {view.evidence && (
           <div className="mt-3">
-            <GstinVerificationHistory target={{ gstin, source }} />
+            <GstinVerificationHistory target={target} />
           </div>
         )}
         <DialogFooter>
