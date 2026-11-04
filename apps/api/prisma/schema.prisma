@@ -298,6 +298,7 @@ model User {
   ewayBillMovementsCreated     EwayBillMovement[]       @relation("EwayBillMovementCreator")
   ewayBillMovementsUpdated     EwayBillMovement[]       @relation("EwayBillMovementUpdater")
   ewayBillRequestAttempts      EwayBillRequestAttempt[] @relation("EwayBillRequestAttemptActor")
+  ewayBillRequestAttemptsResolved EwayBillRequestAttempt[] @relation("EwayBillRequestAttemptResolver")
   id           String     @id
   email        String     @unique
   mobile       String?    @unique
@@ -3696,6 +3697,31 @@ enum EwayBillAttemptOutcome {
   SUCCEEDED
   REJECTED
   UNCERTAIN
+  // B2B: a DEMO attempt an Accountant explicitly closed (resolved_* columns
+  // record who/when/why). Never open; never set for LIVE attempts.
+  CLOSED
+}
+
+// B2B: how much evidence backs a bill. SYNTHETIC_DEMO = a provider test_mode
+// result (never statutory). UNVERIFIED_REFERENCE = a number an Accountant
+// typed in for a LIVE bill generated elsewhere. PROVIDER_VERIFIED is reserved
+// for a future authorized verification and is never assigned by B2B.
+enum EwayBillVerificationStatus {
+  SYNTHETIC_DEMO
+  UNVERIFIED_REFERENCE
+  PROVIDER_VERIFIED
+}
+
+// B2B: the explicit bill-to / ship-to and dispatch-from classification the
+// request mapper needs (it cannot be inferred from addresses).
+enum EwayBillShipToArrangement {
+  BILLED_PARTY
+  DIFFERENT_PARTY
+}
+
+enum EwayBillDispatchFromArrangement {
+  SUPPLIER_REGISTERED_PREMISES
+  DIFFERENT_PLACE
 }
 
 // The invoice <-> E-Way Bill association. A row exists only once a bill
@@ -3710,6 +3736,10 @@ model EwayBill {
   status             EwayBillStatus      @default(ACTIVE)
   integrationMode    GstIntegrationMode  @map("integration_mode")
   ewayBillNumber     String              @map("eway_bill_number")
+  // Fail-closed default: a row written without an explicit status can never
+  // read as verified. DEMO rows are SYNTHETIC_DEMO (CHECK in the migration).
+  verificationStatus EwayBillVerificationStatus @default(UNVERIFIED_REFERENCE) @map("verification_status")
+  verifiedAt         DateTime?           @map("verified_at")
   generatedAt        DateTime?           @map("generated_at")
   validUntil         DateTime?           @map("valid_until")
   providerName       String?             @map("provider_name")
@@ -3728,7 +3758,9 @@ model EwayBill {
   createdBy      User                    @relation("EwayBillCreator", fields: [createdById], references: [id], onDelete: Restrict)
   cancelledBy    User?                   @relation("EwayBillCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
 
-  @@unique([integrationMode, ewayBillNumber])
+  // Number uniqueness is LIVE-only and hand-written in the migration
+  // (eway_bills_live_number_key, partial unique): GSTINAPI's synthetic Demo
+  // numbers may repeat across invoices, a real statutory number never may.
   @@index([taxInvoiceId, integrationMode])
   @@map("eway_bills")
 }
@@ -3751,6 +3783,10 @@ model EwayBillMovement {
   // Kilometres. 0 is meaningful (NIC derives the distance from the pincodes),
   // so null — not 0 — means "not captured".
   approximateDistanceKm   Int?                   @map("approximate_distance_km")
+  // B2B: explicit transaction arrangement (null = not yet classified; the
+  // generation preview reports it, the database does not require it).
+  shipToArrangement       EwayBillShipToArrangement?       @map("ship_to_arrangement")
+  dispatchFromArrangement EwayBillDispatchFromArrangement? @map("dispatch_from_arrangement")
   // Optional dispatch-from override; null = use the invoice's seller snapshot.
   dispatchFromAddressLine1 String?               @map("dispatch_from_address_line1")
   dispatchFromAddressLine2 String?               @map("dispatch_from_address_line2")
@@ -3785,6 +3821,8 @@ model EwayBillRequestAttempt {
   documentDate       DateTime               @map("document_date") @db.Date
   requestFingerprint String                 @map("request_fingerprint")
   settingsVersion    Int                    @map("settings_version")
+  // B2B: EwayBillMovement.version the request was built from.
+  movementVersion    Int?                   @map("movement_version")
   providerReference  String?                @map("provider_reference")
   failureCode        String?                @map("failure_code")
   failureMessage     String?                @map("failure_message")
@@ -3794,9 +3832,14 @@ model EwayBillRequestAttempt {
   // Flags a stalled DISPATCHED/UNCERTAIN attempt for manual reconciliation
   // only; it never grants permission for another request.
   reviewAfter        DateTime?              @map("review_after")
+  // B2B: audited manual closure of a DEMO attempt (all three or none).
+  resolvedById       String?                @map("resolved_by_id")
+  resolvedAt         DateTime?              @map("resolved_at")
+  resolutionReason   String?                @map("resolution_reason")
 
   taxInvoice TaxInvoice @relation(fields: [taxInvoiceId], references: [id], onDelete: Restrict)
   actor      User       @relation("EwayBillRequestAttemptActor", fields: [actorId], references: [id], onDelete: Restrict)
+  resolvedBy User?      @relation("EwayBillRequestAttemptResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
   ewayBill   EwayBill?
 
   @@index([taxInvoiceId, integrationMode, createdAt])

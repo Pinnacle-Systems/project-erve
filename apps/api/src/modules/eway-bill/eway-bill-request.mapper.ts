@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import type {
   EwayBillBlocker,
+  EwayBillDispatchFromArrangement,
   EwayBillMovementInfo,
   EwayBillReason,
+  EwayBillShipToArrangement,
   EwayBillUnverifiedRequirement,
 } from '@erve/types';
 import { isValidGstinFormat, resolveGstStateCode } from '@erve/shared';
@@ -11,7 +13,9 @@ import type {
   EwayBillItemPayload,
 } from '../../integrations/gst/eway-bill-provider.js';
 import {
+  ARRANGEMENT_NOT_CLASSIFIED_CODE,
   DOCUMENT_NUMBER,
+  arrangementNotClassifiedBlocker,
   evaluateEwayBillReadiness,
   isoDate,
   type EwayBillFactLine,
@@ -59,14 +63,15 @@ import { absPaise, paiseToNumber, toPaiseHalfUp } from './eway-bill-money.js';
 
 const UQC_PIECES = 'PCS';
 const HSN_DIGITS = /^\d{4,8}$/;
-const TRANSPORTER_ID = /^[0-9]{2}[0-9A-Z]{13}$/;
-const TRANSPORT_DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,15}$/;
+// Exported so movement capture applies the same format rules as request building.
+export const TRANSPORTER_ID = /^[0-9]{2}[0-9A-Z]{13}$/;
+export const TRANSPORT_DOCUMENT_NUMBER = /^[A-Za-z0-9/-]{1,15}$/;
 // NIC generate schema: vehicleNo is 7-15 characters. (The IRN-route page says 4-20;
 // it describes a different endpoint, so the generate schema is the rule here.)
-const VEHICLE_NUMBER = /^[A-Z0-9]{7,15}$/;
+export const VEHICLE_NUMBER = /^[A-Z0-9]{7,15}$/;
 
 const MAX_ITEMS = 250;
-const MAX_DISTANCE_KM = 4000;
+export const MAX_DISTANCE_KM = 4000;
 const SAME_PINCODE_MAX_DISTANCE_KM = 100;
 const MAX_DOCUMENT_AGE_DAYS = 180;
 const MIN_PINCODE = 100_000;
@@ -86,9 +91,19 @@ const FIELD_LIMITS = { address: 120, place: 50, name: 100 } as const;
  */
 export interface EwayBillArrangement {
   /** BILLED_PARTY: delivered to the party billed. DIFFERENT_PARTY: a third-party consignee. */
-  shipTo: 'BILLED_PARTY' | 'DIFFERENT_PARTY';
+  shipTo: EwayBillShipToArrangement;
   /** SUPPLIER_REGISTERED_PREMISES: ships from the invoice's supplier address. DIFFERENT_PLACE: from the captured dispatch-from address. */
-  dispatchFrom: 'SUPPLIER_REGISTERED_PREMISES' | 'DIFFERENT_PLACE';
+  dispatchFrom: EwayBillDispatchFromArrangement;
+}
+
+/** The arrangement exists only once BOTH halves are classified; a partial capture is none. */
+export function arrangementFromMovement(
+  movement: Pick<EwayBillMovementInfo, 'shipToArrangement' | 'dispatchFromArrangement'> | null,
+): EwayBillArrangement | null {
+  if (!movement || movement.shipToArrangement === null || movement.dispatchFromArrangement === null) {
+    return null;
+  }
+  return { shipTo: movement.shipToArrangement, dispatchFrom: movement.dispatchFromArrangement };
 }
 
 export interface EwayBillRequestLineFacts extends EwayBillFactLine {
@@ -287,7 +302,7 @@ export function fingerprintPayload(payload: EwayBillGeneratePayload): string {
   return createHash('sha256').update(JSON.stringify(canonicalize(payload))).digest('hex');
 }
 
-function toReadinessFacts(facts: EwayBillRequestFacts): EwayBillFacts {
+export function toReadinessFacts(facts: EwayBillRequestFacts): EwayBillFacts {
   const { invoice } = facts;
   return {
     invoice: {
@@ -318,11 +333,19 @@ function toReadinessFacts(facts: EwayBillRequestFacts): EwayBillFacts {
       hsnCode: line.hsnCode,
       taxableValue: line.taxableValue,
     })),
-    movement: facts.movement,
+    // The explicit arrangement is the one this request is classified from, so
+    // readiness judges the same value (never a stale copy on the movement).
+    movement: facts.movement
+      ? {
+          ...facts.movement,
+          shipToArrangement: facts.arrangement?.shipTo ?? null,
+          dispatchFromArrangement: facts.arrangement?.dispatchFrom ?? null,
+        }
+      : null,
     // Association / attempt state is checked separately against live data.
     bills: [],
     attempts: [],
-    settings: { ewayBillGenerationEnabled: false },
+    settings: { ewayBillGenerationEnabled: false, integrationMode: 'DEMO' },
   };
 }
 
@@ -488,7 +511,10 @@ export function prepareEwayBillRequest(
   // 5. Transaction type from an explicit, cross-checked arrangement.
   let transactionType: 1 | 2 | 3 | 4 | null = null;
   if (!arrangement) {
-    blockers.push(blocker('PARTY', 'arrangement', 'TRANSACTION_ARRANGEMENT_NOT_CLASSIFIED', 'Whether the goods are delivered to the billed party or a different consignee, and whether they ship from the supplier premises or a different place, has not been classified. It cannot be inferred from addresses and is never defaulted.'));
+    // Readiness already reports this when a movement exists; never twice.
+    if (!blockers.some((entry) => entry.code === ARRANGEMENT_NOT_CLASSIFIED_CODE)) {
+      blockers.push(arrangementNotClassifiedBlocker());
+    }
   } else {
     let consistent = true;
     if (arrangement.dispatchFrom === 'DIFFERENT_PLACE' && !override) {

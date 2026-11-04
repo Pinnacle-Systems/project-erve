@@ -46,6 +46,7 @@ export const ewayBillFactsRepository: EwayBillFactsRepository = {
             source: true,
             status: true,
             integrationMode: true,
+            verificationStatus: true,
             ewayBillNumber: true,
             generatedAt: true,
             validUntil: true,
@@ -58,7 +59,7 @@ export const ewayBillFactsRepository: EwayBillFactsRepository = {
 
     const settings = await prisma.gstComplianceSettings.findUnique({
       where: { scope: APPLICATION_SCOPE },
-      select: { ewayBillGenerationEnabled: true },
+      select: { ewayBillGenerationEnabled: true, integrationMode: true },
     });
 
     const m = invoice.ewayBillMovement;
@@ -72,6 +73,8 @@ export const ewayBillFactsRepository: EwayBillFactsRepository = {
           transportDocumentNumber: m.transportDocumentNumber,
           transportDocumentDate: isoDate(m.transportDocumentDate),
           approximateDistanceKm: m.approximateDistanceKm,
+          shipToArrangement: m.shipToArrangement,
+          dispatchFromArrangement: m.dispatchFromArrangement,
           dispatchFrom:
             m.dispatchFromAddressLine1 ||
             m.dispatchFromCity ||
@@ -122,7 +125,10 @@ export const ewayBillFactsRepository: EwayBillFactsRepository = {
       movement,
       bills: invoice.ewayBills,
       attempts: invoice.ewayBillAttempts,
-      settings: { ewayBillGenerationEnabled: settings?.ewayBillGenerationEnabled ?? false },
+      settings: {
+        ewayBillGenerationEnabled: settings?.ewayBillGenerationEnabled ?? false,
+        integrationMode: settings?.integrationMode ?? 'DEMO',
+      },
     };
   },
 };
