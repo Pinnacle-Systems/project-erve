@@ -183,6 +183,18 @@ const legacyInvoiceUrls = [
   '/fulfillment/invoices/not-a-tax-invoice/?print=1',
 ];
 
+it.each(['/fulfillment/erve-dispatches/new', '/fulfillment/erve-packing-lists', '/fulfillment/tax-invoices', '/fulfillment/factory-dispatches', '/fulfillment/distributor-sales-reports', '/master-data/users'])(
+  'denies Transporter navigation to %s', async path => {
+    await renderRoutes('TRANSPORTER', path);
+    expect(getPageContent()).toContain('ForbiddenPage');
+  },
+);
+
+it('denies mixed-role Transporter accounts at the dispatch workspace boundary', async () => {
+  await renderRoutes(['ADMIN', 'TRANSPORTER'], '/fulfillment/erve-dispatches');
+  expect(getPageContent()).toContain('ForbiddenPage');
+});
+
 describe('retired Invoice Handoff routes', () => {
   it.each<Role>(['ADMIN', 'ACCOUNTANT', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'DISTRIBUTOR'])(
     '%s gets only a non-operational fallback at every legacy URL',
@@ -655,5 +667,23 @@ describe('AppRoutes Permissions', () => {
         expect(get.mock.calls.some((call) => call[0] === '/styles')).toBe(true);
       },
     );
+  });
+});
+
+// ISS-086: exercise the real route registration and existing role gates.
+describe('standalone Erve Dispatch recording route', () => {
+  it.each<Role>(['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT', 'DISTRIBUTOR', 'FACTORY_USER', 'QA_USER'])(
+    'applies existing creation permissions to %s', async (role) => {
+      const get = vi.spyOn(apiClient, 'get');
+      await renderRoutes(role, '/fulfillment/erve-dispatches/new');
+      expect(getPageContent()).toContain(['ADMIN', 'MERCHANDISER'].includes(role) ? 'Select a finalized Erve Packing List' : 'ForbiddenPage');
+      expect(get).not.toHaveBeenCalled();
+    },
+  );
+  it('requires authentication before the creation page mounts', async () => {
+    const get = vi.spyOn(apiClient, 'get');
+    await renderRoutes(null, '/fulfillment/erve-dispatches/new?ervePackingListId=pl');
+    expect(routeLocation.pathname).toBe('/login');
+    expect(get).not.toHaveBeenCalled();
   });
 });

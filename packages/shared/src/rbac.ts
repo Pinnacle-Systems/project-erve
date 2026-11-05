@@ -23,6 +23,32 @@ export interface RoleHolder {
   roles: readonly Role[];
 }
 
+export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
+  return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
+}
+
+export function hasExclusiveTransporterRole(user: RoleHolder): boolean {
+  return user.roles.length === 1 && user.roles[0] === 'TRANSPORTER';
+}
+
+export const ERVE_DISPATCH_TRANSPORT_ROLES = ['ADMIN', 'MERCHANDISER', 'TRANSPORTER'] as const satisfies readonly Role[];
+export const ERVE_DISPATCH_ASSIGNMENT_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+export const ERVE_DISPATCH_DELIVERY_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+
+export function canViewErveDispatchTransport(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_TRANSPORT_ROLES);
+}
+
+export const canEditErveDispatchTransport = canViewErveDispatchTransport;
+
+export function canManageErveDispatchAssignment(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_ASSIGNMENT_ROLES);
+}
+
+export function canConfirmErveDispatchDelivery(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_DELIVERY_ROLES);
+}
+
 export const RETAIL_STORE_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',
@@ -589,6 +615,23 @@ export const TAX_INVOICE_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies
 
 export function canViewTaxInvoice(user: RoleHolder): boolean {
   return hasAnyRole(user, TAX_INVOICE_VIEW_ROLES);
+}
+
+/**
+ * E-Way Bill (Track B). Same finance-trusted audience as Tax Invoice reads.
+ * Every future mutation (link an external bill, generate, cancel, capture
+ * movement data) is ACCOUNTANT-only — ADMIN keeps oversight, never statutory
+ * action, mirroring TAX_INVOICE_MUTATION_ROLES. B1 ships reads only.
+ */
+export const EWAY_BILL_VIEW_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+export const EWAY_BILL_MANAGE_ROLES = ['ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canViewEwayBill(user: RoleHolder): boolean {
+  return hasAnyRole(user, EWAY_BILL_VIEW_ROLES);
+}
+
+export function canManageEwayBill(user: RoleHolder): boolean {
+  return hasAnyRole(user, EWAY_BILL_MANAGE_ROLES);
 }
 
 /**

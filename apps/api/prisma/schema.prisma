@@ -11,9 +11,7 @@ datasource db {
 // Enums
 // ---------------------------------------------------------------------------
 
-// Transporter delivery access is out of scope for this enum in the MVP — it
-// will be handled via secure, tokenized public delivery links, not a normal
-// logged-in role.
+// Authenticated transport maintenance is separate from public QR delivery.
 enum RoleName {
   ADMIN
   MERCHANDISER
@@ -22,6 +20,7 @@ enum RoleName {
   ACCOUNTANT
   DISTRIBUTOR
   SENIOR_MANAGEMENT
+  TRANSPORTER
 }
 
 enum UserStatus {
@@ -292,7 +291,14 @@ enum HistoricalDocumentRelationshipType {
 // ---------------------------------------------------------------------------
 
 model User {
+  assignedTransportDispatches ErveDispatch[] @relation("ErveDispatchTransporter")
   gstComplianceSettingsUpdates GstComplianceSettings[] @relation("GstComplianceSettingsUpdater")
+  ewayBillsCreated             EwayBill[]               @relation("EwayBillCreator")
+  ewayBillsCancelled           EwayBill[]               @relation("EwayBillCanceller")
+  ewayBillMovementsCreated     EwayBillMovement[]       @relation("EwayBillMovementCreator")
+  ewayBillMovementsUpdated     EwayBillMovement[]       @relation("EwayBillMovementUpdater")
+  ewayBillRequestAttempts      EwayBillRequestAttempt[] @relation("EwayBillRequestAttemptActor")
+  ewayBillRequestAttemptsResolved EwayBillRequestAttempt[] @relation("EwayBillRequestAttemptResolver")
   id           String     @id
   email        String     @unique
   mobile       String?    @unique
@@ -2345,6 +2351,8 @@ enum DeliveryConfirmationSource {
 // distributorId remains required — every Erve Dispatch still has exactly
 // one commercial owner, snapshotted from its Erve Packing List at creation.
 model ErveDispatch {
+  transporterUserId          String?                     @map("transporter_user_id")
+  transporterUser            User?                       @relation("ErveDispatchTransporter", fields: [transporterUserId], references: [id], onDelete: Restrict)
   id                         String                      @id
   erveDispatchNumber         String                      @unique @map("erve_dispatch_number")
   ervePackingListId          String                      @unique @map("erve_packing_list_id")
@@ -2390,6 +2398,7 @@ model ErveDispatch {
   @@unique([financialYearId, erveDispatchSerial])
   @@index([saleOrderId])
   @@index([distributorId])
+  @@index([transporterUserId])
   @@map("erve_dispatches")
 }
 
@@ -2612,6 +2621,9 @@ model TaxInvoice {
   replacesInvoice    TaxInvoice?        @relation("TaxInvoiceReplacement", fields: [replacesInvoiceId], references: [id], onDelete: Restrict)
   replacedBy         TaxInvoice[]       @relation("TaxInvoiceReplacement")
   lines              TaxInvoiceLine[]
+  ewayBills          EwayBill[]
+  ewayBillMovement   EwayBillMovement?
+  ewayBillAttempts   EwayBillRequestAttempt[]
 
   @@index([distributorId])
   @@index([status])
@@ -3639,4 +3651,201 @@ model MasterImportSource {
   @@unique([kind, sourceKey])
   @@unique([kind, businessIdentity])
   @@map("master_import_sources")
+}
+
+// ---------------------------------------------------------------------------
+// Track B / B1 — E-Way Bill foundation. Everything below hangs off TaxInvoice
+// and deliberately has NO relation to ErveDispatch/ErvePackingList: E-Way Bill
+// preparation is independent of the physical-dispatch record (a TaxInvoice is
+// already reachable from a dispatch via the EIPL, never the other way round).
+// Purely additive — no existing column or table is altered, no backfill.
+//
+// DEMO vs LIVE: every record carries GstIntegrationMode so synthetic
+// (provider test_mode, "TEST-" numbered) bills are always distinguishable and
+// can never satisfy, or block, a real statutory bill. All uniqueness below is
+// therefore scoped by integration_mode (see the migration's partial indexes).
+// ---------------------------------------------------------------------------
+
+enum EwayBillSource {
+  PROVIDER_GENERATED
+  EXTERNALLY_LINKED
+}
+
+enum EwayBillStatus {
+  ACTIVE
+  CANCELLED
+}
+
+// NIC transport mode codes 1-4.
+enum EwayBillTransportMode {
+  ROAD
+  RAIL
+  AIR
+  SHIP
+}
+
+// NIC vehicle type: R (regular) / O (over-dimensional cargo).
+enum EwayBillVehicleType {
+  REGULAR
+  OVER_DIMENSIONAL
+}
+
+// PREPARED/DISPATCHED/UNCERTAIN are the "open" outcomes: at most one open
+// attempt per (invoice, mode) is allowed by a partial unique index, and an
+// UNCERTAIN attempt never expires into permission for a new request — it must
+// be reconciled (same stance as GstVerificationClaim).
+enum EwayBillAttemptOutcome {
+  PREPARED
+  DISPATCHED
+  SUCCEEDED
+  REJECTED
+  UNCERTAIN
+  // B2B: a DEMO attempt an Accountant explicitly closed (resolved_* columns
+  // record who/when/why). Never open; never set for LIVE attempts.
+  CLOSED
+}
+
+// B2B: how much evidence backs a bill. SYNTHETIC_DEMO = a provider test_mode
+// result (never statutory). UNVERIFIED_REFERENCE = a number an Accountant
+// typed in for a LIVE bill generated elsewhere. PROVIDER_VERIFIED is reserved
+// for a future authorized verification and is never assigned by B2B.
+enum EwayBillVerificationStatus {
+  SYNTHETIC_DEMO
+  UNVERIFIED_REFERENCE
+  PROVIDER_VERIFIED
+}
+
+// B2B: the explicit bill-to / ship-to and dispatch-from classification the
+// request mapper needs (it cannot be inferred from addresses).
+enum EwayBillShipToArrangement {
+  BILLED_PARTY
+  DIFFERENT_PARTY
+}
+
+enum EwayBillDispatchFromArrangement {
+  SUPPLIER_REGISTERED_PREMISES
+  DIFFERENT_PLACE
+}
+
+// The invoice <-> E-Way Bill association. A row exists only once a bill
+// number is known (generated by the provider, or entered from an externally
+// generated bill); intent/attempts live in EwayBillRequestAttempt. Partial
+// unique index (migration): at most one ACTIVE bill per (invoice, mode);
+// CHECK: an EXTERNALLY_LINKED bill is always LIVE.
+model EwayBill {
+  id                 String              @id
+  taxInvoiceId       String              @map("tax_invoice_id")
+  source             EwayBillSource
+  status             EwayBillStatus      @default(ACTIVE)
+  integrationMode    GstIntegrationMode  @map("integration_mode")
+  ewayBillNumber     String              @map("eway_bill_number")
+  // Fail-closed default: a row written without an explicit status can never
+  // read as verified. DEMO rows are SYNTHETIC_DEMO (CHECK in the migration).
+  verificationStatus EwayBillVerificationStatus @default(UNVERIFIED_REFERENCE) @map("verification_status")
+  verifiedAt         DateTime?           @map("verified_at")
+  generatedAt        DateTime?           @map("generated_at")
+  validUntil         DateTime?           @map("valid_until")
+  providerName       String?             @map("provider_name")
+  providerReference  String?             @map("provider_reference")
+  requestAttemptId   String?             @unique @map("request_attempt_id")
+  cancelledAt        DateTime?           @map("cancelled_at")
+  cancelledById      String?             @map("cancelled_by_id")
+  cancellationReason String?             @map("cancellation_reason")
+  createdById        String              @map("created_by_id")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  version            Int                 @default(1)
+
+  taxInvoice     TaxInvoice              @relation(fields: [taxInvoiceId], references: [id], onDelete: Restrict)
+  requestAttempt EwayBillRequestAttempt? @relation(fields: [requestAttemptId], references: [id], onDelete: Restrict)
+  createdBy      User                    @relation("EwayBillCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy    User?                   @relation("EwayBillCanceller", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  // Number uniqueness is LIVE-only and hand-written in the migration
+  // (eway_bills_live_number_key, partial unique): GSTINAPI's synthetic Demo
+  // numbers may repeat across invoices, a real statutory number never may.
+  @@index([taxInvoiceId, integrationMode])
+  @@map("eway_bills")
+}
+
+// E-Way-Bill-specific goods-movement data, captured per Tax Invoice. This is
+// NOT the physical dispatch record (ErveDispatch.transporter/vehicleNumber/
+// lrNumber remain Track A's and are never read or written here). Every field
+// is nullable so a partially captured record can exist; completeness is
+// evaluated by the eligibility service, never by the database.
+model EwayBillMovement {
+  id                      String                 @id
+  taxInvoiceId            String                 @unique @map("tax_invoice_id")
+  transportMode           EwayBillTransportMode? @map("transport_mode")
+  vehicleNumber           String?                @map("vehicle_number")
+  vehicleType             EwayBillVehicleType?   @map("vehicle_type")
+  transporterId           String?                @map("transporter_id")
+  transporterName         String?                @map("transporter_name")
+  transportDocumentNumber String?                @map("transport_document_number")
+  transportDocumentDate   DateTime?              @map("transport_document_date") @db.Date
+  // Kilometres. 0 is meaningful (NIC derives the distance from the pincodes),
+  // so null — not 0 — means "not captured".
+  approximateDistanceKm   Int?                   @map("approximate_distance_km")
+  // B2B: explicit transaction arrangement (null = not yet classified; the
+  // generation preview reports it, the database does not require it).
+  shipToArrangement       EwayBillShipToArrangement?       @map("ship_to_arrangement")
+  dispatchFromArrangement EwayBillDispatchFromArrangement? @map("dispatch_from_arrangement")
+  // Optional dispatch-from override; null = use the invoice's seller snapshot.
+  dispatchFromAddressLine1 String?               @map("dispatch_from_address_line1")
+  dispatchFromAddressLine2 String?               @map("dispatch_from_address_line2")
+  dispatchFromCity         String?               @map("dispatch_from_city")
+  dispatchFromState        String?               @map("dispatch_from_state")
+  dispatchFromStateCode    String?               @map("dispatch_from_state_code")
+  dispatchFromPostalCode   String?               @map("dispatch_from_postal_code")
+  createdById             String                 @map("created_by_id")
+  updatedById             String                 @map("updated_by_id")
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  version                 Int                    @default(1)
+
+  taxInvoice TaxInvoice @relation(fields: [taxInvoiceId], references: [id], onDelete: Restrict)
+  createdBy  User       @relation("EwayBillMovementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy  User       @relation("EwayBillMovementUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@map("eway_bill_movements")
+}
+
+// Durable request journal for future provider generation (persist intent
+// BEFORE calling the provider; reconcile by the original document identity
+// after an unknown outcome). Never stores credentials or raw payloads.
+model EwayBillRequestAttempt {
+  id                 String                 @id
+  taxInvoiceId       String                 @map("tax_invoice_id")
+  integrationMode    GstIntegrationMode     @map("integration_mode")
+  actorId            String                 @map("actor_id")
+  outcome            EwayBillAttemptOutcome @default(PREPARED)
+  documentType       String                 @map("document_type")
+  documentNumber     String                 @map("document_number")
+  documentDate       DateTime               @map("document_date") @db.Date
+  requestFingerprint String                 @map("request_fingerprint")
+  settingsVersion    Int                    @map("settings_version")
+  // B2B: EwayBillMovement.version the request was built from.
+  movementVersion    Int?                   @map("movement_version")
+  providerReference  String?                @map("provider_reference")
+  failureCode        String?                @map("failure_code")
+  failureMessage     String?                @map("failure_message")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  dispatchedAt       DateTime?              @map("dispatched_at")
+  completedAt        DateTime?              @map("completed_at")
+  // Flags a stalled DISPATCHED/UNCERTAIN attempt for manual reconciliation
+  // only; it never grants permission for another request.
+  reviewAfter        DateTime?              @map("review_after")
+  // B2B: audited manual closure of a DEMO attempt (all three or none).
+  resolvedById       String?                @map("resolved_by_id")
+  resolvedAt         DateTime?              @map("resolved_at")
+  resolutionReason   String?                @map("resolution_reason")
+
+  taxInvoice TaxInvoice @relation(fields: [taxInvoiceId], references: [id], onDelete: Restrict)
+  actor      User       @relation("EwayBillRequestAttemptActor", fields: [actorId], references: [id], onDelete: Restrict)
+  resolvedBy User?      @relation("EwayBillRequestAttemptResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  ewayBill   EwayBill?
+
+  @@index([taxInvoiceId, integrationMode, createdAt])
+  @@index([actorId, createdAt])
+  @@map("eway_bill_request_attempts")
 }

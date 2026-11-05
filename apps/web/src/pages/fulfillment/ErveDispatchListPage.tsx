@@ -1,3 +1,5 @@
+import { hasExclusiveTransporterRole } from '@erve/shared';
+import { AssignedTransportList } from './dispatch-workspace/AssignedTransportWorkspace.js';
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader, StatusBadge } from '@erve/app-components';
@@ -21,6 +23,13 @@ const STATUS_TABS: Array<{ value: DispatchStatusFilter; label: string }> = [
 ];
 
 export function ErveDispatchListPage() {
+  const { user } = useAuth();
+  if (user?.roles.includes('TRANSPORTER')) return hasExclusiveTransporterRole(user)
+    ? <AssignedTransportList /> : <ErrorState title="Transport access unavailable" />;
+  return <InternalDispatchList />;
+}
+
+function InternalDispatchList() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [status, setStatus] = useState<DispatchStatusFilter>('ALL');

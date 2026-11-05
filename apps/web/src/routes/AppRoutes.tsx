@@ -69,6 +69,7 @@ import { ErvePackingListListPage } from '../pages/fulfillment/ErvePackingListLis
 import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListCreatePage.js';
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
+import { ErveDispatchRecordPage } from '../pages/fulfillment/ErveDispatchRecordPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
 import { RetiredInvoiceHandoffPage } from '../pages/fulfillment/RetiredInvoiceHandoffPage.js';
 import { FactoryInvoiceListPage } from '../pages/fulfillment/FactoryInvoiceListPage.js';
@@ -119,6 +120,7 @@ import {
   TAX_INVOICE_VIEW_ROLES,
   PACKING_AUDIT_VIEW_ROLES,
   ERVE_DISPATCH_VIEW_ROLES,
+  ERVE_DISPATCH_TRANSPORT_ROLES,
   ERVE_DISPATCH_MUTATION_ROLES,
   ERVE_PACKING_LIST_VIEW_ROLES,
   INVOICE_HANDOFF_VIEW_ROLES,
@@ -742,12 +744,20 @@ export function AppRoutes() {
       <Route
         path="/fulfillment/erve-dispatches"
         element={
-          <RoleRoute allowed={ERVE_DISPATCH_VIEW_ROLES}>
+          <RoleRoute allowed={[...ERVE_DISPATCH_VIEW_ROLES, ...ERVE_DISPATCH_TRANSPORT_ROLES]}>
             <AppLayout />
           </RoleRoute>
         }
       >
         <Route index element={<ErveDispatchListPage />} />
+        <Route
+          path="new"
+          element={
+            <RoleRoute allowed={ERVE_DISPATCH_MUTATION_ROLES}>
+              <ErveDispatchRecordPage />
+            </RoleRoute>
+          }
+        />
         <Route path=":id" element={<ErveDispatchDetailPage />} />
       </Route>
       <Route

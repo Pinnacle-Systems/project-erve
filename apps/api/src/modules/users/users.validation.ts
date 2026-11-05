@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ROLES } from '@erve/types';
+import { isValidTransporterRoleCombination } from '@erve/shared';
 import { normalizeEmail } from '../../utils/email.js';
 import { optionalPageQueryFields } from '../../utils/pagination.js';
 
@@ -13,7 +14,8 @@ export const createUserSchema = z
     email: normalizedEmail,
     mobile: z.string().min(1).optional(),
     password: z.string().min(8),
-    roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required'),
+    roles: z.array(z.enum(ROLES)).min(1, 'At least one role is required')
+      .refine(isValidTransporterRoleCombination, 'TRANSPORTER must be the only account role'),
     factoryId: z.string().min(1).optional(),
   })
   .refine((value) => !value.roles.includes('FACTORY_USER') || Boolean(value.factoryId), {

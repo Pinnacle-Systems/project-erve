@@ -15,7 +15,12 @@ export interface GstComplianceSettings extends GstComplianceValues {
   capabilities: {
     liveActivationAvailable: boolean;
     onlineVerificationAvailable: boolean;
-    ewayBillGenerationAvailable: false;
+    /**
+     * Synthetic Demo E-Way Bill generation may be enabled: the server-side
+     * Demo authorization and a provider key are configured. Live E-Way Bill
+     * filing is never available.
+     */
+    ewayBillGenerationAvailable: boolean;
   };
 }
 

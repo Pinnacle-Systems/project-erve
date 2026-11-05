@@ -1,5 +1,4 @@
-// Transporter delivery access is deferred to tokenized public delivery
-// links in the MVP, not a normal logged-in role — do not add it here.
+// Authenticated transport maintenance is separate from future public QR delivery.
 export const ROLES = [
   'ADMIN',
   'MERCHANDISER',
@@ -8,6 +7,7 @@ export const ROLES = [
   'ACCOUNTANT',
   'DISTRIBUTOR',
   'SENIOR_MANAGEMENT',
+  'TRANSPORTER',
 ] as const;
 
 export type Role = (typeof ROLES)[number];

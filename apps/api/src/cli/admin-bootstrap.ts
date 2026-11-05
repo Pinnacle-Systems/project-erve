@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createId } from '@erve/shared';
+import { createId, isValidTransporterRoleCombination } from '@erve/shared';
 import type { Role } from '@erve/types';
 import { prisma as defaultPrisma, type Prisma, type UserStatus } from '../db/prisma.js';
 import { hashPassword } from '../auth/password.js';
@@ -125,12 +125,6 @@ export async function runAdminBootstrap(
     );
   }
 
-  const hasAdminRole = existing
-    ? Boolean(
-        await client.userRole.findFirst({ where: { userId: existing.id, role: { name: 'ADMIN' } } }),
-      )
-    : false;
-
   // Only resolve a password when one is actually required: creating a new
   // user, or an explicit --reset-password against an existing one. Resolved
   // before the transaction (it may prompt interactively or read a file) so
@@ -139,7 +133,7 @@ export async function runAdminBootstrap(
   const password = needsPassword ? await resolveValidPassword(options.getPassword) : undefined;
 
   // Every remaining path — including "already configured", where nothing
-  // about the user changes at all — ensures all 7 role reference rows
+  // about the user changes at all — ensures all supported role reference rows
   // first, inside the same transaction as whatever user/role-mapping
   // write (if any) follows. A fresh production database has an empty
   // roles table, and the admin account can easily have been bootstrapped
@@ -148,6 +142,22 @@ export async function runAdminBootstrap(
   // never depend on the admin account itself needing a change on this
   // particular run.
   return client.$transaction(async (tx) => {
+    let hasAdminRole = false;
+    if (existing) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_roles:' || ${existing.id}, 0))::text`;
+      const current = await tx.user.findUnique({
+        where: { id: existing.id },
+        select: { status: true, userRoles: { select: { role: { select: { name: true } } } } },
+      });
+      if (!current || current.status !== 'ACTIVE') {
+        throw new AdminBootstrapError('User must still exist and be ACTIVE');
+      }
+      const roles = current.userRoles.map((entry) => entry.role.name);
+      if (!isValidTransporterRoleCombination([...roles, 'ADMIN'])) {
+        throw new AdminBootstrapError('TRANSPORTER must be the only account role');
+      }
+      hasAdminRole = roles.includes('ADMIN');
+    }
     const { ids: roleIds, created: rolesEnsured } = await ensureAllRoles(tx);
 
     if (!existing) {

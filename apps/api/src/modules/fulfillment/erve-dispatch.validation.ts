@@ -51,6 +51,21 @@ export const updateErveDispatchLrSchema = z
     },
   );
 
+export const transporterAssignmentSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  transporterUserId: z.string().trim().min(1).nullable(),
+}).strict();
+
+export const assignedTransportQuerySchema = z.object({
+  cursor: z.string().trim().min(1).max(1024).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+}).strict();
+
+export const transporterOptionsQuerySchema = z.object({
+  search: z.string().trim().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+}).strict();
+
 export const confirmErveDispatchDeliverySchema = z.object({
   expectedVersion: z.number().int().nonnegative(),
   lines: z

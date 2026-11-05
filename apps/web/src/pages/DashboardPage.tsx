@@ -1,3 +1,5 @@
+import { hasExclusiveTransporterRole } from '@erve/shared';
+import { Navigate } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@erve/app-components';
 import { Button } from '@erve/primitives';
@@ -14,6 +16,8 @@ import { ManagementDashboardPage } from './dashboard/ManagementDashboardPage.js'
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+
+  if (user && hasExclusiveTransporterRole(user)) return <Navigate to="/fulfillment/erve-dispatches" replace />;
 
   // RPT2: the placeholder shortcut dashboard below stays exactly as-is for
   // every non-reporting role (FACTORY_USER, QA_USER, ACCOUNTANT,
