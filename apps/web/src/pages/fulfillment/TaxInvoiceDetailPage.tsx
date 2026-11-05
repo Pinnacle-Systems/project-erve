@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { isAxiosError } from 'axios';
+import { canViewEwayBill } from '@erve/shared';
 import type { TaxInvoiceLineView, TaxInvoiceReviewView, TaxInvoiceAddress } from '@erve/types';
 import { PageHeader, StatusBadge, ConfirmDialog, AuditTrail } from '@erve/app-components';
 import {
@@ -47,6 +48,7 @@ import { TaxInvoiceBillToRefreshDialog } from './TaxInvoiceBillToRefreshDialog.j
 import { TaxInvoiceLines } from './TaxInvoiceLines.js';
 import { TaxInvoiceTotals } from './TaxInvoiceTotals.js';
 import { TaxInvoiceOverrideDialog } from './TaxInvoiceOverrideDialog.js';
+import { EwayBillTab } from './eway-bill/EwayBillTab.js';
 
 const addressText = (address: TaxInvoiceAddress) =>
   [
@@ -126,6 +128,9 @@ function TaxInvoiceDetail({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [tab, setTab] = useState('review');
+  // E-Way Bill requests start on first visit; the panel then stays mounted so
+  // unsaved movement edits survive switching tabs.
+  const [ewayBillOpened, setEwayBillOpened] = useState(false);
   const [billToOpen, setBillToOpen] = useState(false);
   const [editing, setEditing] = useState<TaxInvoiceLineView | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -138,6 +143,7 @@ function TaxInvoiceDetail({
   const actions = useTaxInvoiceActions(invoice.id);
   const createReplacementMutation = useCreateTaxInvoiceDraft();
   const audit = useTaxInvoiceAudit(invoice.id, tab === 'history');
+  const showEwayBill = !!user && canViewEwayBill(user);
   const mutable = canMutateTaxInvoices(user) && invoice.status === 'DRAFT';
   const canCancel = canCancelTaxInvoices(user) && invoice.status === 'FINALIZED';
   const canPrint =
@@ -485,10 +491,17 @@ function TaxInvoiceDetail({
           />
         </DescriptionList>
       </Panel>
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          setTab(next);
+          if (next === 'eway-bill') setEwayBillOpened(true);
+        }}
+      >
         <TabsList>
           <TabsTrigger value="review">Review</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
+          {showEwayBill && <TabsTrigger value="eway-bill">E-Way Bill</TabsTrigger>}
         </TabsList>
         <TabsContent value="review">
           <div className="space-y-4">
@@ -589,6 +602,15 @@ function TaxInvoiceDetail({
             )}
           </Panel>
         </TabsContent>
+        {showEwayBill && ewayBillOpened && (
+          <TabsContent value="eway-bill" forceMount>
+            <EwayBillTab
+              invoiceId={invoice.id}
+              invoiceStatus={invoice.status}
+              invoiceNumber={invoice.invoiceNumber}
+            />
+          </TabsContent>
+        )}
       </Tabs>
       {editing && (
         <TaxInvoiceOverrideDialog
