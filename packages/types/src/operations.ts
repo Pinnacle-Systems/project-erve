@@ -710,6 +710,21 @@ export interface ErveDispatchQuantityLine {
   quantity: number;
 }
 
+/** Deliberately independent of full dispatch, financial and packing projections. */
+export interface ErveDispatchTransportView {
+  id: string;
+  erveDispatchNumber: string;
+  dispatchDate: string;
+  status: ErveDispatchStatus;
+  transporter: string | null;
+  vehicleNumber: string | null;
+  lrNumber: string | null;
+  version: number;
+  lrUpdatedAt: string | null;
+  /** Included only for assignment managers. */
+  transporterAssignment?: { id: string; name: string } | null;
+}
+
 export interface ErveDispatchView extends VersionedResource {
   /** Detail-only additive projection; older responses and history lists omit it. */
   quantityLines?: ErveDispatchQuantityLine[];

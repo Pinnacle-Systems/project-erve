@@ -44,6 +44,7 @@ export async function resetDatabase(): Promise<void> {
     'ACCOUNTANT',
     'DISTRIBUTOR',
     'SENIOR_MANAGEMENT',
+    'TRANSPORTER',
   ] as const) {
     await prisma.role.upsert({
       where: { name },

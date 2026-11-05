@@ -11,9 +11,7 @@ datasource db {
 // Enums
 // ---------------------------------------------------------------------------
 
-// Transporter delivery access is out of scope for this enum in the MVP — it
-// will be handled via secure, tokenized public delivery links, not a normal
-// logged-in role.
+// Authenticated transport maintenance is separate from public QR delivery.
 enum RoleName {
   ADMIN
   MERCHANDISER
@@ -22,6 +20,7 @@ enum RoleName {
   ACCOUNTANT
   DISTRIBUTOR
   SENIOR_MANAGEMENT
+  TRANSPORTER
 }
 
 enum UserStatus {
@@ -292,6 +291,7 @@ enum HistoricalDocumentRelationshipType {
 // ---------------------------------------------------------------------------
 
 model User {
+  assignedTransportDispatches ErveDispatch[] @relation("ErveDispatchTransporter")
   gstComplianceSettingsUpdates GstComplianceSettings[] @relation("GstComplianceSettingsUpdater")
   ewayBillsCreated             EwayBill[]               @relation("EwayBillCreator")
   ewayBillsCancelled           EwayBill[]               @relation("EwayBillCanceller")
@@ -2351,6 +2351,8 @@ enum DeliveryConfirmationSource {
 // distributorId remains required — every Erve Dispatch still has exactly
 // one commercial owner, snapshotted from its Erve Packing List at creation.
 model ErveDispatch {
+  transporterUserId          String?                     @map("transporter_user_id")
+  transporterUser            User?                       @relation("ErveDispatchTransporter", fields: [transporterUserId], references: [id], onDelete: Restrict)
   id                         String                      @id
   erveDispatchNumber         String                      @unique @map("erve_dispatch_number")
   ervePackingListId          String                      @unique @map("erve_packing_list_id")
@@ -2396,6 +2398,7 @@ model ErveDispatch {
   @@unique([financialYearId, erveDispatchSerial])
   @@index([saleOrderId])
   @@index([distributorId])
+  @@index([transporterUserId])
   @@map("erve_dispatches")
 }
 

@@ -1,4 +1,4 @@
-import { createId } from '@erve/shared';
+import { createId, isValidTransporterRoleCombination } from '@erve/shared';
 import type { PaginatedResponse, Role } from '@erve/types';
 import { prisma, Prisma, type UserStatus } from '../../db/prisma.js';
 import { HttpError } from '../../errors/http-error.js';
@@ -94,6 +94,9 @@ async function validateFactoryForAssignment(factoryId: string) {
 }
 
 export async function createUser(actor: CurrentUser, input: CreateUserInput): Promise<UserView> {
+  if (!isValidTransporterRoleCombination(input.roles)) {
+    throw HttpError.badRequest('TRANSPORTER must be the only account role');
+  }
   const passwordHash = await hashPassword(input.password);
   const userId = createId();
 
@@ -389,6 +392,15 @@ export async function assignRole(
     // in one transaction — the same per-user lock addFactoryMapping uses,
     // since a concurrent factory-mapping call could otherwise race this.
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_roles:' || ${userId}, 0))::text`;
+      const current = await tx.user.findUnique({
+        where: { id: userId },
+        select: { userRoles: { select: { role: { select: { name: true } } } } },
+      });
+      if (!current) throw HttpError.notFound('User not found');
+      if (!isValidTransporterRoleCombination([...current.userRoles.map((entry) => entry.role.name), roleName])) {
+        throw HttpError.badRequest('TRANSPORTER must be the only account role');
+      }
       if (needsFactory) {
         await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended('user_factory:' || ${userId}, 0))::text`;
         const existingMapping = await tx.userFactory.findFirst({ where: { userId } });

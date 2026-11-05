@@ -23,6 +23,32 @@ export interface RoleHolder {
   roles: readonly Role[];
 }
 
+export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
+  return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
+}
+
+export function hasExclusiveTransporterRole(user: RoleHolder): boolean {
+  return user.roles.length === 1 && user.roles[0] === 'TRANSPORTER';
+}
+
+export const ERVE_DISPATCH_TRANSPORT_ROLES = ['ADMIN', 'MERCHANDISER', 'TRANSPORTER'] as const satisfies readonly Role[];
+export const ERVE_DISPATCH_ASSIGNMENT_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+export const ERVE_DISPATCH_DELIVERY_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
+
+export function canViewErveDispatchTransport(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_TRANSPORT_ROLES);
+}
+
+export const canEditErveDispatchTransport = canViewErveDispatchTransport;
+
+export function canManageErveDispatchAssignment(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_ASSIGNMENT_ROLES);
+}
+
+export function canConfirmErveDispatchDelivery(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_DELIVERY_ROLES);
+}
+
 export const RETAIL_STORE_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',

@@ -1,4 +1,5 @@
-import { createId } from '@erve/shared';
+import { createId, canConfirmErveDispatchDelivery } from '@erve/shared';
+import { updateDispatchTransport } from './erve-dispatch-transport.service.js';
 import { canMutateErveDispatch, canViewErveDispatch, canViewErveFactoryProvenance, canViewErvePackingList } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
@@ -1305,40 +1306,8 @@ export async function updateErveDispatchLr(
   id: string,
   input: { expectedVersion: number; transporter?: string | null; vehicleNumber?: string | null; lrNumber?: string | null },
 ) {
-  assertDispatchMutationAccess(actor);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`erve-dispatch-${id}`}))`;
-
-    const dispatch = await tx.erveDispatch.findUnique({ where: { id } });
-    if (!dispatch) throw HttpError.notFound('Erve dispatch not found');
-    if (dispatch.version !== input.expectedVersion) throw HttpError.staleVersion(dispatch.version);
-
-    const updated = await tx.erveDispatch.updateMany({
-      where: { id, version: input.expectedVersion },
-      data: {
-        transporter: input.transporter !== undefined ? input.transporter : undefined,
-        vehicleNumber: input.vehicleNumber !== undefined ? input.vehicleNumber : undefined,
-        lrNumber: input.lrNumber !== undefined ? input.lrNumber : undefined,
-        lrUpdatedById: actor.id,
-        lrUpdatedAt: new Date(),
-        version: { increment: 1 },
-      },
-    });
-    if (updated.count !== 1) throw HttpError.staleVersion(dispatch.version);
-
-    await recordAuditLog(
-      {
-        actorId: actor.id,
-        action: 'ERVE_DISPATCH_LR_UPDATED',
-        entityType: 'ErveDispatch',
-        entityId: id,
-        metadata: { erveDispatchNumber: dispatch.erveDispatchNumber },
-      },
-      tx,
-    );
-  });
-
+  const transport = await updateDispatchTransport(actor, id, input);
+  if (actor.roles.includes('TRANSPORTER')) return transport;
   return getErveDispatchDetail(actor, id);
 }
 
@@ -1360,7 +1329,7 @@ export interface ConfirmErveDispatchDeliveryInput {
 }
 
 export async function confirmErveDispatchDelivery(actor: CurrentUser, id: string, input: ConfirmErveDispatchDeliveryInput) {
-  assertDispatchMutationAccess(actor);
+  if (!canConfirmErveDispatchDelivery(actor)) throw HttpError.forbidden();
 
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`erve-dispatch-${id}`}))`;

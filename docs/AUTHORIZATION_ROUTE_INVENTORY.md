@@ -102,3 +102,6 @@ Generated from the API route declarations on 2026-08-05. Each row is a separatel
 | QA              | PATCH  | `/qa/rework/:id/notes`                              | QA-R         | QA-owned rework notes/version             | `canInspect`                                                                            | 401 unauthenticated; 403 role/scope   |
 | QA              | POST   | `/qa/inspections/:id/evidence`                      | QA-O         | QA eligibility and version                | `canInspect`                                                                            | 401 unauthenticated; 403 role/scope   |
 | QA              | GET    | `/qa/evidence/:id/content`                          | QA-E         | evidence parent/factory scope             | `requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'QA_USER', 'FACTORY_USER')` | 401 unauthenticated; 403 role/scope   |
+# A2 Transporter routes
+
+The assigned-list, transport detail, transport-specific LR mutation, assignment mutation and bounded transporter-options routes are documented in [assigned Transporter access](TRANSPORTER_ACCESS.md). Full Dispatch and unrelated route audiences remain unchanged.

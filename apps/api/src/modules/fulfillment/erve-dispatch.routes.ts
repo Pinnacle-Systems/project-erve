@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ERVE_DISPATCH_MUTATION_ROLES, ERVE_DISPATCH_VIEW_ROLES, ERVE_PACKING_LIST_VIEW_ROLES } from '@erve/shared';
+import { ERVE_DISPATCH_TRANSPORT_ROLES, ERVE_DISPATCH_ASSIGNMENT_ROLES, ERVE_DISPATCH_DELIVERY_ROLES } from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
@@ -13,8 +14,12 @@ import {
   listErvePackingListsQuerySchema,
   recordErveDispatchSchema,
   updateErveDispatchLrSchema,
+  transporterAssignmentSchema,
+  assignedTransportQuerySchema,
+  transporterOptionsQuerySchema,
 } from './erve-dispatch.validation.js';
 import * as erveDispatchService from './erve-dispatch.service.js';
+import * as transportService from './erve-dispatch-transport.service.js';
 
 export const ervePackingListsRouter = Router();
 ervePackingListsRouter.use(requireAuth);
@@ -95,6 +100,22 @@ erveDispatchesRouter.use(requireAuth);
 const canViewDispatches = requireRoles(...ERVE_DISPATCH_VIEW_ROLES);
 const canMutateDispatches = requireRoles(...ERVE_DISPATCH_MUTATION_ROLES);
 
+erveDispatchesRouter.get('/assigned-transport', requireRoles('TRANSPORTER'), asyncHandler(async (req, res) => {
+  res.json(successResponse(await transportService.listAssignedTransport(req.user!, assignedTransportQuerySchema.parse(req.query))));
+}));
+
+erveDispatchesRouter.get('/transporter-options', requireRoles(...ERVE_DISPATCH_ASSIGNMENT_ROLES), asyncHandler(async (req, res) => {
+  res.json(successResponse(await transportService.listTransporterOptions(req.user!, transporterOptionsQuerySchema.parse(req.query))));
+}));
+
+erveDispatchesRouter.get('/:id/transport', requireRoles(...ERVE_DISPATCH_TRANSPORT_ROLES), asyncHandler(async (req, res) => {
+  res.json(successResponse(await transportService.getDispatchTransport(req.user!, req.params.id as string)));
+}));
+
+erveDispatchesRouter.patch('/:id/transporter-assignment', requireRoles(...ERVE_DISPATCH_ASSIGNMENT_ROLES), asyncHandler(async (req, res) => {
+  res.json(successResponse(await transportService.assignDispatchTransporter(req.user!, req.params.id as string, transporterAssignmentSchema.parse(req.body))));
+}));
+
 erveDispatchesRouter.get(
   '/',
   canViewDispatches,
@@ -126,7 +147,7 @@ erveDispatchesRouter.get(
 
 erveDispatchesRouter.patch(
   '/:id/lr',
-  canMutateDispatches,
+  requireRoles(...ERVE_DISPATCH_TRANSPORT_ROLES),
   asyncHandler(async (req, res) => {
     const input = updateErveDispatchLrSchema.parse(req.body);
     const dispatch = await erveDispatchService.updateErveDispatchLr(req.user!, req.params.id! as string, input);
@@ -136,7 +157,7 @@ erveDispatchesRouter.patch(
 
 erveDispatchesRouter.patch(
   '/:id/delivery',
-  canMutateDispatches,
+  requireRoles(...ERVE_DISPATCH_DELIVERY_ROLES),
   asyncHandler(async (req, res) => {
     const input = confirmErveDispatchDeliverySchema.parse(req.body);
     const dispatch = await erveDispatchService.confirmErveDispatchDelivery(req.user!, req.params.id! as string, input);

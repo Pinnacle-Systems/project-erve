@@ -188,7 +188,7 @@ export function UserFormPage() {
                 </FormGrid>
               </FormSection>
 
-              <FormSection title="Roles" description="A user must have at least one role.">
+              <FormSection title="Roles" description="A user must have at least one role. TRANSPORTER must be the only account role.">
                 <div className="grid gap-2 md:grid-cols-3">
                   {ROLES.map((roleName) => (
                     <label
@@ -197,6 +197,7 @@ export function UserFormPage() {
                     >
                       <Checkbox
                         checked={roles.includes(roleName)}
+                          disabled={!roles.includes(roleName) && (roles.includes('TRANSPORTER') || (roleName === 'TRANSPORTER' && roles.length > 0))}
                         onCheckedChange={(checked) =>
                           setRoles((current) =>
                             checked === true

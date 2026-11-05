@@ -12,8 +12,7 @@ import {
 } from '../src/cli/quality-bootstrap-definitions.js';
 import { ensureCurrentGarmentGstRuleSet } from '../src/modules/tax-rules/gst-rule-sets.service.js';
 
-// Transporter delivery access is handled later via tokenized public
-// delivery links, not a normal logged-in role — do not add it here.
+// Authenticated transport maintenance is separate from future public QR delivery.
 const DEFAULT_ROLES: Array<{ name: RoleName; description: string }> = [
   { name: 'ADMIN', description: 'Full administrative access' },
   { name: 'MERCHANDISER', description: 'Manages styles, price lists, and process flows' },
@@ -22,6 +21,7 @@ const DEFAULT_ROLES: Array<{ name: RoleName; description: string }> = [
   { name: 'ACCOUNTANT', description: 'Manages invoicing and financial records' },
   { name: 'DISTRIBUTOR', description: 'Manages distributor-facing orders and stock' },
   { name: 'SENIOR_MANAGEMENT', description: 'Cross-functional oversight and reporting' },
+  { name: 'TRANSPORTER', description: 'Maintains transport information for explicitly assigned dispatches' },
 ];
 
 async function seedRoles(): Promise<void> {
