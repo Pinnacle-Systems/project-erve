@@ -189,7 +189,7 @@ export function EwayBillHistorySection({
                       Document {attempt.document.type} {attempt.document.number}
                     </p>
                     {attempt.failureMessage && (
-                      <p>
+                      <p className="break-words">
                         {attempt.failureMessage}
                         {attempt.failureCode && (
                           <span className="text-muted-foreground"> ({attempt.failureCode})</span>

@@ -1,0 +1,98 @@
+name: E-Way Bill browser acceptance
+
+# Track B / B5. Drives the real web application, real API routes, real RBAC and
+# real Prisma persistence in headless Chrome against a disposable PostgreSQL
+# database. The E-Way Bill provider is a local mock with a call journal; no
+# GSTINAPI request can leave the runner (the QA API refuses non-loopback fetch
+# and the harness guard refuses any real credential or Live flag).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/api/src/modules/eway-bill/**'
+      - 'apps/api/src/modules/gst-compliance/**'
+      - 'apps/api/src/integrations/gst/**'
+      - 'apps/api/src/test/eway-bill-acceptance-*'
+      - 'apps/api/prisma/**'
+      - 'apps/web/src/pages/fulfillment/eway-bill/**'
+      - 'apps/web/src/pages/fulfillment/TaxInvoiceDetailPage.tsx'
+      - 'apps/web/src/pages/gst-compliance/**'
+      - 'packages/shared/src/rbac.ts'
+      - 'packages/types/src/**'
+      - 'scripts/eway-bill-acceptance/**'
+      - '.github/workflows/eway-bill-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eway-bill-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: E-Way Bill browser acceptance (mock provider)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erve_eway_acceptance_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d erve_eway_acceptance_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      NODE_ENV: test
+      EWAY_ACCEPTANCE_AUTHORIZED: 'true'
+      EWAY_ACCEPTANCE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/erve_eway_acceptance_test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/erve_eway_acceptance_test
+      # Synthetic values only. The harness guard rejects anything else.
+      GST_VERIFICATION_API_KEY: eway-acceptance-synthetic-key-never-transmitted
+      JWT_ACCESS_SECRET: disposable-eway-acceptance-access-secret-not-used-elsewhere
+      JWT_REFRESH_SECRET: disposable-eway-acceptance-refresh-secret-not-used-elsewhere
+      EWAY_ACCEPTANCE_OUTPUT: ${{ github.workspace }}/.artifacts/eway-bill-acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm --filter @erve/api prisma:generate
+      - name: Require preinstalled Chrome
+        run: |
+          chrome=$(command -v google-chrome || command -v google-chrome-stable)
+          test -n "$chrome"
+          "$chrome" --version
+          echo "EWAY_ACCEPTANCE_CHROME_BINARY=$chrome" >> "$GITHUB_ENV"
+      - name: Prove the target is disposable and replay the schema
+        working-directory: apps/api
+        run: |
+          pnpm exec tsx -e "import {requireEwayAcceptanceEnvironment} from './src/test/eway-bill-acceptance-guard.ts'; console.log(requireEwayAcceptanceEnvironment(process.env).databaseName);"
+          pnpm prisma:migrate:deploy
+      - name: Run the browser acceptance (fixtures, mock provider, scenarios)
+        run: node scripts/eway-bill-acceptance/run.mjs
+      - name: Publish results to the job summary
+        if: always()
+        run: |
+          if test -f "$EWAY_ACCEPTANCE_OUTPUT/results.md"; then cat "$EWAY_ACCEPTANCE_OUTPUT/results.md" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload screenshots, assertion report and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eway-bill-acceptance-evidence
+          path: |
+            .artifacts/eway-bill-acceptance/evidence/
+            .artifacts/eway-bill-acceptance/results.json
+            .artifacts/eway-bill-acceptance/results.md
+            .artifacts/eway-bill-acceptance/api.log
+            .artifacts/eway-bill-acceptance/web.log
+          retention-days: 14
+          if-no-files-found: warn
