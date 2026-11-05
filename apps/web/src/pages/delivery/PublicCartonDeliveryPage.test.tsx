@@ -128,3 +128,27 @@ it('shows an acknowledgement without a form for an already-confirmed carton', as
   expect(document.body.textContent).toContain('Delivery already recorded');
   expect(document.querySelector('form')).toBeNull();
 });
+it('captures a second QR opened in the same tab and discards the previous carton draft', async () => {
+  await render();
+  await fill('[name="recipientName"]', 'First carton draft');
+  const second = 'B'.repeat(43);
+  vi.mocked(fetch).mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      success: true,
+      data: { cartonNumber: 'C2', labelReference: 'REF2', state: 'READY' },
+    }),
+  } as Response);
+  await act(async () => {
+    window.history.pushState({}, '', `/delivery/carton#${second}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(document.body.textContent).toContain('Carton C2');
+  expect(document.body.textContent).not.toContain('Carton C1');
+  expect(document.querySelector<HTMLInputElement>('[name="recipientName"]')!.value).toBe('');
+  expect(window.location.hash).toBe('');
+  expect(vi.mocked(fetch).mock.calls.at(-1)![1]).toMatchObject({
+    headers: expect.objectContaining({ 'X-Carton-Delivery-Token': second }),
+  });
+});

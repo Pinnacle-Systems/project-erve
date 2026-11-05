@@ -12,7 +12,28 @@ const buttonClass =
 
 export function PublicCartonDeliveryPage() {
   // Read without side effects: StrictMode invokes initializers twice before effects.
-  const [token] = useState(() => window.location.hash.slice(1));
+  const [capture, setCapture] = useState(() => ({
+    token: window.location.hash.slice(1),
+    generation: 0,
+  }));
+  useEffect(() => {
+    const captureNext = () => {
+      const token = window.location.hash.slice(1);
+      if (token) setCapture((previous) => ({ token, generation: previous.generation + 1 }));
+    };
+    window.addEventListener('hashchange', captureNext);
+    window.addEventListener('popstate', captureNext);
+    return () => {
+      window.removeEventListener('hashchange', captureNext);
+      window.removeEventListener('popstate', captureNext);
+    };
+  }, []);
+  // Generation is nonsecret. A new scan resets every draft/result and cancels
+  // the previous resolver effect, even for same-document browser navigation.
+  return <CartonDeliveryCapture key={capture.generation} token={capture.token} />;
+}
+
+function CartonDeliveryCapture({ token }: { token: string }) {
   const [carton, setCarton] = useState<PublicCartonDeliveryView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

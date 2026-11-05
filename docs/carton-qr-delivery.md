@@ -127,6 +127,11 @@ Physical devices/printers were unavailable for this implementation session.
 
 ## Implementation ledger
 
+Local verification: 71 API unit/route and A1/A2 regression checks passed; 143
+focused web/PDF checks passed. API/web typechecks, Prisma schema validation and
+affected-file ESLint passed. Generated synthetic PDFs/300 dpi PNGs are retained
+under `.artifacts/carton-qr/` in the implementation worktree (gitignored).
+
 - Credential security and service tests were observed failing before implementation,
   then passing; public-route and PDF/mobile tests followed the same sequence.
 - Ruling: use two domain tables plus a PostgreSQL limiter table to meet persistent,
@@ -135,3 +140,10 @@ Physical devices/printers were unavailable for this implementation session.
   extension; ordinary printing never extends it. Cost: operators must replace labels.
 - Ruling: PostgreSQL race verification is delegated to the existing CI disposable
   database, as allowed by the request. No local shared database was touched.
+- Final independent review identified two important issues, both fixed with
+  failing-then-passing regressions: same-tab rescanning now resets the entire
+  capture form and stale async state; authorized label projection reads now
+  receive the existing transaction client, avoiding connection-pool starvation.
+  Existing projection callers keep their default client and calculation behavior.
+- Deferred minor: credential administration does not display the current expiry;
+  the server rejects extensions that do not exceed the current deadline.

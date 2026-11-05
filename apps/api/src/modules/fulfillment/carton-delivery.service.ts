@@ -174,7 +174,7 @@ export function createCartonDeliveryService(
         throw HttpError.internal('Carton label credential is unavailable');
       // Existing authorized projection preserves every label field and image reference.
       // Reads are protected by the same parent locks held above.
-      const packing = await getFactoryDispatchDetail(actor, carton.factoryDispatchId);
+      const packing = await getFactoryDispatchDetail(actor, carton.factoryDispatchId, tx);
       const destination = packing.destinations.find((entry) => entry.id === carton.destinationId);
       const sourceCarton = destination?.cartons.find((entry) => entry.id === carton.id);
       if (

@@ -52,7 +52,12 @@ describe('QR in the existing contents PDF', () => {
   it.each([1, 35])(
     'decodes the exact QR from a 300dpi raster with %s Style rows and preserves content',
     async (styles) => {
-      const input = source('A'.repeat(43), styles);
+      // Canonical 256-bit base64url with mixed case/punctuation, matching real
+      // token density rather than QR's more compact all-uppercase encoding.
+      const token = Buffer.from(
+        Uint8Array.from({ length: 32 }, (_, index) => (index * 79 + 13) % 256),
+      ).toString('base64url');
+      const input = source(token, styles);
       const blob = await generateCartonLabelPdfBlob(input, { generatedAt: '2026-11-05T00:00:00Z' });
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');

@@ -123,6 +123,7 @@ describe('carton delivery lifecycle and authorization', () => {
       ervePackingList: null,
     });
     const { label } = await issued();
+    expect(getFactoryDispatchDetail).toHaveBeenLastCalledWith(expect.anything(), 'fd-1', db);
     const reprint = await service().prepareLabel(actor('FACTORY_USER'), 'carton-1', 1);
     expect(reprint).toMatchObject({
       enabled: true,
