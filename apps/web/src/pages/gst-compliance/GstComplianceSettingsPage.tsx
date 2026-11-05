@@ -114,7 +114,15 @@ function SettingsEditor({ settings, canEdit, onSaved, onReload, onEditing }: {
   });
   const busy = mutation.isPending || reloading;
   const disabled = !canEdit || busy;
-  const changed = form.integrationMode !== settings.integrationMode || form.onlineGstinVerificationEnabled !== settings.onlineGstinVerificationEnabled || form.gstinVerificationLevel !== settings.gstinVerificationLevel;
+  const changed = form.integrationMode !== settings.integrationMode || form.onlineGstinVerificationEnabled !== settings.onlineGstinVerificationEnabled || form.gstinVerificationLevel !== settings.gstinVerificationLevel || form.ewayBillGenerationEnabled !== settings.ewayBillGenerationEnabled;
+  // Only synthetic Demo generation exists. Enabling needs server-side Demo authorization and Demo mode;
+  // turning an already-enabled setting off is always allowed so it can never be stuck on.
+  const ewayBillSwitchEnabled = !disabled && (form.ewayBillGenerationEnabled || (settings.capabilities.ewayBillGenerationAvailable && form.integrationMode === 'DEMO'));
+  const ewayBillExplanation = !settings.capabilities.ewayBillGenerationAvailable
+    ? 'Demo E-Way Bill generation is not authorized on this server, so it cannot be enabled. Contact your administrator to authorize it on the server.'
+    : form.integrationMode !== 'DEMO'
+      ? 'E-Way Bill generation is available only in Demo Mode. Live E-Way Bill filing is not available.'
+      : 'Demo mode only: generates synthetic test E-Way Bills. Live E-Way Bill filing is not available.';
   async function save(confirmed = false) {
     if (submitting.current || disabled || !changed) return;
     if (form.integrationMode === 'LIVE' && settings.integrationMode !== 'LIVE' && !confirmed) { setConfirmLive(true); return; }
@@ -151,8 +159,8 @@ function SettingsEditor({ settings, canEdit, onSaved, onReload, onEditing }: {
             <p className="text-sm text-muted-foreground">Estimates are not actual charges. Supported Demo Mode test requests use 0 credits. Changes apply to future checks.</p>
           </FormSection>
           <FormSection title="E-Way Bill Generation">
-            <Switch id="gst-eway-enabled" label="Enable E-Way Bill Generation" checked={false} disabled description="Allow system-generated e-way bills for eligible dispatches after user confirmation." />
-            <p className="mt-2 text-sm text-muted-foreground">E-Way Bill generation is not yet available.</p>
+            <Switch id="gst-eway-enabled" label="Enable E-Way Bill Generation" checked={form.ewayBillGenerationEnabled} disabled={!ewayBillSwitchEnabled} onCheckedChange={(checked) => updateForm({ ewayBillGenerationEnabled: checked })} description="Allow Accountants to generate synthetic Demo E-Way Bills for finalized Tax Invoices. Demo bills have no statutory validity." />
+            <p className="mt-2 text-sm text-muted-foreground">{ewayBillExplanation}</p>
           </FormSection>
         </FormGrid>
         <p className="text-sm text-muted-foreground">{settings.updatedAt ? `Last updated by ${settings.updatedBy?.name ?? 'Former user'} on ${new Date(settings.updatedAt).toLocaleString()}` : 'Default settings. No changes saved yet.'}</p>

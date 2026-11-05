@@ -238,3 +238,74 @@ describe('GST Compliance Settings page', () => {
     });
   });
 });
+
+describe('GST Compliance Settings page — Demo E-Way Bill generation', () => {
+  const ewaySwitch = () => control('switch', 'Enable E-Way Bill Generation');
+
+  it('keeps the switch off and explains why when the server has not authorized Demo generation', async () => {
+    await mount();
+    expect(ewaySwitch().disabled).toBe(true);
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('false');
+    expect(container.textContent).toContain('not authorized on this server');
+    expect(container.textContent).not.toContain('not yet available');
+  });
+
+  it('lets an Accountant enable it in Demo mode when authorized, and saves it through the existing settings API', async () => {
+    persisted.capabilities.ewayBillGenerationAvailable = true;
+    await mount();
+    expect(ewaySwitch().disabled).toBe(false);
+    expect(button('Save changes').disabled).toBe(true);
+    await act(async () => ewaySwitch().click());
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('true');
+    expect(button('Save changes').disabled).toBe(false);
+    expect(apiClient.patch).not.toHaveBeenCalled();
+    await act(async () => button('Save changes').click());
+    await settle();
+    expect(vi.mocked(apiClient.patch).mock.calls[0]).toEqual([
+      '/gst-compliance/settings',
+      expect.objectContaining({ ewayBillGenerationEnabled: true, expectedVersion: 0 }),
+    ]);
+    expect(persisted.ewayBillGenerationEnabled).toBe(true);
+    expect(container.textContent).toContain('Settings saved');
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('discards an unsaved E-Way Bill change when settings are reloaded', async () => {
+    persisted.capabilities.ewayBillGenerationAvailable = true;
+    await mount();
+    await act(async () => ewaySwitch().click());
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('true');
+    await act(async () => button('Reload settings').click());
+    await settle();
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('false');
+    expect(button('Save changes').disabled).toBe(true);
+  });
+
+  it('cannot be enabled outside Demo mode, and Live mode is never made E-Way Bill capable', async () => {
+    persisted.capabilities.ewayBillGenerationAvailable = true;
+    persisted.capabilities.liveActivationAvailable = true;
+    await mount();
+    await act(async () => control('radio', 'Live Mode').click());
+    expect(ewaySwitch().disabled).toBe(true);
+    expect(container.textContent).toContain('available only in Demo Mode');
+    expect(container.textContent).toContain('Live E-Way Bill filing is not available');
+  });
+
+  it('does not offer the switch to ADMIN', async () => {
+    auth.roles = ['ADMIN'];
+    persisted.capabilities.ewayBillGenerationAvailable = true;
+    await mount();
+    expect(ewaySwitch().disabled).toBe(true);
+  });
+
+  it('lets an already-enabled setting be turned off even if the server authorization was later removed', async () => {
+    persisted.ewayBillGenerationEnabled = true;
+    await mount();
+    expect(ewaySwitch().getAttribute('aria-checked')).toBe('true');
+    expect(ewaySwitch().disabled).toBe(false);
+    await act(async () => ewaySwitch().click());
+    await act(async () => button('Save changes').click());
+    await settle();
+    expect(persisted.ewayBillGenerationEnabled).toBe(false);
+  });
+});

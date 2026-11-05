@@ -78,6 +78,13 @@ function makeSource(overrides: Partial<CartonLabelSource> = {}): CartonLabelSour
 }
 
 describe('generateCartonLabelPdfBlob', () => {
+  it('refuses an inspected but retired carton at the PDF choke point', async () => {
+    await expect(
+      generateCartonLabelPdfBlob(makeSource({ carton: makeCarton({ retired: true }) }), {
+        generatedAt: '2026-11-05T00:00:00Z',
+      }),
+    ).rejects.toThrow(/retired/i);
+  });
   it('generates a PDF blob for a currently Inspected carton', async () => {
     const blob = await generateCartonLabelPdfBlob(makeSource(), {
       generatedAt: '2026-09-15T10:00:00Z',

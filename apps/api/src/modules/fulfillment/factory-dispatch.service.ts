@@ -281,21 +281,21 @@ function toPackingListCartonView(carton: CartonRecord): PackingListCartonView {
 // Pure projection builder — no auth. Callers (getDispatchOrderPackingList in
 // sale-orders.service.ts, getFactoryDispatchDetail below) each perform their
 // own access check before calling this.
-export async function buildPackingListProjection(order: { id: string; factoryId: string }): Promise<PackingListView> {
+export async function buildPackingListProjection(order: { id: string; factoryId: string }, client: Tx | typeof prisma = prisma): Promise<PackingListView> {
   const [saleOrder, destinations, lines, dispatch, cartons] = await Promise.all([
-    prisma.saleOrder.findUniqueOrThrow({
+    client.saleOrder.findUniqueOrThrow({
       where: { id: order.id },
       select: {
         saleOrderNumber: true,
         factory: { select: { id: true, code: true, name: true } },
       },
     }),
-    prisma.saleOrderDestination.findMany({
+    client.saleOrderDestination.findMany({
       where: { saleOrderId: order.id },
       include: { saleOrderDistributor: { include: { distributor: { select: { id: true, code: true, name: true } } } } },
       orderBy: { createdAt: 'asc' },
     }),
-    prisma.saleOrderLine.findMany({
+    client.saleOrderLine.findMany({
       where: { saleOrderId: order.id },
       include: {
         style: { select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageInclude } },
@@ -303,8 +303,8 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       },
       orderBy: { createdAt: 'asc' },
     }),
-    prisma.factoryDispatch.findUnique({ where: { saleOrderId: order.id } }),
-    prisma.factoryPackingCarton.findMany({
+    client.factoryDispatch.findUnique({ where: { saleOrderId: order.id } }),
+    client.factoryPackingCarton.findMany({
       where: { factoryDispatch: { saleOrderId: order.id } },
       include: packingListCartonInclude,
       orderBy: { createdAt: 'asc' },
@@ -312,11 +312,11 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
   ]);
 
   const physicalPackedByLine = await getPhysicalPackedQuantitiesForLines(
-    prisma,
+    client,
     lines.map((l) => l.id),
   );
   const factoryInvoice = dispatch
-    ? await prisma.factoryInvoice.findUnique({ where: { factoryDispatchId: dispatch.id }, select: { id: true } })
+    ? await client.factoryInvoice.findUnique({ where: { factoryDispatchId: dispatch.id }, select: { id: true } })
     : null;
 
   const cartonViews = cartons.map(toPackingListCartonView);
@@ -392,12 +392,12 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
   };
 }
 
-export async function getFactoryDispatchDetail(actor: CurrentUser, id: string) {
+export async function getFactoryDispatchDetail(actor: CurrentUser, id: string, client: Tx | typeof prisma = prisma) {
   assertViewAccess(actor);
-  const dispatch = await prisma.factoryDispatch.findUnique({ where: { id }, select: { factoryId: true, saleOrderId: true } });
+  const dispatch = await client.factoryDispatch.findUnique({ where: { id }, select: { factoryId: true, saleOrderId: true } });
   if (!dispatch) throw HttpError.notFound('Factory dispatch not found');
   assertFactoryRowAccess(actor, dispatch.factoryId);
-  return buildPackingListProjection({ id: dispatch.saleOrderId, factoryId: dispatch.factoryId });
+  return buildPackingListProjection({ id: dispatch.saleOrderId, factoryId: dispatch.factoryId }, client);
 }
 
 export async function getFactoryDispatchList(
