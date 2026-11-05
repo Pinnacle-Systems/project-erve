@@ -180,7 +180,7 @@ export function EwayBillGenerationSection({
             {groups.map((group) => (
               <div key={group.source}>
                 <h4 className="text-sm font-medium">{group.label}</h4>
-                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+                <ul className="mt-1 list-disc space-y-1 break-words pl-5 text-sm">
                   {group.blockers.map((blocker) => (
                     <li key={`${blocker.code}:${blocker.field}`}>
                       {blocker.message}{' '}
@@ -195,7 +195,7 @@ export function EwayBillGenerationSection({
         {request.warnings.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold">Warnings</h3>
-            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+            <ul className="mt-1 list-disc space-y-1 break-words pl-5 text-sm">
               {request.warnings.map((warning) => (
                 <li key={warning.code}>{warning.message}</li>
               ))}
@@ -209,7 +209,7 @@ export function EwayBillGenerationSection({
               These requirements could not be verified from an official source and are not
               enforced.
             </p>
-            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">
+            <ul className="mt-1 list-disc space-y-1 break-words pl-5 text-sm">
               {request.assumptions.map((assumption) => (
                 <li key={assumption.code}>
                   {assumption.message}{' '}
