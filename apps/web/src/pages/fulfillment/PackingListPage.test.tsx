@@ -970,26 +970,27 @@ describe('PackingListPage carton label print/download (DEMO-019)', () => {
 
   it('clicking Print Label never calls the top-level window.print() (reuses the established PDF print pipeline)', async () => {
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { enabled: false } } });
     await renderPage(
       buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
     );
-    buttonByText('Print Label')!.click();
+    await act(async () => buttonByText('Print Label')!.click());
     await flush();
     await flush();
     expect(printSpy).not.toHaveBeenCalled();
   });
 
-  it('downloading a label does not mutate carton/audit/dispatch state (no POST/PATCH/DELETE call fires)', async () => {
-    const postSpy = vi.spyOn(apiClient, 'post');
+  it('downloading prepares only its QR credential and does not mutate carton/audit/dispatch state', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { enabled: false } } });
     const patchSpy = vi.spyOn(apiClient, 'patch');
     const deleteSpy = vi.spyOn(apiClient, 'delete');
     await renderPage(
       buildPackingList({ destinations: [{ ...buildPackingList().destinations[0]!, cartons: [buildCarton({ auditState: 'INSPECTED' })] }] }),
     );
-    buttonByText('Download Label')!.click();
+    await act(async () => buttonByText('Download Label')!.click());
     await flush();
     await flush();
-    expect(postSpy).not.toHaveBeenCalled();
+    expect(postSpy).toHaveBeenCalledExactlyOnceWith('/carton-delivery/labels/carton-1/prepare', { expectedVersion: 1 });
     expect(patchSpy).not.toHaveBeenCalled();
     expect(deleteSpy).not.toHaveBeenCalled();
   });

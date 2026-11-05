@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Image, StyleSheet, Text, View } from '@react-pdf/renderer';
 import { PdfDocument } from '../../../../lib/pdf/core/PdfDocument.js';
 import { PdfHeader } from '../../../../lib/pdf/core/PdfHeader.js';
 import { PdfFooter } from '../../../../lib/pdf/core/PdfFooter.js';
@@ -13,6 +13,11 @@ const styles = StyleSheet.create({
   cartonNumber: { fontSize: 26, fontWeight: 700, color: '#111111' },
   destinationName: { fontSize: 13, fontWeight: 700, color: '#111111', marginTop: 4 },
   totalsLine: { fontSize: 9, fontWeight: 700, color: '#111111', marginTop: 4, textAlign: 'right' },
+  identityWithQr: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  identityText: { flex: 1 },
+  qrBlock: { width: 100, alignItems: 'center' },
+  qrImage: { width: 85.04, height: 85.04 },
+  qrCaption: { fontSize: 7, textAlign: 'center', marginTop: 2 },
 });
 
 export interface CartonLabelDocumentProps {
@@ -30,9 +35,21 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
       <PdfHeader title={viewModel.title} subtitle={viewModel.subtitle} />
       <PdfMetaSection generatedAt={viewModel.generatedAt} />
 
-      <View style={styles.identityBlock}>
-        <Text style={styles.cartonNumber}>Carton {viewModel.cartonNumber}</Text>
-        <Text style={styles.destinationName}>{viewModel.destinationName}</Text>
+      <View
+        style={[styles.identityBlock, ...(viewModel.deliveryQr ? [styles.identityWithQr] : [])]}
+        wrap={false}
+      >
+        <View style={viewModel.deliveryQr ? styles.identityText : undefined}>
+          <Text style={styles.cartonNumber}>Carton {viewModel.cartonNumber}</Text>
+          <Text style={styles.destinationName}>{viewModel.destinationName}</Text>
+        </View>
+        {viewModel.deliveryQr && (
+          <View style={styles.qrBlock}>
+            <Image style={styles.qrImage} src={viewModel.deliveryQr.imageDataUrl} />
+            <Text style={styles.qrCaption}>Scan this carton for delivery</Text>
+            <Text style={styles.qrCaption}>{viewModel.deliveryQr.labelReference}</Text>
+          </View>
+        )}
       </View>
 
       <PdfSection title="Carton Details">

@@ -2,6 +2,9 @@ import { useCallback } from 'react';
 import { buildPdfFilename } from '../../lib/pdf/filenames.js';
 import { usePdfAction } from '../../lib/pdf/usePdfAction.js';
 import { PdfActionButtons } from '../../lib/pdf/components/PdfActionButtons.js';
+import { apiClient } from '../../lib/api-client.js';
+import type { ApiSuccessResponse } from '@erve/types';
+import type { CartonLabelSource } from './pdf/carton-label/buildCartonLabelViewModel.js';
 import type { FactoryPackingCartonView, PackingListDestinationView } from './types.js';
 
 export interface CartonLabelButtonProps {
@@ -34,9 +37,25 @@ export function CartonLabelButton({
   const printable = carton.auditState === 'INSPECTED' && !carton.retired;
 
   const generate = useCallback(async () => {
-    const { generateCartonLabelPdfBlob } = await import('./pdf/carton-label/generateCartonLabelPdf.js');
+    const prepared = (
+      await apiClient.post<
+        ApiSuccessResponse<
+          | { enabled: false }
+          | { enabled: true; url: string; labelReference: string; source: CartonLabelSource }
+        >
+      >(`/carton-delivery/labels/${carton.id}/prepare`, { expectedVersion: carton.version })
+    ).data.data;
+    if (prepared?.enabled !== true && prepared?.enabled !== false)
+      throw new Error('Carton label preparation could not be verified.');
+    const { generateCartonLabelPdfBlob } =
+      await import('./pdf/carton-label/generateCartonLabelPdf.js');
     return generateCartonLabelPdfBlob(
-      { carton, destination, saleOrderNumber, factoryName, factoryDispatchNumber },
+      prepared.enabled
+        ? {
+            ...prepared.source,
+            deliveryQr: { url: prepared.url, labelReference: prepared.labelReference },
+          }
+        : { carton, destination, saleOrderNumber, factoryName, factoryDispatchNumber },
       { generatedAt: new Date().toISOString(), generatedBy: generatedByName },
     );
   }, [carton, destination, saleOrderNumber, factoryName, factoryDispatchNumber, generatedByName]);

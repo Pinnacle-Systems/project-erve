@@ -30,6 +30,8 @@ export async function allocateTestDocumentSerial(
 // Test users/roles live on top of the seeded reference data (roles), so
 // only the per-test rows need clearing between tests.
 export async function resetDatabase(): Promise<void> {
+  // Only the guarded disposable-test reset may truncate append-only evidence.
+  await prisma.$executeRawUnsafe('TRUNCATE TABLE "carton_delivery_confirmations", "carton_delivery_tokens", "carton_delivery_rate_buckets"');
   await prisma.gstVerificationClaim.deleteMany();
   await prisma.gstVerificationEvidence.deleteMany();
   await prisma.gstVerificationOperation.deleteMany();

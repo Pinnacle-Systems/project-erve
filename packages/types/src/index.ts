@@ -12,3 +12,4 @@ export * from './gst-compliance.js';
 export * from './gstin-verification.js';
 export * from './gst-api-usage.js';
 export * from './eway-bill.js';
+export * from './carton-delivery.js';

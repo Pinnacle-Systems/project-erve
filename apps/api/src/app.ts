@@ -23,6 +23,9 @@ import { GstinApiUsageProvider } from './integrations/gst/gstin-api-usage.provid
 import { createGstApiUsageRouter } from './modules/gst-compliance/gst-api-usage.routes.js';
 import { createGstApiUsageService } from './modules/gst-compliance/gst-api-usage.service.js';
 import { authRouter } from './modules/auth/auth.routes.js';
+import { parseDeliveryConfig } from './modules/fulfillment/carton-delivery.security.js';
+import { createCartonDeliveryService } from './modules/fulfillment/carton-delivery.service.js';
+import { createCartonDeliveryRouter, createPublicCartonDeliveryRouter } from './modules/fulfillment/carton-delivery.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
 import {
   distributorsRouter,
@@ -106,6 +109,19 @@ export function createApp(
     env.EWAY_BILL_DEMO_GENERATION_AUTHORIZED && !!env.GST_VERIFICATION_API_KEY.trim();
 
   app.use(helmet());
+  const cartonDeliveryConfig = parseDeliveryConfig({
+    enabled: env.CARTON_DELIVERY_ENABLED,
+    origin: env.CARTON_DELIVERY_PUBLIC_ORIGIN,
+    activeKey: env.CARTON_DELIVERY_ACTIVE_KEY,
+    keys: env.CARTON_DELIVERY_KEYS,
+    validityDays: env.CARTON_DELIVERY_VALIDITY_DAYS,
+  });
+  const cartonDeliveryService = createCartonDeliveryService(cartonDeliveryConfig);
+  // Public capability requests bypass session CORS, generic JSON parsing and URL logging.
+  app.use(
+    '/public/carton-delivery',
+    createPublicCartonDeliveryRouter(cartonDeliveryService, cartonDeliveryConfig.origin),
+  );
   app.use(cors(corsOptions));
   app.use(express.json());
   app.use(requestLogger);
@@ -140,6 +156,7 @@ export function createApp(
   );
 
   app.use('/auth', authRouter);
+  app.use('/carton-delivery', createCartonDeliveryRouter(cartonDeliveryService));
   app.use('/users', usersRouter);
   // Registered before stylesRouter: /styles/bulk-import/* must never risk
   // being matched by stylesRouter's GET /:id.

@@ -2015,6 +2015,8 @@ model FactoryDispatchLine {
 // — it is not one of the material-content changes that invalidate a
 // FactoryPackingCartonAudit.
 model FactoryPackingCarton {
+  deliveryTokens        CartonDeliveryToken[]
+  deliveryConfirmation  CartonDeliveryConfirmation?
   id                String    @id
   factoryDispatchId String    @map("factory_dispatch_id")
   destinationId     String    @map("destination_id")
@@ -2351,6 +2353,7 @@ enum DeliveryConfirmationSource {
 // distributorId remains required — every Erve Dispatch still has exactly
 // one commercial owner, snapshotted from its Erve Packing List at creation.
 model ErveDispatch {
+  cartonDeliveryConfirmations CartonDeliveryConfirmation[]
   transporterUserId          String?                     @map("transporter_user_id")
   transporterUser            User?                       @relation("ErveDispatchTransporter", fields: [transporterUserId], references: [id], onDelete: Restrict)
   id                         String                      @id
@@ -3493,6 +3496,67 @@ model GstComplianceSettings {
   updatedBy                       User                   @relation("GstComplianceSettingsUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
 
   @@map("gst_compliance_settings")
+}
+
+// QR capability history survives draft carton deletion. Never reuse a digest.
+model CartonDeliveryToken {
+  id               String    @id
+  cartonId         String?   @map("carton_id")
+  tokenDigest      String    @unique @map("token_digest")
+  encryptedToken   String    @map("encrypted_token")
+  keyVersion       String    @map("key_version")
+  labelReference   String    @unique @map("label_reference")
+  issuedAt         DateTime  @default(now()) @map("issued_at")
+  issuedById       String    @map("issued_by_id")
+  validForDays     Int       @map("valid_for_days")
+  extendedUntil    DateTime? @map("extended_until")
+  extendedAt       DateTime? @map("extended_at")
+  extendedById     String?   @map("extended_by_id")
+  extensionReason  String?   @map("extension_reason")
+  revokedAt        DateTime? @map("revoked_at")
+  revokedById      String?   @map("revoked_by_id")
+  revocationReason String?   @map("revocation_reason")
+
+  carton        FactoryPackingCarton?       @relation(fields: [cartonId], references: [id], onDelete: SetNull)
+  confirmations CartonDeliveryConfirmation[]
+
+  // One unrevoked credential/carton: partial unique index in the migration.
+  @@index([cartonId])
+  @@map("carton_delivery_tokens")
+}
+
+// Immutable evidence. Distinct from ErveDispatchDeliveryLine quantities/status.
+model CartonDeliveryConfirmation {
+  id             String   @id
+  cartonId       String   @unique @map("carton_id")
+  dispatchId     String   @map("dispatch_id")
+  tokenId        String   @map("token_id")
+  recipientName  String   @map("recipient_name")
+  deliveredAt    DateTime @map("delivered_at")
+  timezone       String
+  offsetMinutes  Int      @map("offset_minutes")
+  remarks        String?
+  submittedAt    DateTime @default(now()) @map("submitted_at")
+  idempotencyKey String   @map("idempotency_key")
+  payloadDigest  String   @map("payload_digest")
+
+  carton   FactoryPackingCarton @relation(fields: [cartonId], references: [id], onDelete: Restrict)
+  dispatch ErveDispatch         @relation(fields: [dispatchId], references: [id], onDelete: Restrict)
+  token    CartonDeliveryToken  @relation(fields: [tokenId], references: [id], onDelete: Restrict)
+
+  @@unique([tokenId, idempotencyKey])
+  @@index([dispatchId, id])
+  @@map("carton_delivery_confirmations")
+}
+
+// Shared fixed windows; no raw IPs or bearer credentials are persisted.
+model CartonDeliveryRateBucket {
+  key         String   @id
+  windowStart DateTime @map("window_start")
+  requests    Int
+
+  @@index([windowStart])
+  @@map("carton_delivery_rate_buckets")
 }
 
 model AuditLog {
