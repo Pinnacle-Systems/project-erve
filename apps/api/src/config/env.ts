@@ -4,6 +4,14 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  CARTON_DELIVERY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  CARTON_DELIVERY_PUBLIC_ORIGIN: z.string().default(''),
+  CARTON_DELIVERY_ACTIVE_KEY: z.string().default(''),
+  CARTON_DELIVERY_KEYS: z.string().default(''),
+  CARTON_DELIVERY_VALIDITY_DAYS: z.coerce.number().int().min(1).max(3650).default(180),
   // Settings activation only. Future paid lookups/filing must recheck their
   // own production authorization at execution; this flag performs no work.
   GST_COMPLIANCE_LIVE_AUTHORIZED: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),

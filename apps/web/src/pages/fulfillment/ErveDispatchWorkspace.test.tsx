@@ -122,6 +122,12 @@ async function render(path: string, role: Role = 'ADMIN') {
 function active() {
   return container.querySelector('[role="tabpanel"][data-state="active"]')!;
 }
+it('loads QR evidence only when the Transport & Delivery tab is opened', async () => {
+  await render('/fulfillment/erve-dispatches/ed');
+  expect(vi.mocked(apiClient.get).mock.calls.some(([url]) => String(url).startsWith('/carton-delivery/'))).toBe(false);
+  await select('Transport & Delivery');
+  await vi.waitFor(() => expect(vi.mocked(apiClient.get).mock.calls.some(([url]) => String(url).startsWith('/carton-delivery/'))).toBe(true));
+});
 function button(label: string) {
   return [...container.querySelectorAll('button')].find((item) => item.textContent === label)!;
 }

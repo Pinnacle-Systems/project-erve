@@ -4,6 +4,7 @@ import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../s
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
 
 export interface CartonLabelSource {
+  deliveryQr?: { url: string; labelReference: string };
   carton: FactoryPackingCartonView;
   destination: PackingListDestinationView;
   saleOrderNumber: string;
@@ -26,6 +27,7 @@ export interface CartonLabelStyleRow {
 }
 
 export interface CartonLabelPdfViewModel {
+  deliveryQr?: { imageDataUrl: string; labelReference: string };
   title: string;
   subtitle: string;
   generatedAt: string;
@@ -73,6 +75,7 @@ export function buildCartonLabelViewModel(
   source: CartonLabelSource,
   meta: CartonLabelPdfMeta,
   styleImages?: Map<string, PdfImageSource>,
+  deliveryQr?: CartonLabelPdfViewModel['deliveryQr'],
 ): CartonLabelPdfViewModel {
   const { carton, destination, saleOrderNumber } = source;
   const destinationName = destination.label ?? `${destination.city}, ${destination.state}`;
@@ -95,6 +98,7 @@ export function buildCartonLabelViewModel(
   if (carton.dimensions) identityItems.push({ label: 'Dimensions', value: carton.dimensions });
 
   return {
+    ...(deliveryQr ? { deliveryQr } : {}),
     title: 'CARTON LABEL',
     subtitle: `Carton ${carton.cartonNumber} — ${saleOrderNumber}`,
     generatedAt: meta.generatedAt,

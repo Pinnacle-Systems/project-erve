@@ -2,6 +2,7 @@ import { canEditErveDispatchTransport, canConfirmErveDispatchDelivery, canManage
 import { AssignedTransportWorkspace } from './dispatch-workspace/AssignedTransportWorkspace.js';
 import { TransportFields } from './dispatch-workspace/TransportFields.js';
 import { TransporterAssignmentPanel } from './dispatch-workspace/TransporterAssignmentPanel.js';
+import { CartonDeliveryPanel } from './dispatch-workspace/CartonDeliveryPanel.js';
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -202,6 +203,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
           <DispatchOverviewTab dispatch={dispatch} />
         </TabsContent>
         <TabsContent value="transport-delivery" className="space-y-4 pt-4">
+          {activeTab === 'transport-delivery' && <CartonDeliveryPanel key={id} dispatchId={id} />}
           <Panel title="Transport & Delivery">
             <DescriptionList columns={3}>
               <DescriptionList.Item label="Transporter" value={dispatch.transporter} />
