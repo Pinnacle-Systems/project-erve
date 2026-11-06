@@ -29,6 +29,8 @@ import { useAuth } from '../../auth/AuthContext.js';
 import { isAxiosError } from 'axios';
 import { DispatchOverviewTab } from './dispatch-workspace/DispatchOverviewTab.js';
 import { DispatchReceiptTab } from './dispatch-workspace/DispatchReceiptTab.js';
+import { DispatchReconciliationTab } from './dispatch-workspace/DispatchReconciliationTab.js';
+import { canViewReconciliation } from '@erve/shared';
 import { groupReceiptLinesByStyle, type ReceiptTraceableLine } from './style-size-grouping.js';
 import type { ErveDispatchView } from './types.js';
 
@@ -45,7 +47,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab');
   const activeTab =
-    tab === 'transport-delivery' || tab === 'distributor-receipt' ? tab : 'overview';
+    tab === 'transport-delivery' || tab === 'distributor-receipt' || tab === 'reconciliation' ? tab : 'overview';
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -220,6 +222,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="transport-delivery">Transport &amp; Delivery</TabsTrigger>
           <TabsTrigger value="distributor-receipt">Distributor Receipt</TabsTrigger>
+          {user && canViewReconciliation(user) && <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>}
         </TabsList>
         <TabsContent value="overview" className="pt-4">
           <DispatchOverviewTab dispatch={dispatch} />
@@ -397,6 +400,9 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
         <TabsContent value="distributor-receipt" className="pt-4">
           <DispatchReceiptTab dispatch={dispatch} />
         </TabsContent>
+        {user && canViewReconciliation(user) && <TabsContent value="reconciliation" className="pt-4">
+          {activeTab === 'reconciliation' && <DispatchReconciliationTab dispatchId={id} />}
+        </TabsContent>}
       </Tabs>
       {canViewSaleOrReturnPositions(user) && (
         <div className="text-sm">
