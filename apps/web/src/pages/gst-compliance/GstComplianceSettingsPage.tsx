@@ -9,7 +9,7 @@ import { ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
-import { AccountantGstinLookup } from './GstinVerificationPanel.js';
+import { AccountantGstinLookup } from './AccountantGstinLookup.js';
 import { GstApiUsagePanel } from './GstApiUsagePanel.js';
 
 const SETTINGS_KEY = ['gst-compliance-settings'] as const;

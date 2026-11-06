@@ -11,6 +11,7 @@ import {
   GstinVerificationInline,
   type GstinVerificationFieldProps,
 } from './GstinVerificationField.js';
+import { AccountantGstinLookup } from './AccountantGstinLookup.js';
 
 const GSTIN = '33AAAAA0000A1Z5';
 const OTHER = '29BBBBB1111B1Z6';
@@ -652,5 +653,111 @@ describe('GstinVerificationField — display-only versus authorized verification
     mockGets({ enabled: true, mode: 'LIVE' }, () => view());
     await render(<Harness initial={GSTIN} />);
     expect(buttonByLabel('Retrieve Complete Profile')).toBeDefined();
+  });
+});
+
+describe('GstinVerificationField — standalone Accountant lookup', () => {
+  it('replaces the two-step panel with an integrated field and source-less cached read', async () => {
+    const get = mockGets({ enabled: true, mode: 'DEMO', level: 'BASIC' }, () =>
+      view({ mode: 'DEMO', level: 'BASIC', cacheState: 'NONE' }),
+    );
+    const post = vi.spyOn(apiClient, 'post');
+    await render(<AccountantGstinLookup />);
+    expect(container.textContent).toContain('GSTIN to verify');
+    expect(container.textContent).not.toContain('View saved verification');
+    expect(verificationGets(get)).toHaveLength(0);
+    await type(GSTIN);
+    expect(verificationGets(get)).toHaveLength(1);
+    expect(verificationGets(get)[0]![1]!.params).toEqual({
+      gstin: GSTIN,
+      sourceType: undefined,
+      sourceId: undefined,
+    });
+    expect(buttonByLabel('Verify GSTIN')).toBeDefined();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('executes Demo only after Verify is clicked, without fabricating a master source', async () => {
+    let result = view({ mode: 'DEMO', level: 'BASIC', cacheState: 'NONE' });
+    mockGets({ enabled: true, mode: 'DEMO', level: 'BASIC' }, () => result);
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(async (url) => {
+      if (url.endsWith('/prepare'))
+        return {
+          data: {
+            data: {
+              kind: 'CONFIRMATION',
+              intentId: 'standalone-demo',
+              gstin: GSTIN,
+              mode: 'DEMO',
+              level: 'BASIC',
+              estimatedCredits: 0,
+              freshCacheAvailable: false,
+              refresh: false,
+              expiresAt: '2099-01-01T00:00:00Z',
+            },
+          },
+        };
+      result = view({
+        mode: 'DEMO',
+        level: 'BASIC',
+        cacheState: 'FRESH',
+        evidence: evidence({
+          mode: 'DEMO',
+          level: 'BASIC',
+          lookupGstin: '00AAAAA0000A1ZT',
+          returnedGstin: '00AAAAA0000A1ZT',
+          billingCategory: 'test',
+        }),
+      });
+      return { data: { data: result } };
+    });
+    await render(<AccountantGstinLookup />);
+    await type(GSTIN);
+    expect(post).not.toHaveBeenCalled();
+    await click(buttonByLabel('Verify GSTIN'));
+    expect(post.mock.calls.map(([url]) => url.split('/').pop())).toEqual(['prepare', 'execute']);
+    expect(post.mock.calls[0]![1]).toEqual({ target: { gstin: GSTIN }, refresh: false });
+    expect(container.textContent).toContain('Demo Sample');
+    await click(buttonByLabel(/Demo sample result, not a verification/));
+    expect(document.querySelector('[role="dialog"]')!.textContent).toContain('Demo Result');
+  });
+
+  it('still requires explicit approval for a source-less Live lookup', async () => {
+    mockGets({ enabled: true, mode: 'LIVE', level: 'COMPLETE' }, () => view());
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
+        data: {
+          kind: 'CONFIRMATION',
+          intentId: 'standalone-live',
+          gstin: GSTIN,
+          mode: 'LIVE',
+          level: 'COMPLETE',
+          estimatedCredits: 2,
+          freshCacheAvailable: false,
+          refresh: false,
+          expiresAt: '2099-01-01T00:00:00Z',
+        },
+      },
+    });
+    await render(<AccountantGstinLookup />);
+    await type(GSTIN);
+    expect(post).not.toHaveBeenCalled();
+    await click(buttonByLabel('Retrieve Complete Profile'));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0]![1]).toEqual({ target: { gstin: GSTIN }, refresh: false });
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('2 API credits');
+    await click([...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Cancel'));
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot bypass the Accountant-only backend source-less permission', async () => {
+    mockGets({ enabled: true, mode: 'LIVE' }, () => apiError('Forbidden', 403));
+    const post = vi.spyOn(apiClient, 'post');
+    await render(<AccountantGstinLookup />);
+    await type(GSTIN);
+    expect(buttonByLabel('Verify GSTIN')).toBeUndefined();
+    expect(container.textContent).toContain('Verification status is unavailable');
+    expect(post).not.toHaveBeenCalled();
   });
 });

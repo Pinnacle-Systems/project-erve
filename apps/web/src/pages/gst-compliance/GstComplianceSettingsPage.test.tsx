@@ -23,7 +23,20 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({ data: { success: true, data: url.endsWith('/audit') ? [] : persisted } }));
+  vi.spyOn(apiClient, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.endsWith('/audit')
+        ? []
+        : url === '/gst-compliance/verification/policy'
+          ? {
+              enabled: persisted.onlineGstinVerificationEnabled,
+              mode: persisted.integrationMode,
+              level: persisted.gstinVerificationLevel,
+            }
+          : persisted,
+    },
+  }));
   vi.spyOn(apiClient, 'patch').mockImplementation(async (_url, body) => {
     const values = body as Partial<GstComplianceSettings>;
     persisted = { ...persisted, ...values, version: persisted.version + 1, updatedAt: '2026-10-20T10:00:00Z', updatedBy: { id: 'accounts', name: 'Accounts' } };
@@ -60,7 +73,7 @@ describe('GST Compliance Settings page', () => {
     expect(control('radio', 'Live Mode').disabled).toBe(true);
     expect(container.textContent).not.toMatch(/gstinapi|x-api-key|View Filing Dates/);
   });
-  it('saves independent preferences without lookups and reloads persisted values', async () => {
+  it('saves independent preferences without provider lookups and reloads persisted values', async () => {
     await mount();
     await act(async () => control('switch', 'Enable Online GSTIN Verification').click());
     await act(async () => control('radio', 'Complete Profile — 2 credits').click());
@@ -74,7 +87,12 @@ describe('GST Compliance Settings page', () => {
     expect(control('radio', 'Complete Profile — 2 credits').getAttribute('aria-checked')).toBe('true');
     await act(async () => control('switch', 'Enable Online GSTIN Verification').click());
     expect(container.textContent).not.toContain('Settings saved');
-    expect(vi.mocked(apiClient.get).mock.calls.every(([url]) => url.startsWith('/gst-compliance/settings'))).toBe(true);
+    const getPaths = vi.mocked(apiClient.get).mock.calls.map(([url]) => url);
+    // An empty GSTIN may read local policy but must never fetch taxpayer evidence.
+    expect(getPaths.every((url) =>
+      url.startsWith('/gst-compliance/settings') || url === '/gst-compliance/verification/policy',
+    )).toBe(true);
+    expect(getPaths).not.toContain('/gst-compliance/verification');
   });
   it('does not offer ADMIN mutation controls', async () => {
     auth.roles = ['ADMIN']; await mount();
