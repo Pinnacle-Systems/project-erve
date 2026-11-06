@@ -66,16 +66,12 @@ function listInvoices(token: string, params: Record<string, unknown> = {}) {
   return request(app).get('/factory-invoices').query(params).set('Authorization', `Bearer ${token}`);
 }
 
-function confirmInvoice(token: string, id: string) {
-  return request(app).post(`/factory-invoices/${id}/confirm`).set('Authorization', `Bearer ${token}`).send({});
+function confirmInvoice(token: string, id: string, expectedVersion: number) {
+  return request(app).post(`/factory-invoices/${id}/confirm`).set('Authorization', `Bearer ${token}`).send({ expectedVersion });
 }
 
 function patchFinancials(token: string, id: string, body: Record<string, unknown>) {
   return request(app).patch(`/factory-invoices/${id}/financials`).set('Authorization', `Bearer ${token}`).send(body);
-}
-
-function finalizeInvoice(token: string, id: string, expectedVersion: number) {
-  return request(app).post(`/factory-invoices/${id}/finalize`).set('Authorization', `Bearer ${token}`).send({ expectedVersion });
 }
 
 /** Fixture: a Dispatch Order fully packed, audited and finalized — the generated Factory Invoice's baseline state. */
@@ -277,54 +273,152 @@ describe('Factory Invoice — generation from finalized Factory Packing List', (
   });
 });
 
+async function currentVersion(invoiceId: string): Promise<number> {
+  return (await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).version;
+}
+
+async function confirmedAuditCount(invoiceId: string): Promise<number> {
+  return prisma.auditLog.count({
+    where: { entityType: 'FactoryInvoice', entityId: invoiceId, action: 'FACTORY_INVOICE_FACTORY_CONFIRMED' },
+  });
+}
+
 describe('Factory Invoice — FACTORY_USER confirmation', () => {
-  it('own-factory FACTORY_USER confirms successfully and records actor/timestamp', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    const res = await confirmInvoice(factoryToken, invoiceId).expect(200);
+  it('own-factory FACTORY_USER confirms the latest version, recording actor, timestamp and the confirmed amounts', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: await currentVersion(invoiceId), gstAmount: 180 }).expect(200);
+    const reviewedVersion = await currentVersion(invoiceId);
+
+    const res = await confirmInvoice(factoryToken, invoiceId, reviewedVersion).expect(200);
+
     expect(res.body.data.status).toBe('FACTORY_CONFIRMED');
     expect(res.body.data.factoryConfirmedBy).toBeTruthy();
     expect(res.body.data.factoryConfirmedAt).toBeTruthy();
+    expect(res.body.data.version).toBe(reviewedVersion + 1);
+    // The confirmed invoice includes the Accountant's manually entered GST.
+    expect(res.body.data.subtotal).toBe(1000);
+    expect(res.body.data.gstAmount).toBe(180);
+    expect(res.body.data.total).toBe(1180);
+
+    const entry = await prisma.auditLog.findFirstOrThrow({
+      where: { entityType: 'FactoryInvoice', entityId: invoiceId, action: 'FACTORY_INVOICE_FACTORY_CONFIRMED' },
+    });
+    expect(entry.metadata).toMatchObject({ confirmedVersion: reviewedVersion, subtotal: 1000, gstAmount: 180, total: 1180 });
   });
 
-  it('rejects a cross-factory FACTORY_USER confirming another Factory\'s invoice', async () => {
+  it('confirms a zero-GST invoice', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const res = await confirmInvoice(factoryToken, invoiceId, await currentVersion(invoiceId)).expect(200);
+    expect(res.body.data.status).toBe('FACTORY_CONFIRMED');
+    expect(res.body.data.gstAmount).toBe(0);
+    expect(res.body.data.total).toBe(1000);
+  });
+
+  it('requires an expectedVersion', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
+    await request(app).post(`/factory-invoices/${invoiceId}/confirm`).set('Authorization', `Bearer ${factoryToken}`).send({}).expect(400);
+    expect((await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe('GENERATED');
+  });
+
+  it('rejects confirming an obsolete version after the Accountant saved a change, leaving the invoice GENERATED', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const reviewedVersion = await currentVersion(invoiceId); // what the Factory User's page loaded
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: reviewedVersion, gstAmount: 50 }).expect(200);
+
+    const stale = await confirmInvoice(factoryToken, invoiceId, reviewedVersion).expect(409);
+    expect(stale.body.error.code).toBe('STALE_VERSION');
+    expect(stale.body.error.details.currentVersion).toBe(reviewedVersion + 1);
+
+    const after = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    expect(after.status).toBe('GENERATED');
+    expect(after.factoryConfirmedAt).toBeNull();
+    expect(after.version).toBe(reviewedVersion + 1);
+    expect(await confirmedAuditCount(invoiceId)).toBe(0);
+
+    // After reviewing the updated invoice the same Factory User can confirm the latest version.
+    const res = await confirmInvoice(factoryToken, invoiceId, reviewedVersion + 1).expect(200);
+    expect(res.body.data.total).toBe(1050);
+  });
+
+  it('rejects a cross-factory FACTORY_USER confirming another Factory\'s invoice, without changing it', async () => {
     const { invoiceId } = await setupFinalizedInvoice(10);
     const other = await createSingleFactoryApprovedSaleOrder(app, 5);
     const otherFactoryToken = await createFactoryUserToken(other.stock.factoryId);
-    await confirmInvoice(otherFactoryToken, invoiceId).expect(403);
+    await confirmInvoice(otherFactoryToken, invoiceId, await currentVersion(invoiceId)).expect(403);
+    expect((await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe('GENERATED');
   });
 
-  it('duplicate confirmation is safely idempotent: no re-audit, actor/timestamp/version unchanged, no physical change', async () => {
+  it('a duplicate confirmation of the same version is a safe idempotent retry: no re-audit, actor/timestamp/version unchanged', async () => {
     const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    const first = await confirmInvoice(factoryToken, invoiceId).expect(200);
-    const auditCountBefore = await prisma.auditLog.count({
-      where: { entityType: 'FactoryInvoice', entityId: invoiceId, action: 'FACTORY_INVOICE_FACTORY_CONFIRMED' },
-    });
+    const reviewedVersion = await currentVersion(invoiceId);
+    const first = await confirmInvoice(factoryToken, invoiceId, reviewedVersion).expect(200);
+    const auditCountBefore = await confirmedAuditCount(invoiceId);
 
-    const second = await confirmInvoice(factoryToken, invoiceId).expect(200);
+    const second = await confirmInvoice(factoryToken, invoiceId, reviewedVersion).expect(200);
 
-    const auditCountAfter = await prisma.auditLog.count({
-      where: { entityType: 'FactoryInvoice', entityId: invoiceId, action: 'FACTORY_INVOICE_FACTORY_CONFIRMED' },
-    });
-    expect(auditCountAfter).toBe(auditCountBefore);
+    expect(await confirmedAuditCount(invoiceId)).toBe(auditCountBefore);
     expect(second.body.data.factoryConfirmedAt).toBe(first.body.data.factoryConfirmedAt);
     expect(second.body.data.version).toBe(first.body.data.version);
     expect(second.body.data.lines).toEqual(first.body.data.lines);
   });
-});
 
-describe('Factory Invoice — ACCOUNTANT financial edits', () => {
-  it('rejects a financial edit before Factory confirmation', async () => {
-    const { invoiceId } = await setupFinalizedInvoice(10);
+  it('never reports success for an earlier, obsolete version of an already-confirmed invoice', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const invoice = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: invoice.version, gstAmount: 50 }).expect(400);
+    const oldVersion = await currentVersion(invoiceId);
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: oldVersion, gstAmount: 25 }).expect(200);
+    await confirmInvoice(factoryToken, invoiceId, oldVersion + 1).expect(200);
+
+    await confirmInvoice(factoryToken, invoiceId, oldVersion).expect(409); // the version it never confirmed
+    await confirmInvoice(factoryToken, invoiceId, oldVersion + 2).expect(409); // a version that never existed pre-confirmation
+    await confirmInvoice(factoryToken, invoiceId, oldVersion + 1).expect(200); // the version actually confirmed
   });
 
-  it('lets ACCOUNTANT override a line unit rate post-confirmation, recalculating amounts, without touching defaultRate or the master rate', async () => {
-    const { factoryToken, invoiceId, fixture } = await setupFinalizedInvoice(7, 123.45);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+  it('two concurrent confirmations of the same version confirm once and both succeed', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
+    const version = await currentVersion(invoiceId);
+    const [a, b] = await Promise.all([
+      confirmInvoice(factoryToken, invoiceId, version),
+      confirmInvoice(factoryToken, invoiceId, version),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(await confirmedAuditCount(invoiceId)).toBe(1);
+  });
+
+  it('a concurrent Accountant edit vs Factory confirmation is serialized: exactly one wins, and a confirmed invoice never holds unseen values', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const version = await currentVersion(invoiceId);
+
+    const [patchRes, confirmRes] = await Promise.all([
+      patchFinancials(accountantToken, invoiceId, { expectedVersion: version, gstAmount: 10 }),
+      confirmInvoice(factoryToken, invoiceId, version),
+    ]);
+
+    const succeeded = [patchRes, confirmRes].filter((r) => r.status === 200);
+    expect(succeeded).toHaveLength(1);
+    const loser = patchRes.status === 200 ? confirmRes : patchRes;
+    expect([400, 409]).toContain(loser.status); // locked-after-confirm (400) or stale (409)
+
+    const after = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+    if (confirmRes.status === 200) {
+      expect(after.status).toBe('FACTORY_CONFIRMED');
+      expect(after.gstAmount.toNumber()).toBe(0); // confirmed exactly the version the Factory User reviewed
+    } else {
+      expect(after.status).toBe('GENERATED');
+      expect(after.gstAmount.toNumber()).toBe(10);
+    }
+  });
+});
+
+describe('Factory Invoice — ACCOUNTANT financial edits (GENERATED only)', () => {
+  it('lets ACCOUNTANT override a line unit rate immediately, recalculating amounts, without touching defaultRate or the master rate', async () => {
+    const { invoiceId, fixture } = await setupFinalizedInvoice(7, 123.45);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
     const before = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+    expect(before.status).toBe('GENERATED');
     const lineId = before.lines[0].id;
 
     const res = await patchFinancials(accountantToken, invoiceId, {
@@ -332,6 +426,7 @@ describe('Factory Invoice — ACCOUNTANT financial edits', () => {
       lines: [{ id: lineId, unitRate: 200 }],
     }).expect(200);
 
+    expect(res.body.data.status).toBe('GENERATED');
     expect(res.body.data.lines[0].unitRate).toBe(200);
     expect(res.body.data.lines[0].defaultRate).toBe(123.45);
     expect(res.body.data.lines[0].lineAmount).toBe(1400); // 7 * 200
@@ -345,18 +440,82 @@ describe('Factory Invoice — ACCOUNTANT financial edits', () => {
     expect(mapping.exFactoryPrice.toNumber()).toBe(123.45);
   });
 
-  it('rejects an injected physical field via the strict financials schema', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+  it('lets ACCOUNTANT enter and then clear GST (zero is valid), recalculating the expected total', async () => {
+    const { invoiceId } = await setupFinalizedInvoice(10, 100);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const invoice = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: invoice.version, quantity: 999 }).expect(400);
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: invoice.version, styleId: 'x' }).expect(400);
+
+    const withGst = await patchFinancials(accountantToken, invoiceId, { expectedVersion: await currentVersion(invoiceId), gstAmount: 180.5 }).expect(200);
+    expect(withGst.body.data.subtotal).toBe(1000);
+    expect(withGst.body.data.gstAmount).toBe(180.5);
+    expect(withGst.body.data.total).toBe(1180.5);
+
+    const cleared = await patchFinancials(accountantToken, invoiceId, { expectedVersion: withGst.body.data.version, gstAmount: 0 }).expect(200);
+    expect(cleared.body.data.gstAmount).toBe(0);
+    expect(cleared.body.data.total).toBe(1000);
+  });
+
+  it('recalculates the affected line, subtotal and total when a rate override and GST are saved together', async () => {
+    const { invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const before = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+
+    const res = await patchFinancials(accountantToken, invoiceId, {
+      expectedVersion: before.version,
+      lines: [{ id: before.lines[0].id, unitRate: 120 }],
+      gstAmount: 216,
+    }).expect(200);
+
+    expect(res.body.data.lines[0].lineAmount).toBe(1200);
+    expect(res.body.data.subtotal).toBe(1200);
+    expect(res.body.data.total).toBe(1416);
+  });
+
+  it('a later Style-to-Factory master rate change never silently alters an existing invoice', async () => {
+    const { invoiceId, fixture } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const before = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+
+    await prisma.styleFactoryMapping.update({
+      where: { styleId_factoryId: { styleId: fixture.stock.styleId, factoryId: fixture.stock.factoryId } },
+      data: { exFactoryPrice: 999 },
+    });
+
+    const after = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+    expect(after.lines).toEqual(before.lines);
+    expect(after.subtotal).toBe(before.subtotal);
+    expect(after.total).toBe(before.total);
+    expect(after.version).toBe(before.version);
+  });
+
+  it('rejects any financial edit once the Factory has confirmed, leaving every value unchanged', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    await confirmInvoice(factoryToken, invoiceId, await currentVersion(invoiceId)).expect(200);
+    const confirmed = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: confirmed.version, gstAmount: 50 }).expect(400);
+    await patchFinancials(accountantToken, invoiceId, {
+      expectedVersion: confirmed.version,
+      lines: [{ id: confirmed.lines[0].id, unitRate: 1 }],
+    }).expect(400);
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: confirmed.version, remarks: 'late note' }).expect(400);
+    // Even a stale version cannot make a locked invoice editable or change the error into a retry hint.
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: 999, gstAmount: 50 }).expect(400);
+
+    const after = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+    expect(after).toEqual(confirmed);
+  });
+
+  it('rejects an injected physical field via the strict financials schema', async () => {
+    const { invoiceId } = await setupFinalizedInvoice(10);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const version = await currentVersion(invoiceId);
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: version, quantity: 999 }).expect(400);
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: version, styleId: 'x' }).expect(400);
   });
 
   it('a no-op financial PATCH leaves version and audit untouched', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+    const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
     const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
     const auditCountBefore = await prisma.auditLog.count({
@@ -378,8 +537,7 @@ describe('Factory Invoice — ACCOUNTANT financial edits', () => {
   });
 
   it('a real financial edit bumps version and audits old/new values', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+    const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
     const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
 
@@ -392,19 +550,37 @@ describe('Factory Invoice — ACCOUNTANT financial edits', () => {
   });
 
   it('rejects a stale expectedVersion', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+    const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: 999, gstAmount: 10 }).expect(409);
+    const res = await patchFinancials(accountantToken, invoiceId, { expectedVersion: 999, gstAmount: 10 }).expect(409);
+    expect(res.body.error.code).toBe('STALE_VERSION');
   });
 
-  it('rejects a financial edit on a finalized invoice', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+  it.each([
+    ['a negative GST', { gstAmount: -1 }],
+    ['a GST with more than 2 decimal places', { gstAmount: 10.123 }],
+    ['a GST beyond the stored precision', { gstAmount: 1_000_000_000_000 }],
+    ['a zero unit rate', { rate: 0 }],
+    ['a unit rate with more than 2 decimal places', { rate: 10.005 }],
+    ['a unit rate beyond the stored precision', { rate: 10_000_000_000 }],
+  ])('rejects %s with a validation error', async (_label, input) => {
+    const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
     const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
-    const finalized = await finalizeInvoice(accountantToken, invoiceId, current.version).expect(200);
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: finalized.body.data.version, gstAmount: 99 }).expect(400);
+    const body: Record<string, unknown> = { expectedVersion: current.version };
+    if ('gstAmount' in input) body.gstAmount = input.gstAmount;
+    if ('rate' in input) body.lines = [{ id: current.lines[0].id, unitRate: input.rate }];
+
+    await patchFinancials(accountantToken, invoiceId, body).expect(400);
+    expect(await currentVersion(invoiceId)).toBe(current.version);
+  });
+
+  it('rejects a GST that would push the expected total past what the invoice can store, as a 400 rather than a server error', async () => {
+    const { invoiceId } = await setupFinalizedInvoice(10, 150);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const version = await currentVersion(invoiceId);
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: version, gstAmount: 999_999_999_999.99 }).expect(400);
+    expect(await currentVersion(invoiceId)).toBe(version);
   });
 });
 
@@ -419,8 +595,7 @@ describe('Factory Invoice — totals calculation', () => {
   });
 
   it('adds GST to subtotal for total, with no deduction field reachable', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+    const { invoiceId } = await setupFinalizedInvoice(10, 100);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
     const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
 
@@ -433,60 +608,60 @@ describe('Factory Invoice — totals calculation', () => {
   });
 });
 
-describe('Factory Invoice — ACCOUNTANT finalization', () => {
-  it('only ACCOUNTANT can finalize; FACTORY_USER is rejected', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
-    const invoice = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    await finalizeInvoice(factoryToken, invoiceId, invoice.version).expect(403);
-  });
+describe('Factory Invoice — retired finalization and legacy FINALIZED records', () => {
+  async function makeLegacyFinalized(invoiceId: string, accountantUserId: string) {
+    await prisma.factoryInvoice.update({
+      where: { id: invoiceId },
+      data: {
+        status: 'FINALIZED',
+        factoryConfirmedById: accountantUserId,
+        factoryConfirmedAt: new Date(),
+        finalizedById: accountantUserId,
+        finalizedAt: new Date(),
+        gstAmount: 18,
+        total: 1018,
+        version: { increment: 3 },
+      },
+    });
+  }
 
-  it('requires Factory confirmation first', async () => {
+  it('no longer exposes a finalize endpoint', async () => {
     const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const invoice = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    await finalizeInvoice(accountantToken, invoiceId, invoice.version).expect(400);
+    await request(app)
+      .post(`/factory-invoices/${invoiceId}/finalize`)
+      .set('Authorization', `Bearer ${accountantToken}`)
+      .send({ expectedVersion: await currentVersion(invoiceId) })
+      .expect(404);
+    expect((await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe('GENERATED');
   });
 
-  it('persists final actor/timestamp/values and makes the invoice fully immutable', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 50);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
-    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+  it('a legacy FINALIZED invoice stays readable by every viewing role and listable by status', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken, userId } = await createRoleToken('ACCOUNTANT');
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await makeLegacyFinalized(invoiceId, userId);
 
-    const res = await finalizeInvoice(accountantToken, invoiceId, current.version).expect(200);
-    expect(res.body.data.status).toBe('FINALIZED');
-    expect(res.body.data.finalizedBy).toBeTruthy();
-    expect(res.body.data.finalizedAt).toBeTruthy();
-    expect(res.body.data.subtotal).toBe(500);
-    // ISS-025: ACCOUNTANT never touched GST here, so it finalizes at its generation-time default —
-    // a legitimate zero, persisted and returned as-is, never coerced/omitted because it's zero.
-    expect(res.body.data.gstAmount).toBe(0);
-    expect(res.body.data.total).toBe(500);
-
-    await patchFinancials(accountantToken, invoiceId, { expectedVersion: res.body.data.version, gstAmount: 1 }).expect(400);
-    await finalizeInvoice(accountantToken, invoiceId, res.body.data.version).expect(400);
-    // Factory re-confirming a finalized invoice is still a harmless idempotent no-op, never an error.
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
+    for (const token of [factoryToken, accountantToken, adminToken]) {
+      const res = await getInvoice(token, invoiceId).expect(200);
+      expect(res.body.data.status).toBe('FINALIZED');
+      expect(res.body.data.gstAmount).toBe(18);
+      expect(res.body.data.total).toBe(1018);
+      expect(res.body.data.finalizedBy).toBeTruthy();
+    }
+    const list = await listInvoices(accountantToken, { status: 'FINALIZED' }).expect(200);
+    expect(list.body.data.items.map((i: { id: string }) => i.id)).toContain(invoiceId);
   });
 
-  it('a concurrent financial-edit-vs-finalize race is serialized safely: the loser is rejected as stale', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
-    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    const current = (await getInvoice(accountantToken, invoiceId).expect(200)).body.data;
+  it('a legacy FINALIZED invoice is immutable and cannot be (re)confirmed', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken, userId } = await createRoleToken('ACCOUNTANT');
+    await makeLegacyFinalized(invoiceId, userId);
+    const version = await currentVersion(invoiceId);
 
-    const [patchRes, finalizeRes] = await Promise.all([
-      patchFinancials(accountantToken, invoiceId, { expectedVersion: current.version, gstAmount: 10 }),
-      finalizeInvoice(accountantToken, invoiceId, current.version),
-    ]);
-    const succeeded = [patchRes, finalizeRes].filter((r) => r.status === 200);
-    expect(succeeded).toHaveLength(1);
-    const loser = patchRes.status === 200 ? finalizeRes : patchRes;
-    expect(loser.status).toBe(409);
-
-    const after = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    expect(after.status).toBe(finalizeRes.status === 200 ? 'FINALIZED' : 'FACTORY_CONFIRMED');
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: version, gstAmount: 99 }).expect(400);
+    await confirmInvoice(factoryToken, invoiceId, version).expect(409);
+    expect((await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).gstAmount.toNumber()).toBe(18);
   });
 });
 
@@ -495,9 +670,8 @@ describe('Factory Invoice — RBAC/IDOR', () => {
     const { invoiceId } = await setupFinalizedInvoice(10);
     await request(app).get(`/factory-invoices/${invoiceId}`).expect(401);
     await request(app).get('/factory-invoices').expect(401);
-    await request(app).post(`/factory-invoices/${invoiceId}/confirm`).send({}).expect(401);
+    await request(app).post(`/factory-invoices/${invoiceId}/confirm`).send({ expectedVersion: 1 }).expect(401);
     await request(app).patch(`/factory-invoices/${invoiceId}/financials`).send({ expectedVersion: 1 }).expect(401);
-    await request(app).post(`/factory-invoices/${invoiceId}/finalize`).send({ expectedVersion: 1 }).expect(401);
   });
 
   it('rejects QA_USER, MERCHANDISER and DISTRIBUTOR from every Factory Invoice route', async () => {
@@ -508,9 +682,8 @@ describe('Factory Invoice — RBAC/IDOR', () => {
 
     for (const token of [qaToken, merchToken, distToken]) {
       await getInvoice(token, invoiceId).expect(403);
-      await confirmInvoice(token, invoiceId).expect(403);
+      await confirmInvoice(token, invoiceId, 1).expect(403);
       await patchFinancials(token, invoiceId, { expectedVersion: 1 }).expect(403);
-      await finalizeInvoice(token, invoiceId, 1).expect(403);
     }
   });
 
@@ -526,17 +699,39 @@ describe('Factory Invoice — RBAC/IDOR', () => {
     expect(res.body.data).toBeUndefined();
   });
 
-  it('rejects FACTORY_USER from financial edits and finalize', async () => {
-    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
-    await confirmInvoice(factoryToken, invoiceId).expect(200);
-    const invoice = await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
-    await patchFinancials(factoryToken, invoiceId, { expectedVersion: invoice.version, gstAmount: 5 }).expect(403);
-    await finalizeInvoice(factoryToken, invoiceId, invoice.version).expect(403);
+  it('shows the full expected invoice including GST and total to FACTORY_USER, ACCOUNTANT and ADMIN before confirmation', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10, 100);
+    const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    await patchFinancials(accountantToken, invoiceId, { expectedVersion: await currentVersion(invoiceId), gstAmount: 180 }).expect(200);
+
+    for (const token of [factoryToken, accountantToken, adminToken]) {
+      const res = await getInvoice(token, invoiceId).expect(200);
+      expect(res.body.data.status).toBe('GENERATED');
+      expect(res.body.data).toMatchObject({ subtotal: 1000, gstAmount: 180, total: 1180 });
+    }
   });
 
-  it('rejects ACCOUNTANT from Factory confirmation', async () => {
+  it('rejects FACTORY_USER and ADMIN from financial edits, in GENERATED and after confirmation', async () => {
+    const { factoryToken, invoiceId } = await setupFinalizedInvoice(10);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const version = await currentVersion(invoiceId);
+    await patchFinancials(factoryToken, invoiceId, { expectedVersion: version, gstAmount: 5 }).expect(403);
+    await patchFinancials(adminToken, invoiceId, { expectedVersion: version, gstAmount: 5 }).expect(403);
+
+    await confirmInvoice(factoryToken, invoiceId, version).expect(200);
+    const confirmedVersion = await currentVersion(invoiceId);
+    await patchFinancials(factoryToken, invoiceId, { expectedVersion: confirmedVersion, gstAmount: 5 }).expect(403);
+    await patchFinancials(adminToken, invoiceId, { expectedVersion: confirmedVersion, gstAmount: 5 }).expect(403);
+  });
+
+  it('rejects ACCOUNTANT and ADMIN from Factory confirmation', async () => {
     const { invoiceId } = await setupFinalizedInvoice(10);
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    await confirmInvoice(accountantToken, invoiceId).expect(403);
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const version = await currentVersion(invoiceId);
+    await confirmInvoice(accountantToken, invoiceId, version).expect(403);
+    await confirmInvoice(adminToken, invoiceId, version).expect(403);
+    expect((await prisma.factoryInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).status).toBe('GENERATED');
   });
 });

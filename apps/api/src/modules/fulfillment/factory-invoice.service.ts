@@ -8,6 +8,15 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 
 type Tx = Prisma.TransactionClient;
 
+// Largest amount the Decimal(14,2) line/subtotal/total columns can hold.
+const MAX_STORED_AMOUNT = new Prisma.Decimal('999999999999.99');
+
+function assertAmountFits(amount: Prisma.Decimal, label: string): void {
+  if (amount.greaterThan(MAX_STORED_AMOUNT)) {
+    throw HttpError.badRequest(`${label} exceeds the maximum amount a Factory Invoice can hold`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Access helpers
 // ---------------------------------------------------------------------------
@@ -253,15 +262,33 @@ export async function getFactoryInvoiceList(
 }
 
 // ---------------------------------------------------------------------------
-// FACTORY_USER confirmation — one-way/idempotent. No expectedVersion (mirrors
-// confirmCartonPackingAudit's idempotent no-CAS pattern): re-confirming an
-// already-confirmed (or already-finalized) invoice is a harmless retry, never
-// an error. An explicit switch on every status (rather than a blanket
-// `!== 'GENERATED'` check) so a later status added to the enum can't
-// silently fall through as a no-op success.
+// FACTORY_USER confirmation — the Factory's one-way acknowledgement of the
+// expected invoice (subtotal + GST = total) exactly as last saved. The caller
+// must send the `expectedVersion` it reviewed: if the ACCOUNTANT saved a
+// rate/GST change in the meantime the versions differ and the confirmation is
+// rejected (409) with the invoice left GENERATED, so an obsolete invoice can
+// never be confirmed unseen. Confirmation locks every financial value
+// (updateFactoryInvoiceFinancials only accepts GENERATED).
+//
+// Retry safety: re-sending the confirmation of an already-confirmed invoice is
+// a harmless 200 ONLY when it names the exact version that was confirmed
+// (recorded as `confirmedVersion` in the confirmation's audit entry). A
+// different/older version is never reported as success. A legacy FINALIZED
+// invoice, or a confirmation with no recorded version, is likewise never
+// reported as success for any version. An explicit switch on every status so
+// a later status added to the enum can't silently fall through.
 // ---------------------------------------------------------------------------
 
-export async function confirmFactoryInvoice(actor: CurrentUser, id: string) {
+function staleInvoiceVersion(currentVersion: number): HttpError {
+  return new HttpError(
+    409,
+    'STALE_VERSION',
+    'This Factory Invoice was updated after you opened it. Review the latest values and try again.',
+    { currentVersion },
+  );
+}
+
+export async function confirmFactoryInvoice(actor: CurrentUser, id: string, input: { expectedVersion: number }) {
   assertConfirmAccess(actor);
 
   await prisma.$transaction(async (tx) => {
@@ -272,17 +299,31 @@ export async function confirmFactoryInvoice(actor: CurrentUser, id: string) {
     assertFactoryInvoiceRowAccess(actor, invoice.factoryId);
 
     switch (invoice.status) {
-      case 'FACTORY_CONFIRMED':
+      case 'FACTORY_CONFIRMED': {
+        const confirmation = await tx.auditLog.findFirst({
+          where: { entityType: 'FactoryInvoice', entityId: id, action: 'FACTORY_INVOICE_FACTORY_CONFIRMED' },
+          orderBy: { createdAt: 'desc' },
+        });
+        const metadata = confirmation?.metadata;
+        const confirmedVersion =
+          metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata.confirmedVersion : undefined;
+        if (confirmedVersion === input.expectedVersion) return; // idempotent retry of the confirmation actually recorded
+        throw staleInvoiceVersion(invoice.version);
+      }
       case 'FINALIZED':
-        return; // idempotent no-op: already confirmed (or confirmed-then-finalized)
+        // Legacy status: confirmed-then-finalized under the retired flow. Its
+        // confirmed version is unknowable, so no version is ever "the" confirmed one.
+        throw staleInvoiceVersion(invoice.version);
       case 'GENERATED':
+        if (invoice.version !== input.expectedVersion) throw staleInvoiceVersion(invoice.version);
         break;
     }
 
-    await tx.factoryInvoice.update({
-      where: { id },
+    const updated = await tx.factoryInvoice.updateMany({
+      where: { id, status: 'GENERATED', version: input.expectedVersion },
       data: { status: 'FACTORY_CONFIRMED', factoryConfirmedById: actor.id, factoryConfirmedAt: new Date(), version: { increment: 1 } },
     });
+    if (updated.count !== 1) throw staleInvoiceVersion(invoice.version);
 
     await recordAuditLog(
       {
@@ -290,7 +331,13 @@ export async function confirmFactoryInvoice(actor: CurrentUser, id: string) {
         action: 'FACTORY_INVOICE_FACTORY_CONFIRMED',
         entityType: 'FactoryInvoice',
         entityId: id,
-        metadata: { factoryDispatchId: invoice.factoryDispatchId },
+        metadata: {
+          factoryDispatchId: invoice.factoryDispatchId,
+          confirmedVersion: invoice.version,
+          subtotal: invoice.subtotal.toNumber(),
+          gstAmount: invoice.gstAmount.toNumber(),
+          total: invoice.total.toNumber(),
+        },
       },
       tx,
     );
@@ -300,8 +347,12 @@ export async function confirmFactoryInvoice(actor: CurrentUser, id: string) {
 }
 
 // ---------------------------------------------------------------------------
-// ACCOUNTANT financial edits — permitted only between FACTORY_CONFIRMED and
-// FINALIZED. Desired-state PATCH: computes the proposed values FIRST and, if
+// ACCOUNTANT financial edits — permitted only while the invoice is GENERATED,
+// i.e. before the Factory confirms it; the invoice is an expected billing
+// statement and Factory confirmation locks every financial value. Unit rate
+// overrides, the manually entered GST amount and remarks are the only
+// editable fields; a rate override never touches the defaultRate snapshot or
+// the Style<->Factory master. Desired-state PATCH: computes the proposed values FIRST and, if
 // nothing actually differs from current, returns early with no version bump
 // and no audit entry (mirrors updateFactoryPackingCarton's no-op detection).
 // Never touches Style/Size/quantity/Factory/source references — those simply
@@ -323,13 +374,13 @@ export async function updateFactoryInvoiceFinancials(actor: CurrentUser, id: str
 
     const invoice = await tx.factoryInvoice.findUnique({ where: { id }, include: { lines: true } });
     if (!invoice) throw HttpError.notFound('Factory Invoice not found');
-    if (invoice.version !== input.expectedVersion) throw HttpError.staleVersion(invoice.version);
-    if (invoice.status === 'GENERATED') {
-      throw HttpError.badRequest('The Factory must confirm this invoice before financial values can be edited');
+    if (invoice.status === 'FACTORY_CONFIRMED') {
+      throw HttpError.badRequest('A Factory-confirmed invoice is locked and its financial values cannot be edited');
     }
     if (invoice.status === 'FINALIZED') {
       throw HttpError.badRequest('A finalized Factory Invoice cannot be edited');
     }
+    if (invoice.version !== input.expectedVersion) throw staleInvoiceVersion(invoice.version);
 
     const lineById = new Map(invoice.lines.map((l) => [l.id, l]));
     const rateChanges: Array<{ lineId: string; saleOrderLineId: string; quantity: number; oldRate: Prisma.Decimal; newRate: Prisma.Decimal }> = [];
@@ -351,6 +402,8 @@ export async function updateFactoryInvoiceFinancials(actor: CurrentUser, id: str
       return; // no-op/retry: leave version, audit and totals untouched
     }
 
+    for (const change of rateChanges) assertAmountFits(change.newRate.times(change.quantity), 'A line amount');
+
     for (const change of rateChanges) {
       await tx.factoryInvoiceLine.update({
         where: { id: change.lineId },
@@ -361,6 +414,8 @@ export async function updateFactoryInvoiceFinancials(actor: CurrentUser, id: str
     const allLines = await tx.factoryInvoiceLine.findMany({ where: { factoryInvoiceId: id } });
     const subtotal = allLines.reduce((sum, l) => sum.plus(l.lineAmount), new Prisma.Decimal(0));
     const total = subtotal.plus(newGst);
+    assertAmountFits(subtotal, 'The subtotal');
+    assertAmountFits(total, 'The total');
 
     await tx.factoryInvoice.update({
       where: { id },
@@ -383,51 +438,6 @@ export async function updateFactoryInvoiceFinancials(actor: CurrentUser, id: str
           ...(gstChanged ? { gstAmount: { old: invoice.gstAmount.toNumber(), new: newGst.toNumber() } } : {}),
           ...(remarksChanged ? { remarks: { old: invoice.remarks, new: newRemarks } } : {}),
         },
-      },
-      tx,
-    );
-  });
-
-  return getFactoryInvoiceDetail(actor, id);
-}
-
-// ---------------------------------------------------------------------------
-// ACCOUNTANT finalization — requires FACTORY_CONFIRMED. Recomputes
-// subtotal/total fresh from the stored lines server-side (authoritative,
-// never trusting the cached value) before persisting. After this commits the
-// invoice is immutable: every other mutation here rejects a FINALIZED
-// invoice outright.
-// ---------------------------------------------------------------------------
-
-export async function finalizeFactoryInvoice(actor: CurrentUser, id: string, input: { expectedVersion: number }) {
-  assertFinancialAccess(actor);
-
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`factory-invoice-${id}`}))`;
-
-    const invoice = await tx.factoryInvoice.findUnique({ where: { id }, include: { lines: true } });
-    if (!invoice) throw HttpError.notFound('Factory Invoice not found');
-    if (invoice.version !== input.expectedVersion) throw HttpError.staleVersion(invoice.version);
-    if (invoice.status !== 'FACTORY_CONFIRMED') {
-      throw HttpError.badRequest('Only a Factory-confirmed invoice can be finalized');
-    }
-
-    const subtotal = invoice.lines.reduce((sum, l) => sum.plus(l.lineAmount), new Prisma.Decimal(0));
-    const total = subtotal.plus(invoice.gstAmount);
-
-    const updated = await tx.factoryInvoice.updateMany({
-      where: { id, version: input.expectedVersion },
-      data: { status: 'FINALIZED', finalizedById: actor.id, finalizedAt: new Date(), subtotal, total, version: { increment: 1 } },
-    });
-    if (updated.count !== 1) throw HttpError.staleVersion(invoice.version);
-
-    await recordAuditLog(
-      {
-        actorId: actor.id,
-        action: 'FACTORY_INVOICE_FINALIZED',
-        entityType: 'FactoryInvoice',
-        entityId: id,
-        metadata: { factoryDispatchId: invoice.factoryDispatchId, subtotal: subtotal.toNumber(), gstAmount: invoice.gstAmount.toNumber(), total: total.toNumber() },
       },
       tx,
     );

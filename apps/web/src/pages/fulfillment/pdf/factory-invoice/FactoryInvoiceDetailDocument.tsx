@@ -61,10 +61,10 @@ export function FactoryInvoiceDetailDocument({ viewModel }: FactoryInvoiceDetail
       </PdfSection>
 
       <PdfSection title="Totals">
-        {!viewModel.isFinalized ? (
+        {viewModel.isProvisional ? (
           <View style={styles.provisionalBanner}>
             <Text style={styles.provisionalText}>
-              PROVISIONAL — Not yet finalized. GST and Total are subject to change until the invoice is finalized.
+              PROVISIONAL — Awaiting Factory confirmation. Rates and GST may still be updated by Accounts until the Factory confirms this expected invoice.
             </Text>
           </View>
         ) : null}
@@ -79,7 +79,7 @@ export function FactoryInvoiceDetailDocument({ viewModel }: FactoryInvoiceDetail
           </View>
           <View style={styles.divider} />
           <View style={styles.totalsRow}>
-            <Text style={styles.grandTotalLabel}>Total</Text>
+            <Text style={styles.grandTotalLabel}>Expected Invoice Total</Text>
             <Text style={styles.grandTotalValue}>{viewModel.total}</Text>
           </View>
         </View>

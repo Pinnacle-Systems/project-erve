@@ -4,7 +4,6 @@ import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
-import { versionedActionSchema } from './factory-dispatch.validation.js';
 import {
   confirmFactoryInvoiceSchema,
   listFactoryInvoicesQuerySchema,
@@ -42,8 +41,8 @@ factoryInvoicesRouter.post(
   '/:id/confirm',
   canConfirm,
   asyncHandler(async (req, res) => {
-    confirmFactoryInvoiceSchema.parse(req.body ?? {});
-    const invoice = await factoryInvoiceService.confirmFactoryInvoice(req.user!, req.params.id! as string);
+    const input = confirmFactoryInvoiceSchema.parse(req.body);
+    const invoice = await factoryInvoiceService.confirmFactoryInvoice(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(invoice));
   }),
 );
@@ -54,16 +53,6 @@ factoryInvoicesRouter.patch(
   asyncHandler(async (req, res) => {
     const input = updateFactoryInvoiceFinancialsSchema.parse(req.body);
     const invoice = await factoryInvoiceService.updateFactoryInvoiceFinancials(req.user!, req.params.id! as string, input);
-    res.status(200).json(successResponse(invoice));
-  }),
-);
-
-factoryInvoicesRouter.post(
-  '/:id/finalize',
-  canManageFinancials,
-  asyncHandler(async (req, res) => {
-    const input = versionedActionSchema.parse(req.body);
-    const invoice = await factoryInvoiceService.finalizeFactoryInvoice(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(invoice));
   }),
 );
