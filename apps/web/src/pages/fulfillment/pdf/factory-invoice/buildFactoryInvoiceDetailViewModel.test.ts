@@ -111,18 +111,27 @@ describe('buildFactoryInvoiceDetailViewModel', () => {
       { generatedAt: '2026-07-05T10:00:00Z' },
     );
     expect(vm.identityItems.find((i) => i.label === 'Factory Confirmed')?.value).toBeNull();
-    expect(vm.identityItems.find((i) => i.label === 'Finalized')?.value).toBeNull();
+    expect(vm.identityItems.find((i) => i.label === 'Finalized (legacy)')?.value).toBeNull();
   });
 
-  it('ISS-025: isFinalized is false for GENERATED and FACTORY_CONFIRMED, true only for FINALIZED', () => {
-    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'GENERATED' }), { generatedAt: '2026-07-05T10:00:00Z' }).isFinalized).toBe(false);
-    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'FACTORY_CONFIRMED' }), { generatedAt: '2026-07-05T10:00:00Z' }).isFinalized).toBe(false);
-    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'FINALIZED' }), { generatedAt: '2026-07-05T10:00:00Z' }).isFinalized).toBe(true);
+  it('isProvisional is true only while GENERATED; Factory-confirmed and legacy FINALIZED invoices are not provisional', () => {
+    const meta = { generatedAt: '2026-07-05T10:00:00Z' };
+    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'GENERATED' }), meta).isProvisional).toBe(true);
+    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'FACTORY_CONFIRMED' }), meta).isProvisional).toBe(false);
+    expect(buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'FINALIZED' }), meta).isProvisional).toBe(false);
   });
 
-  it('ISS-025: a legitimate finalized GST of zero still prints as INR 0.00, not blank', () => {
+  it('prints the saved subtotal, GST and total (GST and total included at GENERATED, matching the screen)', () => {
+    const vm = buildFactoryInvoiceDetailViewModel(
+      makeInvoice({ status: 'GENERATED', subtotal: 1000, gstAmount: 180, total: 1180 }),
+      { generatedAt: '2026-07-05T10:00:00Z' },
+    );
+    expect([vm.subtotal, vm.gstAmount, vm.total]).toEqual(['INR 1000.00', 'INR 180.00', 'INR 1180.00']);
+  });
+
+  it('a legacy finalized invoice with a zero GST still prints as INR 0.00, not blank', () => {
     const vm = buildFactoryInvoiceDetailViewModel(makeInvoice({ status: 'FINALIZED', gstAmount: 0, total: 1000 }), { generatedAt: '2026-07-05T10:00:00Z' });
-    expect(vm.isFinalized).toBe(true);
+    expect(vm.isProvisional).toBe(false);
     expect(vm.gstAmount).toBe('INR 0.00');
   });
 

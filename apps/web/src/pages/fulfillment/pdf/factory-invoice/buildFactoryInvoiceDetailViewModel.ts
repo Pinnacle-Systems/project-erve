@@ -32,8 +32,8 @@ export interface FactoryInvoiceDetailPdfViewModel {
   gstAmount: string;
   total: string;
   remarks: string | null;
-  /** ISS-025: GST/Total are only settled once the invoice is FINALIZED — pre-finalization they may still be the generation-time default or an in-progress Accountant entry, so the document qualifies them rather than presenting them as a verified statutory calculation. */
-  isFinalized: boolean;
+  /** The invoice is an expected billing statement: while GENERATED, Accounts may still update rates/GST, so the document says so. Once Factory-confirmed (or legacy FINALIZED) the printed values are the settled expectation and no provisional wording is shown. */
+  isProvisional: boolean;
 }
 
 /**
@@ -69,7 +69,7 @@ export function buildFactoryInvoiceDetailViewModel(
       value: invoice.factoryConfirmedBy ? `${invoice.factoryConfirmedBy.name} · ${formatPdfDateTime(invoice.factoryConfirmedAt)}` : null,
     },
     {
-      label: 'Finalized',
+      label: 'Finalized (legacy)',
       value: invoice.finalizedBy ? `${invoice.finalizedBy.name} · ${formatPdfDateTime(invoice.finalizedAt)}` : null,
     },
   ];
@@ -96,6 +96,6 @@ export function buildFactoryInvoiceDetailViewModel(
     gstAmount: formatPdfMoney(invoice.gstAmount, 'INR'),
     total: formatPdfMoney(invoice.total, 'INR'),
     remarks: invoice.remarks,
-    isFinalized: invoice.status === 'FINALIZED',
+    isProvisional: invoice.status === 'GENERATED',
   };
 }

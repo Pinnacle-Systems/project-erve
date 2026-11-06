@@ -48,7 +48,7 @@ describe('buildFactoryInvoiceListViewModel', () => {
 
   it('includes the active Status filter in the filter summary', () => {
     const vm = buildFactoryInvoiceListViewModel([], { status: 'FINALIZED' }, { generatedAt: '2026-07-01T10:00:00Z' });
-    expect(vm.filters).toEqual([{ label: 'Status', value: 'Finalized' }]);
+    expect(vm.filters).toEqual([{ label: 'Status', value: 'Finalized (legacy)' }]);
   });
 
   it('shows no active Status filter for the "All" tab', () => {

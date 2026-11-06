@@ -15,7 +15,7 @@ import type { FactoryInvoiceStatus, FactoryInvoiceView } from './types.js';
 const STATUS_TABS: Array<{ value: FactoryInvoiceStatus | 'ALL'; label: string }> = [
   { value: 'GENERATED', label: 'Awaiting Factory Confirmation' },
   { value: 'FACTORY_CONFIRMED', label: 'Factory Confirmed' },
-  { value: 'FINALIZED', label: 'Finalized' },
+  { value: 'FINALIZED', label: 'Finalized (legacy)' },
   { value: 'ALL', label: 'All' },
 ];
 

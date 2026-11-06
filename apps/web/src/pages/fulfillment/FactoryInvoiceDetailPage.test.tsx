@@ -115,12 +115,41 @@ async function renderPage(invoice: FactoryInvoiceView, role: Role) {
   await vi.waitFor(() => expect(content()).not.toContain('Loading Factory Invoice'));
 }
 
+const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+
+function typeInto(input: HTMLInputElement, value: string) {
+  act(() => {
+    nativeInputValueSetter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+const confirmedBy = { id: 'u1', name: 'Fac User', email: 'f@test.local' };
+const accountant = { id: 'u2', name: 'Acc User', email: 'a@test.local' };
+
+function buildConfirmedInvoice(overrides: Partial<FactoryInvoiceView> = {}): FactoryInvoiceView {
+  return buildInvoice({
+    status: 'FACTORY_CONFIRMED',
+    factoryConfirmedBy: confirmedBy,
+    factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
+function buildFinalizedInvoice(overrides: Partial<FactoryInvoiceView> = {}): FactoryInvoiceView {
+  return buildConfirmedInvoice({
+    status: 'FINALIZED',
+    finalizedBy: accountant,
+    finalizedAt: '2026-09-03T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
 describe('FactoryInvoiceDetailPage — physical fields are always read-only', () => {
-  it('never renders Style/Size/Quantity/Default Rate as editable inputs, regardless of role or status', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
-    // Only the Unit Rate (and GST/remarks) fields may be inputs while
-    // FACTORY_CONFIRMED for ACCOUNTANT — assert the physical values render
-    // as plain text, not inside any input element.
+  it('never renders Style/Size/Quantity/Default Rate as editable inputs, even while the Accountant is editing', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
+    // Only the Unit Rate (and GST/remarks) fields may be inputs while GENERATED for ACCOUNTANT —
+    // assert the physical values render as plain text, not inside any input element.
     expect(content()).toContain('ST-001');
     expect(content()).toContain('Medium');
     expect(inputs().some((i) => i.value === '10')).toBe(false); // quantity never an input
@@ -135,42 +164,77 @@ describe('FactoryInvoiceDetailPage — FACTORY_USER', () => {
   });
 
   it('hides the Confirm action once already confirmed', async () => {
-    await renderPage(
-      buildInvoice({ status: 'FACTORY_CONFIRMED', factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' }, factoryConfirmedAt: '2026-09-02T00:00:00.000Z' }),
-      'FACTORY_USER',
-    );
+    await renderPage(buildConfirmedInvoice(), 'FACTORY_USER');
     expect(buttonByText('Confirm Factory Invoice')).toBeNull();
   });
 
-  it('never shows a Save Changes or Finalize action to FACTORY_USER', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'FACTORY_USER');
+  it('never shows a Save Changes or Finalize action, nor any editable financial input, to FACTORY_USER', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'FACTORY_USER');
     expect(buttonByText('Save Changes')).toBeNull();
     expect(buttonByText('Finalize')).toBeNull();
+    expect(inputs()).toHaveLength(0);
+  });
+
+  it('shows the complete expected invoice — Subtotal, GST and Expected Invoice Total — before confirmation', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 75, total: 1575 }), 'FACTORY_USER');
+    expect(content()).toContain('Expected Invoice Total');
+    expect(content()).toContain('Subtotal');
+    expect(content()).toContain('GST');
+    expect(content()).toContain('₹1,500.00');
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1,575.00');
+    expect(content()).not.toContain('Production Amount (Before GST)');
+  });
+
+  it('shows a GST of zero as an actual ₹0.00 figure', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 0, total: 1500 }), 'FACTORY_USER');
+    expect(content()).toContain('₹0.00');
+    expect(content()).toContain('₹1,500.00');
+  });
+
+  it('shows the same breakdown, locked, once confirmed', async () => {
+    await renderPage(buildConfirmedInvoice({ subtotal: 1500, gstAmount: 75, total: 1575 }), 'FACTORY_USER');
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1,575.00');
+    expect(content()).toContain('these values are locked');
+  });
+});
+
+describe('FactoryInvoiceDetailPage — ADMIN', () => {
+  it('shows ADMIN the full Subtotal/GST/Total, read-only with no Confirm or Save action', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 75, total: 1575 }), 'ADMIN');
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1,575.00');
+    expect(buttonByText('Confirm Factory Invoice')).toBeNull();
+    expect(buttonByText('Save Changes')).toBeNull();
+    expect(inputs()).toHaveLength(0);
   });
 });
 
 describe('FactoryInvoiceDetailPage — ACCOUNTANT', () => {
-  it('shows a read-only Awaiting Factory Confirmation state while GENERATED, with no edit controls', async () => {
+  it('can edit unit rate, GST and remarks immediately while GENERATED, with Save Changes but no Finalize or Confirm', async () => {
     await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
-    expect(content()).toContain('Awaiting Factory Confirmation');
-    expect(buttonByText('Save Changes')).toBeNull();
+    expect(inputs().some((i) => i.value === '150')).toBe(true); // unit rate input, prefilled from current value
+    expect(inputs().some((i) => i.getAttribute('aria-label') === 'GST amount')).toBe(true);
+    expect(inputs().some((i) => i.getAttribute('aria-label') === 'Remarks')).toBe(true);
+    expect(buttonByText('Save Changes')).not.toBeNull();
     expect(buttonByText('Finalize')).toBeNull();
     expect(buttonByText('Confirm Factory Invoice')).toBeNull();
+    expect(content()).not.toContain('cannot be edited until the Factory confirms');
   });
 
-  it('shows editable unit rate/GST/remarks and Save Changes + Finalize once FACTORY_CONFIRMED', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
-    expect(inputs().some((i) => i.value === '150')).toBe(true); // unit rate input, prefilled from current value
-    expect(buttonByText('Save Changes')).not.toBeNull();
-    expect(buttonByText('Finalize')).not.toBeNull();
+  it('is fully read-only once FACTORY_CONFIRMED: no inputs, no Save Changes, no Finalize', async () => {
+    await renderPage(buildConfirmedInvoice({ subtotal: 1500, gstAmount: 75, total: 1575 }), 'ACCOUNTANT');
+    expect(inputs()).toHaveLength(0);
+    expect(buttonByText('Save Changes')).toBeNull();
+    expect(buttonByText('Finalize')).toBeNull();
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1,575.00');
   });
 
-  it('shows the default rate alongside an overridden unit rate once finalized (non-editing view)', async () => {
+  it('shows the default rate alongside an overridden unit rate once confirmed (non-editing view)', async () => {
     await renderPage(
-      buildInvoice({
-        status: 'FINALIZED',
-        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-        finalizedAt: '2026-09-03T00:00:00.000Z',
+      buildConfirmedInvoice({
         lines: [
           { id: 'line-1', saleOrderLineId: 'sol-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-1', sizeCode: 'M', sizeLabel: 'Medium', quantity: 10, defaultRate: 150, unitRate: 200, lineAmount: 2000 },
         ],
@@ -181,233 +245,120 @@ describe('FactoryInvoiceDetailPage — ACCOUNTANT', () => {
   });
 
   it('disables Save Changes until a value actually changes', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
     expect(buttonByText('Save Changes')!.disabled).toBe(true);
 
-    const rateInput = inputs().find((i) => i.value === '150')!;
-    act(() => {
-      rateInput.dispatchEvent(new Event('focus', { bubbles: true }));
-    });
-    // Simulate a user edit via React's change event.
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      nativeInputValueSetter.call(rateInput, '250');
-      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    typeInto(inputs().find((i) => i.value === '150')!, '250');
     await flush();
 
     expect(buttonByText('Save Changes')!.disabled).toBe(false);
   });
 
-  it('sends the current expectedVersion and changed fields on Save Changes', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', version: 3 }), 'ACCOUNTANT');
+  it('sends the current expectedVersion and the changed rate and GST on Save Changes', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', version: 3 }), 'ACCOUNTANT');
     const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
-      data: { data: buildInvoice({ status: 'FACTORY_CONFIRMED', version: 4 }) },
+      data: { data: buildInvoice({ status: 'GENERATED', version: 4 }) },
     } as never);
 
-    const rateInput = inputs().find((i) => i.value === '150')!;
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      nativeInputValueSetter.call(rateInput, '250');
-      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    typeInto(inputs().find((i) => i.value === '150')!, '250');
+    typeInto(inputs().find((i) => i.getAttribute('aria-label') === 'GST amount')!, '75.5');
     await flush();
     buttonByText('Save Changes')!.click();
     await flush();
 
     expect(patchSpy).toHaveBeenCalledWith(
       '/factory-invoices/inv-1/financials',
-      expect.objectContaining({ expectedVersion: 3, lines: [{ id: 'line-1', unitRate: 250 }] }),
+      expect.objectContaining({ expectedVersion: 3, lines: [{ id: 'line-1', unitRate: 250 }], gstAmount: 75.5 }),
     );
   });
 
+  it('can save a GST of exactly zero', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED', gstAmount: 50, total: 1550 }), 'ACCOUNTANT');
+    const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: buildInvoice({ version: 2 }) } } as never);
+
+    typeInto(inputs().find((i) => i.getAttribute('aria-label') === 'GST amount')!, '0');
+    await flush();
+    expect(buttonByText('Save Changes')!.disabled).toBe(false);
+    buttonByText('Save Changes')!.click();
+    await flush();
+
+    expect(patchSpy).toHaveBeenCalledWith('/factory-invoices/inv-1/financials', expect.objectContaining({ gstAmount: 0 }));
+  });
+
+  it.each([
+    ['a negative GST', '-5'],
+    ['a GST with more than 2 decimal places', '10.123'],
+    ['a blank GST', ''],
+  ])('blocks saving %s and says why', async (_label, value) => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
+    typeInto(inputs().find((i) => i.getAttribute('aria-label') === 'GST amount')!, value);
+    await flush();
+
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    expect(content()).toContain('GST must be zero or more, with at most 2 decimal places');
+  });
+
+  it('blocks saving a zero unit rate', async () => {
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
+    typeInto(inputs().find((i) => i.value === '150')!, '0');
+    await flush();
+
+    expect(buttonByText('Save Changes')!.disabled).toBe(true);
+    expect(content()).toContain('Unit rates must be greater than zero');
+  });
+
   it('surfaces a server error message on a failed Save Changes', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
     vi.spyOn(apiClient, 'patch').mockRejectedValue({
       isAxiosError: true,
       response: { data: { error: { message: 'The invoice changed since it was loaded' } } },
     });
 
-    const rateInput = inputs().find((i) => i.value === '150')!;
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      nativeInputValueSetter.call(rateInput, '250');
-      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    typeInto(inputs().find((i) => i.value === '150')!, '250');
     await flush();
     buttonByText('Save Changes')!.click();
     await flush();
 
     expect(content()).toContain('The invoice changed since it was loaded');
   });
-
-  it('rejects finalizing a not-yet-confirmed invoice at the UI level by never showing Finalize', async () => {
-    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
-    expect(buttonByText('Finalize')).toBeNull();
-  });
 });
 
-describe('FactoryInvoiceDetailPage — ISS-025 pre-tax Factory confirmation', () => {
-  // --- FACTORY_USER: pre-tax only while not FINALIZED, real GST once FINALIZED ---
-
-  it('shows a plain pre-tax Production Amount to FACTORY_USER on a GENERATED invoice, never a misleading GST ₹0.00 row', async () => {
-    await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 0, total: 1500 }), 'FACTORY_USER');
-    expect(content()).toContain('Factory Amount Confirmation');
-    expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹1,500.00');
-    expect(content()).not.toContain('₹0.00');
-    expect(buttonByText('Confirm Factory Invoice')).not.toBeNull();
+describe('FactoryInvoiceDetailPage — legacy FINALIZED records', () => {
+  it('stay readable and fully read-only for every role, labelled legacy', async () => {
+    await renderPage(buildFinalizedInvoice({ subtotal: 1500, gstAmount: 75, total: 1575 }), 'ACCOUNTANT');
+    expect(content()).toContain('Finalized (legacy)');
+    expect(content()).toContain('Acc User');
+    expect(content()).toContain('₹75.00');
+    expect(content()).toContain('₹1,575.00');
+    expect(inputs()).toHaveLength(0);
+    expect(buttonByText('Save Changes')).toBeNull();
+    expect(buttonByText('Finalize')).toBeNull();
   });
 
-  it('keeps FACTORY_USER on the plain pre-tax amount at FACTORY_CONFIRMED too — GST is still not settled until FINALIZED', async () => {
-    await renderPage(
-      buildInvoice({
-        status: 'FACTORY_CONFIRMED',
-        subtotal: 1500,
-        gstAmount: 75, // Accountant has started entering a value, but it's still not final
-        total: 1575,
-        factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' },
-        factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
-      }),
-      'FACTORY_USER',
-    );
-    // No longer "Factory Amount Confirmation" (nothing left to confirm), but still the plain pre-tax framing.
-    expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹1,500.00');
-    expect(content()).not.toContain('₹75.00'); // the in-progress GST figure is not shown to this viewer yet
+  it('shows no Confirm action to FACTORY_USER', async () => {
+    await renderPage(buildFinalizedInvoice(), 'FACTORY_USER');
     expect(buttonByText('Confirm Factory Invoice')).toBeNull();
-  });
-
-  it('shows the real, finalized GST/Total breakdown to FACTORY_USER once the invoice is FINALIZED', async () => {
-    await renderPage(
-      buildInvoice({
-        status: 'FINALIZED',
-        subtotal: 1500,
-        gstAmount: 75,
-        total: 1575,
-        factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' },
-        factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
-        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-        finalizedAt: '2026-09-03T00:00:00.000Z',
-      }),
-      'FACTORY_USER',
-    );
-    expect(content()).not.toContain('Factory Amount Confirmation');
-    expect(content()).not.toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹75.00');
-    expect(content()).toContain('₹1,575.00');
-    expect(content()).not.toContain('Provisional');
-  });
-
-  it('shows a legitimate finalized GST of zero to FACTORY_USER as an actual ₹0.00 figure, not hidden or pre-tax-only', async () => {
-    await renderPage(
-      buildInvoice({
-        status: 'FINALIZED',
-        subtotal: 1500,
-        gstAmount: 0,
-        total: 1500,
-        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-        finalizedAt: '2026-09-03T00:00:00.000Z',
-      }),
-      'FACTORY_USER',
-    );
-    expect(content()).not.toContain('Production Amount (Before GST)');
-    expect(content()).toContain('Subtotal');
-    expect(content()).toContain('₹0.00');
-  });
-
-  // --- ADMIN: same non-Accountant treatment as FACTORY_USER ---
-
-  it('shows the same plain pre-tax confirmation to ADMIN (a read-only, non-Accountant viewer) on a GENERATED invoice', async () => {
-    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ADMIN');
-    expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).not.toContain('₹0.00');
-  });
-
-  it('keeps ADMIN on the plain pre-tax amount at FACTORY_CONFIRMED too', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 40, total: 1540 }), 'ADMIN');
-    expect(content()).toContain('Production Amount (Before GST)');
-    expect(content()).not.toContain('₹40.00');
-  });
-
-  it('shows ADMIN the real breakdown once FINALIZED', async () => {
-    await renderPage(buildInvoice({ status: 'FINALIZED', gstAmount: 40, total: 1540 }), 'ADMIN');
-    expect(content()).not.toContain('Production Amount (Before GST)');
-    expect(content()).toContain('₹40.00');
-  });
-
-  // --- ACCOUNTANT: always the full, editable breakdown; marked provisional pre-finalization ---
-
-  it('still shows the full Subtotal/GST/Total breakdown to ACCOUNTANT on a GENERATED invoice, marked Provisional', async () => {
-    await renderPage(buildInvoice({ status: 'GENERATED' }), 'ACCOUNTANT');
-    expect(content()).toContain('Subtotal');
-    expect(content()).toContain('₹0.00'); // the real (not-yet-set) GST value, visible to the role authorized to set it
-    expect(content()).not.toContain('Factory Amount Confirmation');
-    expect(content()).toContain('Provisional');
-  });
-
-  it('shows the full breakdown to ACCOUNTANT at FACTORY_CONFIRMED, editable and marked Provisional', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 75, total: 1575 }), 'ACCOUNTANT');
-    expect(content()).toContain('Provisional');
-    expect(content()).toContain('₹1,575.00');
-  });
-
-  it('a recorded GST of exactly zero at FACTORY_CONFIRMED remains in the editable input, never treated as missing', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', gstAmount: 0, total: 1500 }), 'ACCOUNTANT');
-    // The GST TextField (type="number") is prefilled with the real stored value, including zero —
-    // never blank/disabled/replaced by a "not set" placeholder.
-    expect(inputs().some((i) => i.type === 'number' && i.value === '0')).toBe(true);
-  });
-
-  it('drops the Provisional label once FINALIZED — the stored GST is now the actual, settled figure', async () => {
-    await renderPage(
-      buildInvoice({
-        status: 'FINALIZED',
-        gstAmount: 75,
-        total: 1575,
-        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-        finalizedAt: '2026-09-03T00:00:00.000Z',
-      }),
-      'ACCOUNTANT',
-    );
-    expect(content()).not.toContain('Provisional');
-    expect(content()).toContain('₹75.00');
-  });
-
-  it('shows a legitimate finalized GST of zero to ACCOUNTANT as an actual ₹0.00 figure, not hidden', async () => {
-    await renderPage(
-      buildInvoice({
-        status: 'FINALIZED',
-        gstAmount: 0,
-        total: 1500,
-        finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-        finalizedAt: '2026-09-03T00:00:00.000Z',
-      }),
-      'ACCOUNTANT',
-    );
-    expect(content()).not.toContain('Provisional');
-    expect(content()).toContain('Subtotal');
-    expect(content()).toContain('₹0.00');
   });
 });
 
 describe('FactoryInvoiceDetailPage — ISS-010 Style-level financial grouping', () => {
-  function multiSizeInvoice(): FactoryInvoiceView {
+  function multiSizeInvoice(overrides: Partial<FactoryInvoiceView> = {}): FactoryInvoiceView {
     return buildInvoice({
-      status: 'FINALIZED',
-      finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-      finalizedAt: '2026-09-03T00:00:00.000Z',
+      status: 'FACTORY_CONFIRMED',
+      factoryConfirmedBy: confirmedBy,
+      factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
       subtotal: 3000,
       total: 3000,
       lines: [
         { id: 'line-1', saleOrderLineId: 'sol-1', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-s', sizeCode: 'S', sizeLabel: 'Small', quantity: 10, defaultRate: 100, unitRate: 100, lineAmount: 1000 },
         { id: 'line-2', saleOrderLineId: 'sol-2', styleId: 'style-1', styleNumber: 'ST-001', styleName: 'Classic Tee', sizeId: 'size-m', sizeCode: 'M', sizeLabel: 'Medium', quantity: 20, defaultRate: 100, unitRate: 100, lineAmount: 2000 },
       ],
+      ...overrides,
     });
   }
 
   it('collapses a Style packed in multiple Sizes into a single financial row with a Size Breakdown and summed Amount', async () => {
-    await renderPage(multiSizeInvoice(), 'ACCOUNTANT');
+    await renderPage(multiSizeInvoice(), 'FACTORY_USER');
     // Style text appears exactly once as a row label (not once per Size).
     expect(content().match(/ST-001/g)?.length).toBe(1);
     expect(content()).toContain('Small: 10');
@@ -415,35 +366,10 @@ describe('FactoryInvoiceDetailPage — ISS-010 Style-level financial grouping', 
     expect(content()).toContain('₹3,000.00'); // summed line amount for the group
   });
 
-  it('keeps the ungrouped, per-line editable table for ACCOUNTANT while actively editing (FACTORY_CONFIRMED)', async () => {
-    const invoice = { ...multiSizeInvoice(), status: 'FACTORY_CONFIRMED' as const, finalizedBy: null, finalizedAt: null };
-    await renderPage(invoice, 'ACCOUNTANT');
+  it('keeps the ungrouped, per-line editable table for ACCOUNTANT while actively editing (GENERATED)', async () => {
+    await renderPage(multiSizeInvoice({ status: 'GENERATED', factoryConfirmedBy: null, factoryConfirmedAt: null }), 'ACCOUNTANT');
     // Two separate editable Unit Rate inputs — one per source line — proving grouping is bypassed here.
     expect(inputs().filter((i) => i.value === '100')).toHaveLength(2);
-  });
-});
-
-function buildFinalizedInvoice(): FactoryInvoiceView {
-  return buildInvoice({
-    status: 'FINALIZED',
-    factoryConfirmedBy: { id: 'u1', name: 'Fac User', email: 'f@test.local' },
-    factoryConfirmedAt: '2026-09-02T00:00:00.000Z',
-    finalizedBy: { id: 'u2', name: 'Acc User', email: 'a@test.local' },
-    finalizedAt: '2026-09-03T00:00:00.000Z',
-  });
-}
-
-describe('FactoryInvoiceDetailPage — finalized is fully read-only', () => {
-  it('shows no Save Changes/Finalize action to ACCOUNTANT once FINALIZED', async () => {
-    await renderPage(buildFinalizedInvoice(), 'ACCOUNTANT');
-    expect(buttonByText('Save Changes')).toBeNull();
-    expect(buttonByText('Finalize')).toBeNull();
-    expect(content()).toContain('Acc User');
-  });
-
-  it('shows no Confirm action to FACTORY_USER once FINALIZED', async () => {
-    await renderPage(buildFinalizedInvoice(), 'FACTORY_USER');
-    expect(buttonByText('Confirm Factory Invoice')).toBeNull();
   });
 });
 
@@ -500,110 +426,89 @@ describe('FactoryInvoiceDetailPage load error handling (UXAUTH-018)', () => {
   });
 });
 
-
-describe('Factory Invoice confirmation safety (UX-03)', () => {
-  it('shows the persisted payable amount (not the production subtotal) before Accountant finalization', async () => {
-    const invoice = buildInvoice({ status: 'FACTORY_CONFIRMED', subtotal: 1500, gstAmount: 75, total: 1575 });
-    await renderPage(invoice, 'ACCOUNTANT');
-    act(() => buttonByText('Finalize')!.click());
-
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
-    const dialog = document.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain('EIFD/26-27/0001');
-    expect(dialog.textContent).toContain('Saved payable: ₹1,575.00');
-    expect(dialog.textContent).not.toContain('Saved payable: ₹1,500.00');
-
-    const close = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Editing');
-    act(() => close!.click());
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
-  });
-
-  it('closes the invoice finalization confirmation after a successful request', async () => {
-    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildInvoice({ status: 'FINALIZED' }) } } as never);
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED', total: 1575, gstAmount: 75 }), 'ACCOUNTANT');
-    act(() => buttonByText('Finalize')!.click());
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
-    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'))
-      .find((b) => b.textContent === 'Finalize Factory Invoice');
-    act(() => confirm!.click());
-    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/finalize', { expectedVersion: 1 }));
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
-  });
-
-
-
-  it('requires Accountant to save modified financial values before finalizing', async () => {
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
-    const finalize = buttonByText('Finalize')!;
-    expect(finalize.disabled).toBe(false);
-    const rateInput = inputs().find((i) => i.value === '150')!;
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(rateInput, '250');
-      rateInput.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await flush();
-    expect(finalize.disabled).toBe(true);
-    expect(content()).toContain('Save financial changes before finalizing');
-    expect(document.querySelector('[role="dialog"]')).toBeNull();
-  });
-
-  it('submits the Factory confirmation only after confirming the dialog', async () => {
-    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildInvoice({ status: 'FACTORY_CONFIRMED' }) } } as never);
-    await renderPage(buildInvoice({ status: 'GENERATED' }), 'FACTORY_USER');
+describe('Factory Invoice confirmation safety', () => {
+  function openConfirmDialog() {
     act(() => buttonByText('Confirm Factory Invoice')!.click());
-    expect(post).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
-    const dialog = document.querySelector('[role="dialog"]')!;
-    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Confirm Factory Invoice')!;
-    act(() => confirm.click());
-    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/confirm', {}));
-  });
+    return vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+  }
 
-  it('keeps the finalization dialog open and shows a retryable server error', async () => {
-    const post = vi.spyOn(apiClient, 'post').mockRejectedValue({
-      isAxiosError: true,
-      response: { data: { error: { message: 'Invoice financial version changed' } } },
-    });
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
-    act(() => buttonByText('Finalize')!.click());
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
-    const dialog = document.querySelector('[role="dialog"]')!;
-    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Finalize Factory Invoice')!;
-    act(() => confirm.click());
-    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/finalize', { expectedVersion: 1 }));
-    await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('Invoice financial version changed'));
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
-  });
+  function dialogConfirmButton() {
+    return Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find(
+      (b) => b.textContent === 'Confirm Factory Invoice',
+    )!;
+  }
 
-
-  it('requires explicit factory confirmation and only exposes pre-tax amount', async () => {
+  it('shows the exact saved Subtotal, GST and Expected Invoice Total in the confirmation dialog', async () => {
     const post = vi.spyOn(apiClient, 'post');
     await renderPage(buildInvoice({ status: 'GENERATED', subtotal: 1500, gstAmount: 75, total: 1575 }), 'FACTORY_USER');
-    act(() => buttonByText('Confirm Factory Invoice')!.click());
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+    await openConfirmDialog();
     const dialog = document.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain('₹1,500.00');
     expect(dialog.textContent).toContain('EIFD/26-27/0001');
-    expect(dialog.textContent).not.toContain('₹75.00');
-    expect(dialog.textContent).not.toContain('₹1,575.00');
+    expect(dialog.textContent).toContain('Subtotal ₹1,500.00');
+    expect(dialog.textContent).toContain('GST ₹75.00');
+    expect(dialog.textContent).toContain('Expected Invoice Total ₹1,575.00');
     expect(post).not.toHaveBeenCalled();
+
     const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Reviewing');
     act(() => exit!.click());
     expect(post).not.toHaveBeenCalled();
   });
 
-  it('requires confirmation before Accountant finalization, and closing it does not submit', async () => {
-    const post = vi.spyOn(apiClient, 'post');
-    await renderPage(buildInvoice({ status: 'FACTORY_CONFIRMED' }), 'ACCOUNTANT');
-    act(() => buttonByText('Finalize')!.click());
-    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull());
+  it('submits the Factory confirmation with the reviewed version only after confirming the dialog', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildConfirmedInvoice({ version: 8 }) } } as never);
+    await renderPage(buildInvoice({ status: 'GENERATED', version: 7 }), 'FACTORY_USER');
+    await openConfirmDialog();
+    expect(post).not.toHaveBeenCalled();
+    act(() => dialogConfirmButton().click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/confirm', { expectedVersion: 7 }));
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  });
+
+  it('on a stale 409, closes the dialog, reloads the invoice and requires a fresh confirmation click', async () => {
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: {
+          data: { error: { code: 'STALE_VERSION', message: 'This Factory Invoice was updated after you opened it. Review the latest values and try again.' } },
+        },
+      })
+      .mockResolvedValue({ data: { data: buildConfirmedInvoice({ version: 4 }) } } as never);
+    await renderPage(buildInvoice({ status: 'GENERATED', version: 1, subtotal: 1500, gstAmount: 0, total: 1500 }), 'FACTORY_USER');
+    const getSpy = vi.mocked(apiClient.get);
+    // Accounts saves GST while the reviewer still has the old page open: the reload returns the new version.
+    getSpy.mockImplementation(async (url: string) => {
+      if (url === '/factory-invoices/inv-1') {
+        return { data: { data: buildInvoice({ status: 'GENERATED', version: 3, subtotal: 1500, gstAmount: 75, total: 1575 }) } };
+      }
+      throw new Error(`Unexpected GET: ${url}`);
+    });
+
+    await openConfirmDialog();
+    act(() => dialogConfirmButton().click());
+    await vi.waitFor(() => expect(post).toHaveBeenCalledWith('/factory-invoices/inv-1/confirm', { expectedVersion: 1 }));
+
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    await vi.waitFor(() => expect(content()).toContain('₹1,575.00')); // reloaded values on screen
+    expect(content()).toContain('This Factory Invoice was updated after you opened it');
+    expect(post).toHaveBeenCalledTimes(1); // never auto-retried
+
+    await openConfirmDialog();
+    expect(document.querySelector('[role="dialog"]')!.textContent).toContain('Expected Invoice Total ₹1,575.00');
+    act(() => dialogConfirmButton().click());
+    await vi.waitFor(() => expect(post).toHaveBeenLastCalledWith('/factory-invoices/inv-1/confirm', { expectedVersion: 3 }));
+  });
+
+  it('keeps the dialog open and shows a retryable server error for a non-stale failure', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue({
+      isAxiosError: true,
+      response: { data: { error: { code: 'FORBIDDEN', message: 'You do not have access to this Factory Invoice' } } },
+    });
+    await renderPage(buildInvoice({ status: 'GENERATED' }), 'FACTORY_USER');
+    await openConfirmDialog();
+    act(() => dialogConfirmButton().click());
     const dialog = document.querySelector('[role="dialog"]')!;
-    expect(dialog.textContent).toContain('EIFD/26-27/0001');
-    expect(dialog.textContent).toContain('Save any unsaved changes');
-    expect(post).not.toHaveBeenCalled();
-    const exit = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent === 'Continue Editing');
-    act(() => exit!.click());
-    expect(post).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('You do not have access'));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 });

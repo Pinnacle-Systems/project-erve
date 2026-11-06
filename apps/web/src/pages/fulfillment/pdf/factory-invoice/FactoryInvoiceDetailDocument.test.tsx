@@ -44,7 +44,7 @@ function makeViewModel(overrides: Partial<FactoryInvoiceDetailPdfViewModel> = {}
     gstAmount: 'INR 50.00',
     total: 'INR 1050.00',
     remarks: null,
-    isFinalized: false,
+    isProvisional: false,
     ...overrides,
   };
 }
@@ -80,26 +80,32 @@ describe('FactoryInvoiceDetailDocument', () => {
   }, 10000);
 });
 
-describe('FactoryInvoiceDetailDocument — ISS-025 Provisional qualifier', () => {
-  it('shows a PROVISIONAL banner near the Totals when the invoice is not finalized', async () => {
-    const text = await renderText(makeViewModel({ isFinalized: false }));
+describe('FactoryInvoiceDetailDocument — expected-invoice Provisional qualifier', () => {
+  it('shows the complete expected invoice (Subtotal, GST, Expected Invoice Total) with a PROVISIONAL banner while GENERATED', async () => {
+    const text = await renderText(makeViewModel({ isProvisional: true }));
     expect(text).toContain('PROVISIONAL');
-    expect(text).toContain('Not yet finalized');
+    expect(text).toContain('Awaiting Factory confirmation');
+    expect(text).toContain('INR 1000.00');
+    expect(text).toContain('INR 50.00');
+    expect(text).toContain('Expected Invoice Total');
+    expect(text).toContain('INR 1050.00');
   });
 
-  it('shows the PROVISIONAL banner at GENERATED-equivalent (isFinalized: false) even when GST is zero', async () => {
-    const text = await renderText(makeViewModel({ isFinalized: false, gstAmount: 'INR 0.00', total: 'INR 1000.00' }));
+  it('shows the PROVISIONAL banner at GENERATED even when GST is zero', async () => {
+    const text = await renderText(makeViewModel({ isProvisional: true, gstAmount: 'INR 0.00', total: 'INR 1000.00' }));
     expect(text).toContain('PROVISIONAL');
   });
 
-  it('omits the PROVISIONAL banner once the invoice is finalized', async () => {
-    const text = await renderText(makeViewModel({ isFinalized: true }));
+  it('omits the PROVISIONAL banner once the invoice is Factory-confirmed or legacy finalized, still printing GST and total', async () => {
+    const text = await renderText(makeViewModel({ isProvisional: false }));
     expect(text).not.toContain('PROVISIONAL');
-    expect(text).not.toContain('Not yet finalized');
+    expect(text).not.toContain('Awaiting Factory confirmation');
+    expect(text).toContain('INR 50.00');
+    expect(text).toContain('INR 1050.00');
   });
 
-  it('a finalized invoice with a legitimate zero GST still prints the real INR 0.00 figure, unqualified', async () => {
-    const text = await renderText(makeViewModel({ isFinalized: true, gstAmount: 'INR 0.00', total: 'INR 1000.00' }));
+  it('a confirmed invoice with a legitimate zero GST still prints the real INR 0.00 figure, unqualified', async () => {
+    const text = await renderText(makeViewModel({ isProvisional: false, gstAmount: 'INR 0.00', total: 'INR 1000.00' }));
     expect(text).not.toContain('PROVISIONAL');
     expect(text).toContain('INR 0.00');
   });

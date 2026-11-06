@@ -3,7 +3,7 @@ import type { FactoryInvoiceStatus } from './types.js';
 export const FACTORY_INVOICE_STATUS_LABELS: Record<FactoryInvoiceStatus, string> = {
   GENERATED: 'Awaiting Factory Confirmation',
   FACTORY_CONFIRMED: 'Factory Confirmed',
-  FINALIZED: 'Finalized',
+  FINALIZED: 'Finalized (legacy)',
 };
 
 export function factoryInvoiceStatusTone(status: FactoryInvoiceStatus) {
