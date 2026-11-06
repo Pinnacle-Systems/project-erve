@@ -99,6 +99,33 @@ describe('buildErveDispatchDetailViewModel', () => {
     expect(vm.deliveryItems[0]?.value).toContain('Warehouse User');
   });
 
+  it('labels a Distributor-confirmed delivery and prints the Distributor receipt summary', () => {
+    const dispatch = makeDispatch({
+      status: 'DELIVERED',
+      deliveryConfirmationSource: 'DISTRIBUTOR_CONFIRMED',
+      deliveredBy: { id: 'u3', name: 'Dana Distributor', email: 'd@x.test' },
+      deliveredAt: '2026-07-05T12:00:00.000Z',
+      distributorReceipt: {
+        id: 'r1',
+        receivedBy: { id: 'u3', name: 'Dana Distributor' },
+        receivedAt: '2026-07-05T12:00:00.000Z',
+        remarks: null,
+        ledgerDisposition: 'APPLIED',
+        totalDispatchedQuantity: 20,
+        totalReceivedQuantity: 18,
+        totalShortageQuantity: 2,
+        prior: { status: 'DISPATCHED', deliveryConfirmationSource: null, deliveredBy: null, deliveredAt: null, deliveryRemarks: null },
+        downstreamBasis: 'DISTRIBUTOR_RECEIPT',
+        hasLedgerDiscrepancy: false,
+        lines: [],
+      },
+    });
+    const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-06T10:00:00Z' });
+    expect(vm.deliveryItems[0]?.value).toContain('Confirmed by Distributor');
+    expect(vm.deliveryItems[0]?.value).toContain('Dana Distributor');
+    expect(vm.deliveryItems.find((item) => item.label === 'Distributor Receipt')?.value).toContain('received 18 of 20');
+  });
+
   it('does not leak unrelated/internal properties into the printable view model', () => {
     const dispatch = { ...makeDispatch(), internalId: 'secret', rawSnapshotJson: '{}' } as ErveDispatchView;
     const vm = buildErveDispatchDetailViewModel(dispatch, { generatedAt: '2026-07-01T10:00:00Z' });

@@ -315,7 +315,8 @@ export interface SaleOrderDetail extends SaleOrderSummary {
 export type FactoryDispatchStatus = 'DRAFT' | 'READY_FOR_ERVE';
 export type ErvePackingListStatus = 'OPEN' | 'FINALIZED' | 'DISPATCHED';
 export type ErveDispatchStatus = 'DISPATCHED' | 'DELIVERED';
-export type DeliveryConfirmationSource = 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT';
+export type DeliveryConfirmationSource = 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT' | 'DISTRIBUTOR_CONFIRMED';
+export type DistributorReceiptLedgerDisposition = 'APPLIED' | 'NOT_APPLIED_ZERO' | 'EVIDENCE_ONLY_EXISTING';
 
 /** One Dispatch Order line a FACTORY_USER may pack, scoped to their own mapped Factory only — business-level (no StockAllocation/QaReleaseLine/Job Order exposed). */
 export interface FactoryPackingQueueLine {
@@ -708,6 +709,69 @@ export interface ErveDispatchQuantityLine {
   sizeLabel: string;
   sizeSortOrder?: number;
   quantity: number;
+  /** Detail-only source references for Distributor Receipt allocation (A4). */
+  saleOrderNumber?: string;
+  purchaseMode?: PurchaseMode;
+}
+
+/** One Sale Order line's share of a Distributor's final receipt attestation (A4). */
+export interface ErveDispatchDistributorReceiptLineView {
+  saleOrderLineId: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  sizeSortOrder?: number;
+  saleOrderNumber: string;
+  purchaseMode: PurchaseMode;
+  dispatchedQuantity: number;
+  receivedQuantity: number;
+  /** dispatched - received, derived on read. */
+  shortageQuantity: number;
+  /** Ledger quantity at submission time; null when no ledger row existed. */
+  previousLedgerQuantity: number | null;
+  /** The ledger quantity that currently drives downstream calculations; null when none exists. */
+  currentLedgerQuantity: number | null;
+}
+
+/** Immutable Distributor attestation of actual receipt (A4). Separate evidence from the ledger. */
+export interface ErveDispatchDistributorReceiptView {
+  id: string;
+  receivedBy: { id: string; name: string };
+  receivedAt: string;
+  remarks: string | null;
+  ledgerDisposition: DistributorReceiptLedgerDisposition;
+  totalDispatchedQuantity: number;
+  totalReceivedQuantity: number;
+  totalShortageQuantity: number;
+  /** The Dispatch header state this attestation found and, unless APPLIED, left untouched. */
+  prior: {
+    status: ErveDispatchStatus;
+    deliveryConfirmationSource: DeliveryConfirmationSource | null;
+    deliveredBy: { id: string; name: string } | null;
+    deliveredAt: string | null;
+    deliveryRemarks: string | null;
+  };
+  /** Which record currently drives Actual Sales / Returns / Sale-or-Return positions. */
+  downstreamBasis: 'DISTRIBUTOR_RECEIPT' | 'EXISTING_LEDGER' | 'NONE';
+  /** True when any line's attested quantity differs from the ledger that drives downstream. */
+  hasLedgerDiscrepancy: boolean;
+  lines: ErveDispatchDistributorReceiptLineView[];
+}
+
+export interface SubmitDistributorReceiptRequest {
+  expectedVersion: number;
+  acknowledged: true;
+  remarks?: string | null;
+  groups: Array<{
+    styleId: string;
+    sizeId: string;
+    receivedQuantity: number;
+    /** Required only for a partial receipt of a Style x Size spanning several Sale Order lines. */
+    allocations?: Array<{ saleOrderLineId: string; receivedQuantity: number }>;
+  }>;
 }
 
 /** Deliberately independent of full dispatch, financial and packing projections. */
@@ -730,6 +794,10 @@ export interface ErveDispatchView extends VersionedResource {
   quantityLines?: ErveDispatchQuantityLine[];
   /** Persisted fallback evidence, never inferred from dispatched quantities. */
   deliveryLines?: Array<{ saleOrderLineId: string; receivedQuantity: number }>;
+  /** Detail-only: the Distributor's final receipt attestation, if submitted (A4). */
+  distributorReceipt?: ErveDispatchDistributorReceiptView | null;
+  /** Detail-only: whether the viewer may submit the final receipt now (A4). */
+  canSubmitDistributorReceipt?: boolean;
   id: string;
   destination?: ErvePackingListDestinationSnapshot;
   erveDispatchNumber: string;

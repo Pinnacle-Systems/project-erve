@@ -1,10 +1,38 @@
 import { DescriptionList, Panel } from '@erve/layout';
 import type { ErveDispatchView } from '../types.js';
 import { DispatchQuantityMatrix } from './DispatchQuantityMatrix.js';
+import { DistributorReceiptEvidence } from './DistributorReceiptEvidence.js';
+import { DistributorReceiptForm } from './DistributorReceiptForm.js';
 
 export function DispatchReceiptTab({ dispatch }: { dispatch: ErveDispatchView }) {
+  const receipt = dispatch.distributorReceipt ?? null;
+  const showForm = !receipt && dispatch.canSubmitDistributorReceipt === true;
+  // An applied distributor receipt IS the ledger; otherwise the earlier
+  // confirmation (if any) is shown separately as the ledger still in use.
+  // While the distributor is entering a first receipt and no earlier ledger
+  // exists, there is nothing to show beneath the form.
+  const showLedger = receipt
+    ? receipt.ledgerDisposition !== 'APPLIED'
+    : !(showForm && dispatch.deliveryConfirmationSource === null);
+  return (
+    <div className="space-y-4">
+      {receipt && <DistributorReceiptEvidence dispatch={dispatch} receipt={receipt} />}
+      {showForm && <DistributorReceiptForm dispatch={dispatch} />}
+      {showLedger && <ConfirmedLedgerPanels dispatch={dispatch} hasReceipt={receipt !== null} />}
+    </div>
+  );
+}
+
+function ConfirmedLedgerPanels({
+  dispatch,
+  hasReceipt,
+}: {
+  dispatch: ErveDispatchView;
+  hasReceipt: boolean;
+}) {
   const assumed = dispatch.deliveryConfirmationSource === 'LEGACY_ASSUMED_FULL_RECEIPT';
   const confirmed = dispatch.deliveryConfirmationSource === 'USER_CONFIRMED';
+  const distributorConfirmed = dispatch.deliveryConfirmationSource === 'DISTRIBUTOR_CONFIRMED';
   const received = new Map(
     dispatch.deliveryLines?.map((line) => [line.saleOrderLineId, line.receivedQuantity]),
   );
@@ -13,22 +41,31 @@ export function DispatchReceiptTab({ dispatch }: { dispatch: ErveDispatchView })
     .filter((line) => received.has(line.saleOrderLineId))
     .map((line) => ({ ...line, quantity: received.get(line.saleOrderLineId)! }));
   return (
-    <div className="space-y-4">
-      <Panel title="Distributor Receipt">
-        <p className="text-sm">Separate distributor confirmation is not yet available.</p>
-        <p className="mt-2 text-sm text-muted-foreground">
+    <>
+      <Panel title={hasReceipt ? 'Delivery Confirmation Ledger (In Use)' : 'Distributor Receipt'}>
+        <p className="text-sm text-muted-foreground">
           {assumed
             ? 'Assumed full receipt (legacy — not actually confirmed). Recorded quantities are compatibility assumptions, not distributor confirmation.'
             : confirmed
-              ? 'Delivery was confirmed through the Admin / Merchandiser fallback. This is recorded delivery evidence, not a separate distributor sign-off.'
-              : 'No confirmed receipt evidence is available. Dispatched quantities do not establish quantities received by the distributor.'}
+              ? 'Delivery was confirmed through the Admin / Merchandiser fallback. This is recorded delivery evidence, not a distributor sign-off.'
+              : distributorConfirmed
+                ? 'Delivery was confirmed by the Distributor.'
+                : hasReceipt
+                  ? 'No received quantities are recorded for this dispatch.'
+                  : 'The Distributor has not yet submitted a final receipt. Dispatched quantities do not establish quantities received by the distributor.'}
         </p>
-        {(confirmed || assumed) && (
+        {(confirmed || assumed || distributorConfirmed) && (
           <div className="mt-3">
             <DescriptionList columns={3}>
               <DescriptionList.Item
                 label="Evidence Source"
-                value={assumed ? 'Legacy assumption' : 'Admin / Merchandiser delivery fallback'}
+                value={
+                  assumed
+                    ? 'Legacy assumption'
+                    : distributorConfirmed
+                      ? 'Distributor confirmation'
+                      : 'Admin / Merchandiser delivery fallback'
+                }
               />
               <DescriptionList.Item
                 label="Recorded By"
@@ -65,6 +102,6 @@ export function DispatchReceiptTab({ dispatch }: { dispatch: ErveDispatchView })
           </p>
         )}
       </Panel>
-    </div>
+    </>
   );
 }

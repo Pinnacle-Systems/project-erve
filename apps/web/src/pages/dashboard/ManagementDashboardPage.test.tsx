@@ -72,7 +72,7 @@ function defaultOtherResponse(url: string): unknown {
       factoryInvoice: {},
       ervePackingList: {},
       erveDispatch: {},
-      delivery: { userConfirmed: 0, legacyAssumedFullReceipt: 0 },
+      delivery: { userConfirmed: 0, legacyAssumedFullReceipt: 0, distributorConfirmed: 0 },
     };
   }
   if (url === '/reports/sale-or-return' || url === '/reports/distributor-returns') {

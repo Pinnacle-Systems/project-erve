@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ERVE_DISPATCH_MUTATION_ROLES, ERVE_DISPATCH_VIEW_ROLES, ERVE_PACKING_LIST_VIEW_ROLES } from '@erve/shared';
-import { ERVE_DISPATCH_TRANSPORT_ROLES, ERVE_DISPATCH_ASSIGNMENT_ROLES, ERVE_DISPATCH_DELIVERY_ROLES } from '@erve/shared';
+import { ERVE_DISPATCH_TRANSPORT_ROLES, ERVE_DISPATCH_ASSIGNMENT_ROLES, ERVE_DISPATCH_DELIVERY_ROLES, ERVE_DISPATCH_DISTRIBUTOR_RECEIPT_ROLES } from '@erve/shared';
 import { requireAuth } from '../../auth/auth.middleware.js';
 import { requireRoles } from '../../auth/rbac.middleware.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
@@ -8,6 +8,7 @@ import { successResponse } from '../../utils/response.js';
 import {
   addErvePackingListCartonsSchema,
   confirmErveDispatchDeliverySchema,
+  submitDistributorReceiptSchema,
   createErvePackingListSchema,
   listEligibleCartonsQuerySchema,
   listErveDispatchesQuerySchema,
@@ -20,6 +21,8 @@ import {
 } from './erve-dispatch.validation.js';
 import * as erveDispatchService from './erve-dispatch.service.js';
 import * as transportService from './erve-dispatch-transport.service.js';
+import * as distributorReceiptService from './erve-dispatch-distributor-receipt.service.js';
+import { HttpError } from '../../errors/http-error.js';
 
 export const ervePackingListsRouter = Router();
 ervePackingListsRouter.use(requireAuth);
@@ -162,5 +165,21 @@ erveDispatchesRouter.patch(
     const input = confirmErveDispatchDeliverySchema.parse(req.body);
     const dispatch = await erveDispatchService.confirmErveDispatchDelivery(req.user!, req.params.id! as string, input);
     res.status(200).json(successResponse(dispatch));
+  }),
+);
+
+erveDispatchesRouter.post(
+  '/:id/distributor-receipt',
+  requireRoles(...ERVE_DISPATCH_DISTRIBUTOR_RECEIPT_ROLES),
+  asyncHandler(async (req, res) => {
+    const key = req.get('Idempotency-Key')?.trim();
+    if (!key || key.length > 200) {
+      throw HttpError.badRequest('Idempotency-Key header is required and must be at most 200 characters');
+    }
+    const input = submitDistributorReceiptSchema.parse(req.body);
+    const id = req.params.id! as string;
+    const { replayed } = await distributorReceiptService.submitDistributorReceipt(req.user!, id, input, key);
+    const dispatch = await erveDispatchService.getErveDispatchDetail(req.user!, id);
+    res.status(replayed ? 200 : 201).json(successResponse(dispatch));
   }),
 );

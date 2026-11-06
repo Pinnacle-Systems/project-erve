@@ -377,7 +377,7 @@ describe('Packing Audit carton classification (RPT1 6.5/6.9)', () => {
 });
 
 describe('Delivery source split (RPT1 6.7/6.9) — legacy vs user-confirmed stay distinguishable', () => {
-  it('never merges LEGACY_ASSUMED_FULL_RECEIPT into USER_CONFIRMED counts', async () => {
+  it('never merges LEGACY_ASSUMED_FULL_RECEIPT or DISTRIBUTOR_CONFIRMED into USER_CONFIRMED counts', async () => {
     const distributor = await prisma.distributor.create({
       data: { id: createId(), code: `D-${createId()}`, name: 'Delivery Fixture', gstin: '27AAAAA0000A1Z5', purchaseMode: 'OUTRIGHT' },
     });
@@ -387,7 +387,7 @@ describe('Delivery source split (RPT1 6.7/6.9) — legacy vs user-confirmed stay
       password: 'pass',
       roles: ['ADMIN'],
     });
-    async function createDeliveredDispatch(source: 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT') {
+    async function createDeliveredDispatch(source: 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT' | 'DISTRIBUTOR_CONFIRMED') {
       const packingList = await prisma.ervePackingList.create({
         data: {
           id: createId(),
@@ -408,8 +408,8 @@ describe('Delivery source split (RPT1 6.7/6.9) — legacy vs user-confirmed stay
           status: 'DELIVERED',
           dispatchDate: new Date(),
           dispatchedById: actorId,
-          deliveredById: source === 'USER_CONFIRMED' ? actorId : null,
-          deliveredAt: source === 'USER_CONFIRMED' ? new Date() : null,
+          deliveredById: source !== 'LEGACY_ASSUMED_FULL_RECEIPT' ? actorId : null,
+          deliveredAt: source !== 'LEGACY_ASSUMED_FULL_RECEIPT' ? new Date() : null,
           deliveryConfirmationSource: source,
           financialYearId: financialYear.id,
           erveDispatchSerial: await allocateTestDocumentSerial('ERVE_DISPATCH', financialYear.id),
@@ -419,12 +419,14 @@ describe('Delivery source split (RPT1 6.7/6.9) — legacy vs user-confirmed stay
     await createDeliveredDispatch('USER_CONFIRMED');
     await createDeliveredDispatch('LEGACY_ASSUMED_FULL_RECEIPT');
     await createDeliveredDispatch('LEGACY_ASSUMED_FULL_RECEIPT');
+    await createDeliveredDispatch('DISTRIBUTOR_CONFIRMED');
 
     const report = await reportsService.getFulfillmentReport(actor(['ADMIN']), {
       distributorId: distributor.id,
     });
     expect(report.delivery.userConfirmed).toBe(1);
     expect(report.delivery.legacyAssumedFullReceipt).toBe(2);
+    expect(report.delivery.distributorConfirmed).toBe(1);
   });
 });
 

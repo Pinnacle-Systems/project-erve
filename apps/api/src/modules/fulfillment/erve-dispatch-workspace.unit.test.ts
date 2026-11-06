@@ -5,6 +5,7 @@ const db = vi.hoisted(() => ({
   erveDispatch: { findUnique: vi.fn(), findMany: vi.fn() },
   factoryPackingCartonLine: { findMany: vi.fn() },
   erveDispatchDeliveryLine: { findMany: vi.fn() },
+  erveDispatchDistributorReceipt: { findUnique: vi.fn() },
   invoiceHandoff: { findMany: vi.fn() },
 }));
 vi.mock('../../db/prisma.js', () => ({ prisma: db, Prisma: {} }));
@@ -58,6 +59,7 @@ it('projects carton quantities with real identities and native Size order, aggre
     saleOrderLineId: 'outright',
     quantity: 3,
     saleOrderLine: {
+      saleOrder: { saleOrderNumber: 'SO1' },
       style: { id: 'style', styleNumber: 'ST1', styleName: 'Tee', images: [] },
       size: { id: 'size', code: 'M', label: 'Medium', sortOrder: 8 },
       destination: { saleOrderDistributor: { purchaseMode: 'OUTRIGHT' } },
@@ -77,6 +79,8 @@ it('projects carton quantities with real identities and native Size order, aggre
         sizeCode: 'M',
         sizeSortOrder: 8,
         quantity: 5,
+        saleOrderNumber: 'SO1',
+        purchaseMode: 'OUTRIGHT',
       },
     ],
     deliveryLines: [
@@ -107,6 +111,7 @@ it.each(['DISTRIBUTOR', 'ACCOUNTANT'] as const)(
         saleOrderLineId: 'line',
         quantity: 2,
         saleOrderLine: {
+          saleOrder: { saleOrderNumber: 'SO1' },
           style: { id: 'style', styleNumber: 'ST1', styleName: 'Tee', images: [{ secret: true }] },
           size: { id: 'size', code: 'M', label: 'Medium', sortOrder: 2 },
           destination: { saleOrderDistributor: { purchaseMode: 'OUTRIGHT' } },

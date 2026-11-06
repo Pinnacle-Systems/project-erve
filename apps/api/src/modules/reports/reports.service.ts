@@ -472,11 +472,12 @@ export async function getFulfillmentReport(
     return record;
   };
 
-  const delivery = { userConfirmed: 0, legacyAssumedFullReceipt: 0 };
+  const delivery = { userConfirmed: 0, legacyAssumedFullReceipt: 0, distributorConfirmed: 0 };
   for (const group of deliveryGroups) {
     if (group.deliveryConfirmationSource === 'USER_CONFIRMED') delivery.userConfirmed = group._count._all;
     if (group.deliveryConfirmationSource === 'LEGACY_ASSUMED_FULL_RECEIPT')
       delivery.legacyAssumedFullReceipt = group._count._all;
+    if (group.deliveryConfirmationSource === 'DISTRIBUTOR_CONFIRMED') delivery.distributorConfirmed = group._count._all;
   }
 
   return {

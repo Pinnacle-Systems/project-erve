@@ -349,6 +349,7 @@ model User {
   dispatchedErveDispatches             ErveDispatch[]              @relation("ErveDispatchDispatcher")
   lrUpdatedErveDispatches              ErveDispatch[]              @relation("ErveDispatchLrUpdater")
   deliveredErveDispatches              ErveDispatch[]              @relation("ErveDispatchDeliveryConfirmer")
+  erveDispatchDistributorReceipts      ErveDispatchDistributorReceipt[] @relation("ErveDispatchDistributorReceiptActor")
   recordedInvoiceHandoffs              InvoiceHandoff[]            @relation("InvoiceHandoffRecordedBy")
   submittedDistributorSalesReports     DistributorSalesReport[]    @relation("DistributorSalesReportSubmitter")
   submittedDistributorReturns          DistributorReturn[]         @relation("DistributorReturnSubmitter")
@@ -457,6 +458,7 @@ model Distributor {
   saleOrderDistributors SaleOrderDistributor[]
   ervePackingLists      ErvePackingList[]
   erveDispatches        ErveDispatch[]
+  erveDispatchDistributorReceipts ErveDispatchDistributorReceipt[]
   salesReports          DistributorSalesReport[]
   distributorReturns    DistributorReturn[]
   taxInvoices           TaxInvoice[]
@@ -1842,6 +1844,7 @@ model SaleOrderLine {
   invoiceHandoffs                InvoiceHandoff[]
   distributorSalesReportLines    DistributorSalesReportLine[]
   erveDispatchDeliveryLines      ErveDispatchDeliveryLine[]
+  erveDispatchDistributorReceiptLines ErveDispatchDistributorReceiptLine[]
   distributorReturnLines         DistributorReturnLine[]
   returnedStockLots              ReturnedStockLot[]
   factoryInvoiceLines            FactoryInvoiceLine[]
@@ -2336,6 +2339,9 @@ enum ErveDispatchStatus {
 enum DeliveryConfirmationSource {
   USER_CONFIRMED
   LEGACY_ASSUMED_FULL_RECEIPT
+  // A4 (ISS-079/080): written only when a Distributor's own final receipt
+  // attestation created the ledger (ledgerDisposition APPLIED).
+  DISTRIBUTOR_CONFIRMED
 }
 
 // Actual physical outward movement to the Distributor. 1:1 with
@@ -2396,6 +2402,7 @@ model ErveDispatch {
   invoiceHandoffs             InvoiceHandoff[]
   distributorSalesReportLines DistributorSalesReportLine[]
   deliveryLines               ErveDispatchDeliveryLine[]
+  distributorReceipt          ErveDispatchDistributorReceipt?
   distributorReturnLines      DistributorReturnLine[]
 
   @@unique([financialYearId, erveDispatchSerial])
@@ -2429,6 +2436,75 @@ model ErveDispatchDeliveryLine {
   @@index([saleOrderLineId])
   @@map("erve_dispatch_delivery_lines")
 }
+
+// A4 (ISS-079/080): the Distributor's own final, immutable attestation of the
+// quantities it actually received for one Erve Dispatch. Deliberately a
+// separate evidence record from the ErveDispatchDeliveryLine ledger above:
+// the ledger stays the single source downstream consumers (Actual Sales,
+// Returns, Sale-or-Return positions) key off, and this record only writes
+// through to it when no earlier ledger exists (ledgerDisposition APPLIED).
+// An earlier Admin/Merchandiser or legacy-assumed confirmation is never
+// overwritten (EVIDENCE_ONLY_EXISTING), and an all-zero attestation never
+// creates ledger quantity or flips the Dispatch to DELIVERED
+// (NOT_APPLIED_ZERO). One receipt per Dispatch (erveDispatchId unique): no
+// incremental receipts, overwrite or reopen. Rows are append-only (database
+// trigger in the migration). The prior* columns and each line's
+// previousLedgerQuantity preserve exactly what the attestation did not change
+// or replaced, so a later reconciliation (A5) has the full picture.
+enum DistributorReceiptLedgerDisposition {
+  APPLIED
+  NOT_APPLIED_ZERO
+  EVIDENCE_ONLY_EXISTING
+}
+
+model ErveDispatchDistributorReceipt {
+  id                              String                              @id
+  erveDispatchId                  String                              @unique @map("erve_dispatch_id")
+  distributorId                   String                              @map("distributor_id")
+  receivedById                    String                              @map("received_by_id")
+  receivedAt                      DateTime                            @default(now()) @map("received_at")
+  remarks                         String?
+  totalDispatchedQuantity         Int                                 @map("total_dispatched_quantity")
+  totalReceivedQuantity           Int                                 @map("total_received_quantity")
+  ledgerDisposition               DistributorReceiptLedgerDisposition @map("ledger_disposition")
+  priorStatus                     ErveDispatchStatus                  @map("prior_status")
+  priorDeliveryConfirmationSource DeliveryConfirmationSource?         @map("prior_delivery_confirmation_source")
+  priorDeliveredById              String?                             @map("prior_delivered_by_id")
+  priorDeliveredAt                DateTime?                           @map("prior_delivered_at")
+  priorDeliveryRemarks            String?                             @map("prior_delivery_remarks")
+  idempotencyKey                  String                              @map("idempotency_key")
+  payloadDigest                   String                              @map("payload_digest")
+
+  erveDispatch ErveDispatch                         @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+  distributor  Distributor                          @relation(fields: [distributorId], references: [id], onDelete: Restrict)
+  receivedBy   User                                 @relation("ErveDispatchDistributorReceiptActor", fields: [receivedById], references: [id], onDelete: Restrict)
+  lines        ErveDispatchDistributorReceiptLine[]
+
+  @@map("erve_dispatch_distributor_receipts")
+}
+
+// One row per SaleOrderLine of the Dispatch, same grain as the ledger. The
+// Distributor's Style x Size entry is the sum of these rows per (style, size);
+// the per-line split is either forced (single source line, full or zero
+// receipt) or was explicitly allocated by the Distributor.
+model ErveDispatchDistributorReceiptLine {
+  id                     String @id
+  receiptId              String @map("receipt_id")
+  saleOrderLineId        String @map("sale_order_line_id")
+  dispatchedQuantity     Int    @map("dispatched_quantity")
+  receivedQuantity       Int    @map("received_quantity")
+  // The ledger's ErveDispatchDeliveryLine.receivedQuantity for this line at
+  // submission time; null when no ledger row existed.
+  previousLedgerQuantity Int?   @map("previous_ledger_quantity")
+
+  receipt       ErveDispatchDistributorReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  saleOrderLine SaleOrderLine                  @relation(fields: [saleOrderLineId], references: [id], onDelete: Restrict)
+
+  @@unique([receiptId, saleOrderLineId])
+  @@index([saleOrderLineId])
+  @@map("erve_dispatch_distributor_receipt_lines")
+}
+
 
 // ---------------------------------------------------------------------------
 // INV-005 — Distributor Tax Invoice (DRAFT domain only; INV-006 owns GST

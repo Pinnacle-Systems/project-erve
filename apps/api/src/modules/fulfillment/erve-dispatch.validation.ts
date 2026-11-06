@@ -79,6 +79,35 @@ export const confirmErveDispatchDeliverySchema = z.object({
   remarks: z.string().trim().max(1000).optional().nullable(),
 });
 
+// A4 (ISS-079/080): strict Style x Size attestation; per-source-line
+// allocations are only meaningful (and required) for a partial receipt of a
+// Style x Size spanning several Sale Order lines — enforced against the
+// authoritative carton lines in the service, not here.
+export const submitDistributorReceiptSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
+  acknowledged: z.literal(true, { error: 'Explicit final acknowledgement is required' }),
+  remarks: z.string().trim().max(1000).optional().nullable(),
+  groups: z
+    .array(
+      z.object({
+        styleId: z.string().trim().min(1),
+        sizeId: z.string().trim().min(1),
+        receivedQuantity: z.number().int().nonnegative(),
+        allocations: z
+          .array(
+            z.object({
+              saleOrderLineId: z.string().trim().min(1),
+              receivedQuantity: z.number().int().nonnegative(),
+            }).strict(),
+          )
+          .max(500)
+          .optional(),
+      }).strict(),
+    )
+    .min(1, 'At least one Style / Size entry is required')
+    .max(2000),
+}).strict();
+
 export const listErveDispatchesQuerySchema = z.object({
   saleOrderId: z.string().trim().optional(),
   distributorId: z.string().trim().optional(),

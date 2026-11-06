@@ -49,6 +49,18 @@ export function canConfirmErveDispatchDelivery(user: RoleHolder): boolean {
   return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_DELIVERY_ROLES);
 }
 
+/**
+ * A4 (ISS-079/080): only the Distributor itself can attest actual receipt.
+ * ADMIN and MERCHANDISER keep the delivery fallback above but must not
+ * impersonate a Distributor's attestation. The caller must still prove it is
+ * the Dispatch's own Distributor (row-level ownership is a service check).
+ */
+export const ERVE_DISPATCH_DISTRIBUTOR_RECEIPT_ROLES = ['DISTRIBUTOR'] as const satisfies readonly Role[];
+
+export function canSubmitErveDispatchDistributorReceipt(user: RoleHolder): boolean {
+  return isValidTransporterRoleCombination(user.roles) && hasAnyRole(user, ERVE_DISPATCH_DISTRIBUTOR_RECEIPT_ROLES);
+}
+
 export const RETAIL_STORE_MANAGE_ROLES = [
   'ADMIN',
   'MERCHANDISER',

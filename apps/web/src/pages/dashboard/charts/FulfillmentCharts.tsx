@@ -36,6 +36,7 @@ export function FulfillmentStatusCharts({ fulfillment }: { fulfillment: ReportFu
   const deliveryCounts = {
     'User confirmed': fulfillment.delivery.userConfirmed,
     'Legacy assumed full receipt': fulfillment.delivery.legacyAssumedFullReceipt,
+    'Distributor confirmed': fulfillment.delivery.distributorConfirmed,
   };
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">

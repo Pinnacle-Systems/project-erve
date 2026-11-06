@@ -181,6 +181,28 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
         }
       />
 
+      {dispatch.canSubmitDistributorReceipt && activeTab !== 'distributor-receipt' && (
+        <Panel title="Confirm Receipt">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm">Confirm the quantities you actually received for this dispatch.</p>
+            <Button
+              onClick={() =>
+                setSearchParams(
+                  (current) => {
+                    const next = new URLSearchParams(current);
+                    next.set('tab', 'distributor-receipt');
+                    return next;
+                  },
+                  { replace: true },
+                )
+              }
+            >
+              Go to Distributor Receipt
+            </Button>
+          </div>
+        </Panel>
+      )}
+
       <Tabs
         value={activeTab}
         onValueChange={(value) =>
@@ -219,10 +241,12 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
                 label="Delivery"
                 value={
                   dispatch.status !== 'DELIVERED'
-                    ? 'Not yet confirmed'
+                    ? dispatch.distributorReceipt
+                      ? 'Distributor reports nothing received (final)'
+                      : 'Not yet confirmed'
                     : dispatch.deliveryConfirmationSource === 'LEGACY_ASSUMED_FULL_RECEIPT'
                       ? 'Assumed full receipt (legacy - not actually confirmed)'
-                      : `${dispatch.deliveredBy?.name ?? ''} | ${dispatch.deliveredAt ? new Date(dispatch.deliveredAt).toLocaleString() : 'Confirmation metadata not available'}`
+                      : `${dispatch.deliveryConfirmationSource === 'DISTRIBUTOR_CONFIRMED' ? 'Confirmed by Distributor | ' : ''}${dispatch.deliveredBy?.name ?? ''} | ${dispatch.deliveredAt ? new Date(dispatch.deliveredAt).toLocaleString() : 'Confirmation metadata not available'}`
                 }
               />
               {dispatch.deliveryRemarks && (
@@ -258,7 +282,7 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
               </Button>
             </div>
           )}
-          {canConfirmDelivery && dispatch.status !== 'DELIVERED' && (
+          {canConfirmDelivery && dispatch.status !== 'DELIVERED' && !dispatch.distributorReceipt && (
             <Panel title="Confirm Delivery">
               {deliveryFormError && (
                 <ValidationMessage tone="error">{deliveryFormError}</ValidationMessage>
