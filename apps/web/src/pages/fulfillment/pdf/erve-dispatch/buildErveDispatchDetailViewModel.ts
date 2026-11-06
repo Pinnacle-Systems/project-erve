@@ -84,9 +84,19 @@ export function buildErveDispatchDetailViewModel(
           ? 'Not yet confirmed'
           : dispatch.deliveryConfirmationSource === 'LEGACY_ASSUMED_FULL_RECEIPT'
             ? 'Assumed full receipt (legacy — not actually confirmed)'
-            : `${dispatch.deliveredBy?.name ?? ''} · ${dispatch.deliveredAt ? formatPdfDateTime(dispatch.deliveredAt) : ''}`,
+            : dispatch.deliveryConfirmationSource === 'DISTRIBUTOR_CONFIRMED'
+              ? `Confirmed by Distributor · ${dispatch.deliveredBy?.name ?? ''} · ${dispatch.deliveredAt ? formatPdfDateTime(dispatch.deliveredAt) : ''}`
+              : `${dispatch.deliveredBy?.name ?? ''} · ${dispatch.deliveredAt ? formatPdfDateTime(dispatch.deliveredAt) : ''}`,
     },
     { label: 'Delivery Remarks', value: dispatch.deliveryRemarks },
+    ...(dispatch.distributorReceipt
+      ? [
+          {
+            label: 'Distributor Receipt',
+            value: `${dispatch.distributorReceipt.receivedBy.name} · ${formatPdfDateTime(dispatch.distributorReceipt.receivedAt)} · received ${dispatch.distributorReceipt.totalReceivedQuantity} of ${dispatch.distributorReceipt.totalDispatchedQuantity}`,
+          },
+        ]
+      : []),
   ];
 
   const saleOrReturnLines: ErveDispatchDetailSaleOrReturnRow[] = dispatch.saleOrReturnLines.map((line) => ({

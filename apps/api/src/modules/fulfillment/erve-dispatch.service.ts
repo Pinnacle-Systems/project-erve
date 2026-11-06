@@ -1,5 +1,6 @@
 import { createId, canConfirmErveDispatchDelivery } from '@erve/shared';
 import { updateDispatchTransport } from './erve-dispatch-transport.service.js';
+import { canActorAttestDispatchReceipt, loadDistributorReceiptView } from './erve-dispatch-distributor-receipt.service.js';
 import { canMutateErveDispatch, canViewErveDispatch, canViewErveFactoryProvenance, canViewErvePackingList } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
@@ -1164,7 +1165,7 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
   // or expose factory provenance. Style image reads already permit these three roles.
   const canReadImages = actor.roles.some((role) =>
     role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT');
-  const [view, packedLines, deliveryLines] = await Promise.all([
+  const [view, packedLines, deliveryLines, distributorReceipt] = await Promise.all([
     toErveDispatchView(record),
     prisma.factoryPackingCartonLine.findMany({
       where: { carton: { ervePackingListId: record.ervePackingListId, retiredAt: null } },
@@ -1172,6 +1173,8 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
         saleOrderLineId: true,
         quantity: true,
         saleOrderLine: { select: {
+          saleOrder: { select: { saleOrderNumber: true } },
+          destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
           style: { select: { id: true, styleNumber: true, styleName: true,
             images: { ...stylePrimaryImageInclude, take: canReadImages ? 1 : 0 } } },
           size: { select: { id: true, code: true, label: true, sortOrder: true } },
@@ -1184,6 +1187,7 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
       select: { saleOrderLineId: true, receivedQuantity: true },
       orderBy: { saleOrderLineId: 'asc' },
     }),
+    loadDistributorReceiptView(id),
   ]);
   const byLine = new Map<string, import('@erve/types').ErveDispatchQuantityLine>();
   for (const line of packedLines) {
@@ -1196,9 +1200,17 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
       primaryImage: canReadImages ? toPrimaryImageView(style.images ?? []) : null,
       sizeId: size.id, sizeCode: size.code, sizeLabel: size.label, sizeSortOrder: size.sortOrder,
       quantity: line.quantity,
+      saleOrderNumber: line.saleOrderLine.saleOrder.saleOrderNumber,
+      purchaseMode: line.saleOrderLine.destination.saleOrderDistributor.purchaseMode,
     });
   }
-  return { ...view, quantityLines: [...byLine.values()], deliveryLines };
+  return {
+    ...view,
+    quantityLines: [...byLine.values()],
+    deliveryLines,
+    distributorReceipt,
+    canSubmitDistributorReceipt: distributorReceipt === null && canActorAttestDispatchReceipt(actor, record.distributor.id),
+  };
 }
 
 export async function getErveDispatchList(
@@ -1336,6 +1348,15 @@ export async function confirmErveDispatchDelivery(actor: CurrentUser, id: string
 
     const dispatch = await tx.erveDispatch.findUnique({ where: { id } });
     if (!dispatch) throw HttpError.notFound('Erve dispatch not found');
+    // A4: a Distributor's final receipt attestation (including an all-zero one)
+    // is never contradicted by a later fallback confirmation.
+    const distributorReceipt = await tx.erveDispatchDistributorReceipt.findUnique({
+      where: { erveDispatchId: id },
+      select: { id: true },
+    });
+    if (distributorReceipt) {
+      throw HttpError.conflict('The Distributor has already submitted a final receipt for this Erve Dispatch, so delivery cannot be confirmed through the fallback');
+    }
     if (dispatch.version !== input.expectedVersion) throw HttpError.staleVersion(dispatch.version);
     if (dispatch.status !== 'DISPATCHED') {
       throw HttpError.conflict('This Erve Dispatch has already been marked delivered');

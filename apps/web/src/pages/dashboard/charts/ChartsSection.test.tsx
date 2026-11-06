@@ -67,7 +67,7 @@ function fulfillment(): ReportFulfillment {
     factoryInvoice: { GENERATED: 1 },
     ervePackingList: { OPEN: 1 },
     erveDispatch: { DISPATCHED: 3, DELIVERED: 5 },
-    delivery: { userConfirmed: 4, legacyAssumedFullReceipt: 1 },
+    delivery: { userConfirmed: 4, legacyAssumedFullReceipt: 1, distributorConfirmed: 2 },
   };
 }
 

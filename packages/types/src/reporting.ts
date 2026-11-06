@@ -167,7 +167,7 @@ export interface ReportFulfillment {
   factoryInvoice: Record<string, number>;
   ervePackingList: Record<string, number>;
   erveDispatch: Record<string, number>;
-  delivery: { userConfirmed: number; legacyAssumedFullReceipt: number };
+  delivery: { userConfirmed: number; legacyAssumedFullReceipt: number; distributorConfirmed: number };
 }
 
 export interface SaleOrReturnReportRow {

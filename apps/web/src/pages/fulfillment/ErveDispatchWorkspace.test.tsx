@@ -181,7 +181,7 @@ it('updates the tab URL without losing other parameters or transport drafts', as
   );
   expect(active().textContent).toContain('Update Transport');
   await select('Distributor Receipt');
-  expect(active().textContent).toContain('Separate distributor confirmation is not yet available');
+  expect(active().textContent).toContain('has not yet submitted a final receipt');
   expect(active().querySelectorAll('input,textarea')).toHaveLength(0);
 });
 
@@ -275,7 +275,7 @@ it.each(['LEGACY_ASSUMED_FULL_RECEIPT', 'USER_CONFIRMED'])(
       source === 'USER_CONFIRMED' ? 'Admin / Merchandiser fallback' : 'not actually confirmed',
     );
     expect(active().textContent).toContain(
-      'Separate distributor confirmation is not yet available',
+      source === 'USER_CONFIRMED' ? 'not a distributor sign-off' : 'not distributor confirmation',
     );
     expect(
       [...active().querySelectorAll('tbody input')].map(
