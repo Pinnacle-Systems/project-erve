@@ -291,6 +291,7 @@ enum HistoricalDocumentRelationshipType {
 // ---------------------------------------------------------------------------
 
 model User {
+  reconciliationReviews ErveDispatchReconciliationReview[]
   assignedTransportDispatches ErveDispatch[] @relation("ErveDispatchTransporter")
   gstComplianceSettingsUpdates GstComplianceSettings[] @relation("GstComplianceSettingsUpdater")
   ewayBillsCreated             EwayBill[]               @relation("EwayBillCreator")
@@ -2359,6 +2360,7 @@ enum DeliveryConfirmationSource {
 // distributorId remains required — every Erve Dispatch still has exactly
 // one commercial owner, snapshotted from its Erve Packing List at creation.
 model ErveDispatch {
+  reconciliationReviews ErveDispatchReconciliationReview[]
   cartonDeliveryConfirmations CartonDeliveryConfirmation[]
   transporterUserId          String?                     @map("transporter_user_id")
   transporterUser            User?                       @relation("ErveDispatchTransporter", fields: [transporterUserId], references: [id], onDelete: Restrict)
@@ -2410,6 +2412,32 @@ model ErveDispatch {
   @@index([distributorId])
   @@index([transporterUserId])
   @@map("erve_dispatches")
+}
+
+enum ReconciliationReviewAction {
+  ACKNOWLEDGE
+  FOLLOW_UP
+  FINANCE_REVIEW
+}
+
+// Operational review only. Immutable snapshots do not correct any quantity ledger.
+model ErveDispatchReconciliationReview {
+  id               String                     @id
+  erveDispatchId   String                     @map("erve_dispatch_id")
+  actorId          String                     @map("actor_id")
+  actorName        String                     @map("actor_name")
+  action           ReconciliationReviewAction
+  remarks          String
+  snapshotToken    String                     @map("snapshot_token")
+  snapshot         Json
+  previousReviewId String?                    @unique @map("previous_review_id")
+  createdAt        DateTime                   @default(now()) @map("created_at")
+
+  actor        User         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  erveDispatch ErveDispatch @relation(fields: [erveDispatchId], references: [id], onDelete: Restrict)
+
+  @@index([erveDispatchId, createdAt, id], map: "reconciliation_review_dispatch_history_idx")
+  @@map("erve_dispatch_reconciliation_reviews")
 }
 
 // One row per SaleOrderLine actually confirmed received for this Dispatch,
