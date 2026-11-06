@@ -151,6 +151,69 @@ export async function getSaleOrReturnPairQuantities(
   };
 }
 
+export type SaleOrReturnDownstreamQuantities = Pick<
+  SaleOrReturnPairQuantities,
+  | 'actualSoldQuantity'
+  | 'returnedQuantity'
+  | 'approvedAwaitingReceiptQuantity'
+  | 'pendingRequestedQuantity'
+>;
+
+/** Same sums and lifecycle predicates as the pair helpers, batched by source
+ * line for a single Dispatch. Callers can reuse already-loaded packing/ledger
+ * quantities and computeAvailability without querying those again per line.
+ */
+export async function getSaleOrReturnDownstreamQuantitiesForDispatch(
+  client: Client,
+  erveDispatchId: string,
+): Promise<Map<string, SaleOrReturnDownstreamQuantities>> {
+  const [sales, returned, approved, pending] = await Promise.all([
+    client.distributorSalesReportLine.groupBy({
+      by: ['saleOrderLineId'],
+      where: { erveDispatchId },
+      _sum: { quantitySold: true },
+    }),
+    client.distributorReturnLine.groupBy({
+      by: ['saleOrderLineId'],
+      where: { erveDispatchId, distributorReturn: { status: 'RECEIVED' } },
+      _sum: { receivedQuantity: true },
+    }),
+    client.distributorReturnLine.groupBy({
+      by: ['saleOrderLineId'],
+      where: { erveDispatchId, distributorReturn: { status: 'APPROVED' } },
+      _sum: { approvedQuantity: true },
+    }),
+    client.distributorReturnLine.groupBy({
+      by: ['saleOrderLineId'],
+      where: { erveDispatchId, distributorReturn: { status: 'SUBMITTED' } },
+      _sum: { requestedQuantity: true },
+    }),
+  ]);
+  const totals = new Map<string, SaleOrReturnDownstreamQuantities>();
+  function lineTotals(id: string): SaleOrReturnDownstreamQuantities {
+    let quantities = totals.get(id);
+    if (!quantities) {
+      quantities = {
+        actualSoldQuantity: 0,
+        returnedQuantity: 0,
+        approvedAwaitingReceiptQuantity: 0,
+        pendingRequestedQuantity: 0,
+      };
+      totals.set(id, quantities);
+    }
+    return quantities;
+  }
+  for (const row of sales)
+    lineTotals(row.saleOrderLineId).actualSoldQuantity = row._sum.quantitySold ?? 0;
+  for (const row of returned)
+    lineTotals(row.saleOrderLineId).returnedQuantity = row._sum.receivedQuantity ?? 0;
+  for (const row of approved)
+    lineTotals(row.saleOrderLineId).approvedAwaitingReceiptQuantity = row._sum.approvedQuantity ?? 0;
+  for (const row of pending)
+    lineTotals(row.saleOrderLineId).pendingRequestedQuantity = row._sum.requestedQuantity ?? 0;
+  return totals;
+}
+
 export function computeAvailability(
   q: Pick<
     SaleOrReturnPairQuantities,

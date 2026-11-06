@@ -12,7 +12,10 @@ import {
   type SummaryRow,
 } from './reconciliation-query.js';
 import { compareReconciliationLine } from './reconciliation-comparison.js';
-import { computeAvailability, getSaleOrReturnPairQuantities } from './sale-or-return-quantities.js';
+import {
+  computeAvailability,
+  getSaleOrReturnDownstreamQuantitiesForDispatch,
+} from './sale-or-return-quantities.js';
 
 type Tx = Prisma.TransactionClient;
 const readOptions = {
@@ -100,14 +103,22 @@ async function loadDetail(tx: Tx, id: string): Promise<ReconciliationDetail> {
       destination: { include: { saleOrderDistributor: { select: { purchaseMode: true } } } },
     },
   });
+  const downstream = await getSaleOrReturnDownstreamQuantitiesForDispatch(tx, id);
   const lines: ReconciliationLine[] = [];
   for (const source of sources) {
     const dispatchedQuantity = packed.get(source.id) ?? 0;
     const receivedQuantity = evidence.get(source.id) ?? null;
     const ledgerQuantity = ledger.get(source.id) ?? null;
-    const quantities = await getSaleOrReturnPairQuantities(tx, id, source.id);
+    const quantities = downstream.get(source.id) ?? {
+      actualSoldQuantity: 0,
+      returnedQuantity: 0,
+      approvedAwaitingReceiptQuantity: 0,
+      pendingRequestedQuantity: 0,
+    };
     const saleReturn = source.destination.saleOrderDistributor.purchaseMode === 'SALE_RETURN';
-    const availability = saleReturn ? computeAvailability(quantities) : null;
+    const availability = saleReturn
+      ? computeAvailability({ ...quantities, receivedQuantity: ledgerQuantity ?? 0 })
+      : null;
     lines.push({
       saleOrderLineId: source.id,
       saleOrderNumber: source.saleOrder.saleOrderNumber,
