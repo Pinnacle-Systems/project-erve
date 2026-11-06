@@ -9,7 +9,9 @@ import { recordAuditLog } from '../../audit/audit.service.js';
 type Tx = Prisma.TransactionClient;
 
 // Largest amount the Decimal(14,2) line/subtotal/total columns can hold.
-const MAX_STORED_AMOUNT = new Prisma.Decimal('999999999999.99');
+// Kept as a string (compared via the Decimal instance) so importing this module
+// never needs `Prisma.Decimal` at load time.
+const MAX_STORED_AMOUNT = '999999999999.99';
 
 function assertAmountFits(amount: Prisma.Decimal, label: string): void {
   if (amount.greaterThan(MAX_STORED_AMOUNT)) {
