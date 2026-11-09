@@ -291,6 +291,9 @@ export interface ApprovedSaleOrderOptions {
   factoryId?: string;
   quantity?: number;
   purchaseMode?: 'OUTRIGHT' | 'SALE_RETURN';
+  // Reuse an existing Style / Size (e.g. several shipments of one Style) instead of fixture-created ones.
+  styleId?: string;
+  sizeId?: string;
   // ISS-100: pass the SAME retailStoreId across two calls (sharing
   // distributorId) to build the "two Dispatch Orders, same Retail Store"
   // scenario; omit it to get a fresh, distinct Store each call.
@@ -320,6 +323,8 @@ export async function createApprovedSaleOrder(app: Express, options: ApprovedSal
     factoryId: options.factoryId,
     quantity,
     purchaseMode: options.purchaseMode,
+    styleId: options.styleId,
+    sizeId: options.sizeId,
   });
   const { token: merchToken } = await createRoleToken('MERCHANDISER');
   const retailStoreId = options.retailStoreId ?? (await createTestRetailStore(stock.distributorId)).id;

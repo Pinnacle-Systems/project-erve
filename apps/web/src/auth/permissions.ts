@@ -26,6 +26,7 @@ import {
   canConfirmFactoryInvoice,
   canManageFactoryInvoiceFinancials,
   canViewSaleOrReturnPosition,
+  canViewRetailStoreInventory as canViewRetailStoreInventoryShared,
   canViewDistributorSalesReport,
   canSubmitDistributorSalesReport,
   canSubmitDistributorReturn,
@@ -410,6 +411,24 @@ export const SALE_OR_RETURN_POSITION_DISTRIBUTOR_SELECTOR_ROLES = ['ADMIN'] as c
 
 export const needsSaleOrReturnPositionDistributorSelector = (user: AuthUser | null | undefined) =>
   hasRole(user, SALE_OR_RETURN_POSITION_DISTRIBUTOR_SELECTOR_ROLES);
+
+// A6 / ISS-088: the Retail Store Inventory screen. Its own permission (never
+// RETAIL_STORE_VIEW_ROLES, which opens the Retail Store master).
+export const canViewRetailStoreInventory = (user: AuthUser | null | undefined) =>
+  Boolean(user && canViewRetailStoreInventoryShared(user));
+
+// Roles that may narrow the screen to one Distributor: the same audience as the
+// Distributor lookup endpoint (GET /distributors/options). DISTRIBUTOR is pinned
+// to its own data server-side; ACCOUNTANT reads broadly but has no Distributor
+// lookup access, so it sees every Distributor grouped by Distributor.
+export const RETAIL_STORE_INVENTORY_DISTRIBUTOR_PICKER_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+] as const satisfies readonly Role[];
+export const canPickRetailStoreInventoryDistributor = (user: AuthUser | null | undefined) =>
+  Boolean(user && !user.roles.includes('DISTRIBUTOR')) &&
+  hasRole(user, RETAIL_STORE_INVENTORY_DISTRIBUTOR_PICKER_ROLES);
 
 export const canViewDistributorSalesReports = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewDistributorSalesReport(user));

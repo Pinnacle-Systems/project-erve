@@ -25,6 +25,7 @@ import {
   Truck,
   Undo2,
   Users,
+  Warehouse,
   Workflow,
   ClipboardCheck,
 } from 'lucide-react';
@@ -48,6 +49,7 @@ import {
   canViewTaxInvoices,
   canViewPackingAudits,
   canViewSaleOrReturnPositions,
+  canViewRetailStoreInventory,
   canViewDispatchOrders,
   canViewDistributorSalesReports,
   canNavigateToJobOrders,
@@ -154,6 +156,9 @@ export function AppLayout() {
           : []),
         ...((canViewErveDispatches(user) || (user && hasExclusiveTransporterRole(user)))
           ? [{ to: '/fulfillment/erve-dispatches', label: 'Dispatches', icon: Truck }]
+          : []),
+        ...(canViewRetailStoreInventory(user)
+          ? [{ to: '/fulfillment/retail-store-inventory', label: 'Retail Store Inventory', icon: Warehouse }]
           : []),
         ...(canViewSaleOrReturnPositions(user)
           ? [{ to: '/fulfillment/sale-or-return', label: 'Sale-or-Return Stock', icon: RotateCcw }]

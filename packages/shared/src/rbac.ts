@@ -33,6 +33,30 @@ export function canReviewReconciliation(user: RoleHolder, action: string): boole
   return hasAnyRole(user, ['ACCOUNTANT']) && action === 'FINANCE_REVIEW';
 }
 
+/**
+ * A6 / ISS-088 Retail Store Inventory (derived, read-only). Deliberately its
+ * own role set instead of widening RETAIL_STORE_VIEW_ROLES: that set guards the
+ * Retail Store *master* endpoints, which a Distributor must not browse. The
+ * audience mirrors the Sale-or-Return position view (ACCOUNTANT included);
+ * FACTORY_USER, TRANSPORTER and QA_USER get no distributor inventory access.
+ * A user who also holds an external-scoped role (FACTORY_USER / TRANSPORTER)
+ * is denied outright so an extra internal role cannot widen that scope.
+ * Row-level Distributor ownership is enforced separately in the API.
+ */
+export const RETAIL_STORE_INVENTORY_VIEW_ROLES = [
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'DISTRIBUTOR',
+  'ACCOUNTANT',
+] as const satisfies readonly Role[];
+export function canViewRetailStoreInventory(user: RoleHolder): boolean {
+  return (
+    !user.roles.some((r) => r === 'FACTORY_USER' || r === 'TRANSPORTER') &&
+    hasAnyRole(user, RETAIL_STORE_INVENTORY_VIEW_ROLES)
+  );
+}
+
 export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
   return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
 }

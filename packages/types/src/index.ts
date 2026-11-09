@@ -14,3 +14,4 @@ export * from './gst-api-usage.js';
 export * from './eway-bill.js';
 export * from './carton-delivery.js';
 export * from './post-dispatch-reconciliation.js';
+export * from './retail-store-inventory.js';
