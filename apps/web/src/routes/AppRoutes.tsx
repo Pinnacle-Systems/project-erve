@@ -69,6 +69,8 @@ import { ErvePackingListListPage } from '../pages/fulfillment/ErvePackingListLis
 import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListCreatePage.js';
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
+import { PostDispatchReconciliationPage } from '../pages/fulfillment/PostDispatchReconciliationPage.js';
+import { RECONCILIATION_VIEW_ROLES } from '@erve/shared';
 import { ErveDispatchRecordPage } from '../pages/fulfillment/ErveDispatchRecordPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
 import { RetiredInvoiceHandoffPage } from '../pages/fulfillment/RetiredInvoiceHandoffPage.js';
@@ -750,6 +752,7 @@ export function AppRoutes() {
         }
       >
         <Route index element={<ErveDispatchListPage />} />
+        <Route path="reconciliation" element={<RoleRoute allowed={RECONCILIATION_VIEW_ROLES}><PostDispatchReconciliationPage /></RoleRoute>} />
         <Route
           path="new"
           element={

@@ -23,6 +23,16 @@ export interface RoleHolder {
   roles: readonly Role[];
 }
 
+export const RECONCILIATION_VIEW_ROLES = ['ADMIN', 'MERCHANDISER', 'ACCOUNTANT', 'SENIOR_MANAGEMENT'] as const satisfies readonly Role[];
+export function canViewReconciliation(user: RoleHolder): boolean {
+  return !user.roles.some((r) => ['DISTRIBUTOR', 'FACTORY_USER', 'TRANSPORTER'].includes(r)) && hasAnyRole(user, RECONCILIATION_VIEW_ROLES);
+}
+export function canReviewReconciliation(user: RoleHolder, action: string): boolean {
+  if (!canViewReconciliation(user)) return false;
+  if (hasAnyRole(user, ['ADMIN', 'MERCHANDISER'])) return ['ACKNOWLEDGE', 'FOLLOW_UP', 'FINANCE_REVIEW'].includes(action);
+  return hasAnyRole(user, ['ACCOUNTANT']) && action === 'FINANCE_REVIEW';
+}
+
 export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
   return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
 }

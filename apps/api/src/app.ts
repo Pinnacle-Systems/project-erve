@@ -51,6 +51,7 @@ import { factoryDispatchesRouter } from './modules/fulfillment/factory-dispatch.
 import { factoryInvoicesRouter } from './modules/fulfillment/factory-invoice.routes.js';
 import { packingAuditRouter } from './modules/fulfillment/packing-audit.routes.js';
 import { ervePackingListsRouter, erveDispatchesRouter } from './modules/fulfillment/erve-dispatch.routes.js';
+import { reconciliationQueueRouter, dispatchReconciliationRouter } from './modules/fulfillment/post-dispatch-reconciliation.routes.js';
 import { invoiceHandoffsRouter } from './modules/fulfillment/invoice-handoff.routes.js';
 import { saleOrReturnPositionsRouter, distributorSalesReportsRouter } from './modules/fulfillment/distributor-sales-report.routes.js';
 import { distributorReturnsRouter } from './modules/fulfillment/distributor-return.routes.js';
@@ -201,6 +202,8 @@ export function createApp(
   app.use('/packing-audit', packingAuditRouter);
   app.use('/erve-packing-lists', ervePackingListsRouter);
   app.use('/erve-dispatches', erveDispatchesRouter);
+  app.use('/post-dispatch-reconciliation', reconciliationQueueRouter);
+  app.use('/erve-dispatches/:id/reconciliation', dispatchReconciliationRouter);
   app.use('/invoice-handoffs', invoiceHandoffsRouter);
   app.use('/sale-or-return-positions', saleOrReturnPositionsRouter);
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
