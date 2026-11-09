@@ -6,7 +6,7 @@ import { CartonDeliveryPanel } from './dispatch-workspace/CartonDeliveryPanel.js
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ApiSuccessResponse } from '@erve/types';
+import type { ApiSuccessResponse, ErveDispatchQuantityLine } from '@erve/types';
 import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import {
   Button,
@@ -31,7 +31,9 @@ import { DispatchOverviewTab } from './dispatch-workspace/DispatchOverviewTab.js
 import { DispatchReceiptTab } from './dispatch-workspace/DispatchReceiptTab.js';
 import { DispatchReconciliationTab } from './dispatch-workspace/DispatchReconciliationTab.js';
 import { canViewReconciliation } from '@erve/shared';
-import { groupReceiptLinesByStyle, type ReceiptTraceableLine } from './style-size-grouping.js';
+import { StyleSizeMetricMatrix } from '../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { SourceQuantityInputs } from '../../components/style-size-grid/SourceQuantityInputs.js';
+import { groupSourceLinesByStyle, withBusinessKeyIdentity } from './style-size-grouping.js';
 import type { ErveDispatchView } from './types.js';
 
 export function ErveDispatchDetailPage() {
@@ -76,8 +78,13 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
     },
   });
   const dispatch = query.data;
-  const deliveryInputLines: ReceiptTraceableLine[] =
-    dispatch?.quantityLines ?? dispatch?.invoiceHandoffs ?? [];
+  // One input per original source line (`saleOrderLineId`) — the identity PATCH /delivery keys on.
+  // `quantityLines` carries the real Style/Size ids and primary image; the invoice-handoff summary is
+  // only a legacy fallback that has none (business keys group it, with no image to fetch).
+  const deliveryInputLines: ErveDispatchQuantityLine[] =
+    dispatch?.quantityLines ??
+    (dispatch?.invoiceHandoffs ?? []).map((handoff) => ({ ...withBusinessKeyIdentity(handoff), primaryImage: null }));
+  const deliveryMatrix = groupSourceLinesByStyle(deliveryInputLines);
 
   const updateLrMutation = useMutation({
     mutationFn: async () => {
@@ -297,56 +304,38 @@ function ErveDispatchDetailContent({ id }: { id: string }) {
                 (remarks become required).
               </p>
               <div className="space-y-4">
-                {groupReceiptLinesByStyle(deliveryInputLines).map((group) => {
-                  const receivedSubtotal = group.lines.reduce(
-                    (sum, line) =>
-                      sum + Number(receivedQuantities[line.saleOrderLineId] ?? line.quantity),
-                    0,
-                  );
-                  return (
-                    <div
-                      key={group.styleNumber}
-                      className="rounded border border-[var(--erp-border)] p-3"
-                    >
-                      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-                        <span className="font-medium">
-                          {group.styleNumber} — {group.styleName}
-                        </span>
-                        <span className="text-sm text-[var(--erp-muted-fg)]">
-                          Dispatched {group.dispatchedSubtotal.toLocaleString()} · Received{' '}
-                          {receivedSubtotal.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {group.lines.map((h) => (
-                          <div
-                            key={h.saleOrderLineId}
-                            className="flex flex-wrap items-center gap-3"
-                          >
-                            <span className="w-20 text-sm">{h.sizeLabel}</span>
-                            <span className="w-36 text-sm text-[var(--erp-muted-fg)]">
-                              dispatched {h.quantity.toLocaleString()}
-                            </span>
-                            <input
-                              type="number"
-                              aria-label={`${h.styleNumber} ${h.sizeLabel} received quantity (${h.saleOrderLineId})`}
-                              min={0}
-                              max={h.quantity}
-                              className="w-24 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                              value={receivedQuantities[h.saleOrderLineId] ?? String(h.quantity)}
-                              onChange={(e) =>
-                                setReceivedQuantities((current) => ({
-                                  ...current,
-                                  [h.saleOrderLineId]: e.target.value,
-                                }))
-                              }
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
+                <StyleSizeMetricMatrix
+                  label="Delivery confirmation by Style and Size"
+                  columns={deliveryMatrix.columns}
+                  rows={deliveryMatrix.rows}
+                  metrics={[
+                    { key: 'dispatched', label: 'Dispatched', value: (h) => h.quantity },
+                    {
+                      key: 'received',
+                      label: 'Received',
+                      value: (h) => Number(receivedQuantities[h.saleOrderLineId] ?? h.quantity),
+                      renderCell: ({ sources }) => (
+                        <SourceQuantityInputs
+                          sources={sources}
+                          idOf={(h) => h.saleOrderLineId}
+                          valueOf={(h) => receivedQuantities[h.saleOrderLineId] ?? String(h.quantity)}
+                          onChange={(h, value) =>
+                            setReceivedQuantities((current) => ({ ...current, [h.saleOrderLineId]: value }))
+                          }
+                          maxOf={(h) => h.quantity}
+                          ariaLabelOf={(h) => `${h.styleNumber} ${h.sizeLabel} received quantity (${h.saleOrderLineId})`}
+                          captionOf={(h, index) => h.saleOrderNumber ?? `Line ${index + 1}`}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'short',
+                      label: 'Short',
+                      value: (h) => h.quantity - Number(receivedQuantities[h.saleOrderLineId] ?? h.quantity),
+                      tone: (total) => (total > 0 ? 'danger' : undefined),
+                    },
+                  ]}
+                />
                 <TextField
                   label="Delivery Remarks (required if any line is short)"
                   value={deliveryRemarks}

@@ -6,7 +6,7 @@ import type { ApiSuccessResponse, DistributorOption } from '@erve/types';
 import { createEnterToNextHandler, PageHeader } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import {
@@ -16,7 +16,31 @@ import {
 } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
 import { DistributorLookupField } from '../master-data/DistributorLookupField.js';
+import { StyleSizeMetricMatrix, type StyleSizeMetric } from '../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { SourceQuantityInputs } from '../../components/style-size-grid/SourceQuantityInputs.js';
+import { groupSourceLinesByStyle, type StyleSizeMatrixRowModel } from './style-size-grouping.js';
 import type { SaleOrReturnPositionRow } from './types.js';
+
+/**
+ * A position row is one Erve Dispatch x Sale Order line. Style rows are scoped to Dispatch + source
+ * Sale Order (+ Distributor, which a Dispatch already implies), so the same Style under another
+ * Dispatch or order is its own row and never merged. Grouping is presentation only: each source
+ * position keeps its own `rowKey` input and submission line.
+ */
+const positionContext = (row: SaleOrReturnPositionRow) =>
+  `${row.erveDispatchId}::${row.saleOrderId}::${row.distributor.id}`;
+
+function PositionContext({ row }: { row: StyleSizeMatrixRowModel<SaleOrReturnPositionRow> }) {
+  const first = row.sources[0]!;
+  return (
+    <div className="truncate text-xs text-muted-foreground">
+      {first.erveDispatchNumber} · Order {first.saleOrderNumber} · {first.distributor.name}
+    </div>
+  );
+}
+
+const positionCaption = (position: SaleOrReturnPositionRow, index: number) =>
+  `Line ${index + 1} · ${position.saleOrderNumber}`;
 
 function rowKey(row: SaleOrReturnPositionRow) {
   return `${row.erveDispatchId}:${row.saleOrderLineId}`;
@@ -110,14 +134,72 @@ export function SaleOrReturnPositionListPage() {
     queryKey: ['sale-or-return-positions', selectedDistributorId ?? 'own'],
     enabled: hasValidDistributorContext,
     queryFn: async () => {
-      const res = await apiClient.get<ApiSuccessResponse<{ items: SaleOrReturnPositionRow[] }>>('/sale-or-return-positions', {
+      const res = await apiClient.get<
+        ApiSuccessResponse<{ items: SaleOrReturnPositionRow[]; pageInfo?: { hasMore?: boolean } }>
+      >('/sale-or-return-positions', {
         params: selectedDistributorId ? { distributorId: selectedDistributorId } : undefined,
       });
-      return res.data.data.items;
+      return { items: res.data.data.items, hasMore: res.data.data.pageInfo?.hasMore === true };
     },
   });
 
-  const rows = useMemo(() => query.data ?? [], [query.data]);
+  const rows = useMemo(() => query.data?.items ?? [], [query.data]);
+  // The endpoint is keyset-paginated: a Style's positions can continue on a page that is not loaded.
+  const hasMorePositions = query.data?.hasMore === true;
+  const matrix = useMemo(() => groupSourceLinesByStyle(rows, positionContext), [rows]);
+
+  const metrics: StyleSizeMetric<SaleOrReturnPositionRow>[] = [
+    { key: 'dispatched', label: 'Dispatched', value: (r) => r.dispatchedQuantity },
+    { key: 'received', label: 'Received', value: (r) => r.receivedQuantity },
+    { key: 'sold', label: 'Actual Sold', value: (r) => r.actualSoldQuantity },
+    { key: 'returned', label: 'Returned', value: (r) => r.returnedQuantity },
+    { key: 'awaiting', label: 'Awaiting Receipt', value: (r) => r.approvedAwaitingReceiptQuantity },
+    { key: 'pending', label: 'Pending Request', value: (r) => r.pendingRequestedQuantity },
+    { key: 'remaining', label: 'Remaining', value: (r) => r.remainingWithDistributor },
+    { key: 'returnable', label: 'Returnable', value: (r) => r.returnableQuantity },
+    ...(canReport
+      ? [
+          {
+            key: 'report',
+            label: 'Report Sold Qty',
+            value: (r: SaleOrReturnPositionRow) => Number(quantities[rowKey(r)] ?? 0),
+            renderCell: ({ sources }: { sources: SaleOrReturnPositionRow[] }) => (
+              <SourceQuantityInputs
+                sources={sources}
+                idOf={rowKey}
+                valueOf={(r) => quantities[rowKey(r)] ?? ''}
+                onChange={(r, value) => setQuantities((current) => ({ ...current, [rowKey(r)]: value }))}
+                maxOf={(r) => r.remainingWithDistributor}
+                ariaLabelOf={(r) => `${r.styleNumber} ${r.sizeLabel} sold quantity to report (${r.erveDispatchNumber}, ${r.saleOrderNumber})`}
+                captionOf={positionCaption}
+                readOnlyOf={(r) => r.remainingWithDistributor <= 0}
+              />
+            ),
+          },
+        ]
+      : []),
+    ...(canReturn
+      ? [
+          {
+            key: 'return',
+            label: 'Return Goods Qty',
+            value: (r: SaleOrReturnPositionRow) => Number(returnQuantities[rowKey(r)] ?? 0),
+            renderCell: ({ sources }: { sources: SaleOrReturnPositionRow[] }) => (
+              <SourceQuantityInputs
+                sources={sources}
+                idOf={rowKey}
+                valueOf={(r) => returnQuantities[rowKey(r)] ?? ''}
+                onChange={(r, value) => setReturnQuantities((current) => ({ ...current, [rowKey(r)]: value }))}
+                maxOf={(r) => r.returnableQuantity}
+                ariaLabelOf={(r) => `${r.styleNumber} ${r.sizeLabel} goods quantity to return (${r.erveDispatchNumber}, ${r.saleOrderNumber})`}
+                captionOf={positionCaption}
+                readOnlyOf={(r) => r.returnableQuantity <= 0}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
 
   // Roles that never see the selector (e.g. DISTRIBUTOR, hard-scoped
   // server-side to a single Distributor via getSoleDistributorId) still need
@@ -261,71 +343,36 @@ export function SaleOrReturnPositionListPage() {
 
       {hasValidDistributorContext && (
         <>
-          <Panel padding="none">
-            <DataTable
-              rowKey={rowKey}
-              data={rows}
-              loading={query.isLoading}
-              loadingState={<LoadingState label="Loading Sale-or-Return stock position" />}
-              error={
-                query.isError ? (
-                  <ErrorState title="Unable to load Sale-or-Return positions" description="Please try again." />
-                ) : undefined
-              }
-              emptyState={<EmptyState title="No Sale-or-Return stock" description="No dispatched consignment stock to report against." />}
-              columns={[
-                { key: 'dispatch', header: 'Erve Dispatch #', render: (r) => r.erveDispatchNumber },
-                { key: 'distributor', header: 'Distributor', render: (r) => r.distributor.name },
-                { key: 'style', header: 'Style / Size', render: (r) => `${r.styleNumber} / ${r.sizeLabel}` },
-                { key: 'received', header: 'Received', align: 'right', render: (r) => r.receivedQuantity.toLocaleString() },
-                { key: 'sold', header: 'Actual Sold', align: 'right', render: (r) => r.actualSoldQuantity.toLocaleString() },
-                { key: 'returned', header: 'Returned', align: 'right', render: (r) => r.returnedQuantity.toLocaleString() },
-                { key: 'pendingReturn', header: 'Pending Return', align: 'right', render: (r) => (r.approvedAwaitingReceiptQuantity + r.pendingRequestedQuantity).toLocaleString() },
-                { key: 'remaining', header: 'Remaining', align: 'right', render: (r) => r.remainingWithDistributor.toLocaleString() },
-                ...(canReport
-                  ? [
-                      {
-                        key: 'report',
-                        header: 'Report Sold Qty',
-                        render: (r: SaleOrReturnPositionRow) =>
-                          r.remainingWithDistributor > 0 ? (
-                            <input
-                              type="number"
-                              min={0}
-                              max={r.remainingWithDistributor}
-                              className="w-20 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                              value={quantities[rowKey(r)] ?? ''}
-                              onChange={(e) => setQuantities((current) => ({ ...current, [rowKey(r)]: e.target.value }))}
-                            />
-                          ) : (
-                            '—'
-                          ),
-                      },
-                    ]
-                  : []),
-                ...(canReturn
-                  ? [
-                      {
-                        key: 'return',
-                        header: 'Return Goods Qty',
-                        render: (r: SaleOrReturnPositionRow) =>
-                          r.returnableQuantity > 0 ? (
-                            <input
-                              type="number"
-                              min={0}
-                              max={r.returnableQuantity}
-                              className="w-20 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                              value={returnQuantities[rowKey(r)] ?? ''}
-                              onChange={(e) => setReturnQuantities((current) => ({ ...current, [rowKey(r)]: e.target.value }))}
-                            />
-                          ) : (
-                            '—'
-                          ),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
+          <Panel padding="sm">
+            {query.isLoading ? (
+              <LoadingState label="Loading Sale-or-Return stock position" />
+            ) : query.isError ? (
+              <ErrorState title="Unable to load Sale-or-Return positions" description="Please try again." />
+            ) : (
+              <>
+                {hasMorePositions && (
+                  <p className="mb-3 text-sm text-muted-foreground" role="note">
+                    Only the first {rows.length.toLocaleString()} positions are loaded. A Style row at the end may
+                    continue beyond them, so row totals cover the loaded positions only and the all-Styles totals
+                    are not shown.
+                  </p>
+                )}
+                <StyleSizeMetricMatrix
+                  label="Sale-or-Return stock by Style and Size"
+                  columns={matrix.columns}
+                  rows={matrix.rows}
+                  metrics={metrics}
+                  context={(row) => <PositionContext row={row} />}
+                  showColumnTotals={!hasMorePositions}
+                  emptyMessage={
+                    <EmptyState
+                      title="No Sale-or-Return stock"
+                      description="No dispatched consignment stock to report against."
+                    />
+                  }
+                />
+              </>
+            )}
           </Panel>
 
           {canReport && linesToSubmit.length > 0 && (

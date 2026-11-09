@@ -394,7 +394,13 @@ it('submits projection lines separately when a Style and Size repeat, preserving
   await render('/fulfillment/erve-dispatches/ed?tab=transport-delivery');
   const quantities = active().querySelectorAll<HTMLInputElement>('input[type="number"]');
   expect(quantities).toHaveLength(3);
-  changeInput(quantities[0]!, '4');
+  // Canonical Size order (S before L) decides the visual order, never the payload order.
+  expect(Array.from(quantities).map((input) => input.getAttribute('aria-label'))).toEqual([
+    'ST-1 Small received quantity (two)',
+    'ST-1 Small received quantity (three)',
+    'ST-1 Large received quantity (one)',
+  ]);
+  changeInput(active().querySelector<HTMLInputElement>('input[aria-label="ST-1 Large received quantity (one)"]')!, '4');
   const remarks = [...active().querySelectorAll<HTMLInputElement>('input')].find((el) =>
     el.closest('div')?.textContent?.includes('Delivery Remarks'),
   )!;

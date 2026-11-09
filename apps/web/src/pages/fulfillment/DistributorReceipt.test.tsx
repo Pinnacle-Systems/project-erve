@@ -366,3 +366,74 @@ describe('Distributor Receipt tab — roles and evidence', () => {
     expect(button('Confirm Delivery')).toBeUndefined();
   });
 });
+
+describe('Distributor Receipt tab — grouped confirmation summary and evidence detail (ISS-023 / DEMO-003)', () => {
+  const tableOf = (label: string) => container.querySelector<HTMLTableElement>(`table[aria-label="${label}"]`)!;
+  const cells = (block: Element, label: string) => {
+    const row = [...block.querySelectorAll('tr')].find((tr) => tr.querySelector('th')?.textContent === label)!;
+    return [...row.children].map((c) => c.textContent);
+  };
+
+  it('review step shows one Style row with Size columns and totals, with each source-line allocation listed beneath', async () => {
+    await render('DISTRIBUTOR');
+    enter(cell('ST-1 L received quantity'), '5');
+    enter(cell('ST-1 S received quantity'), '7');
+    plainChange(remarksInput(), 'Short');
+    enter(cell('ST-1 S EISO/1 allocated received quantity'), '3');
+    enter(cell('ST-1 S EISO/2 allocated received quantity'), '4');
+    await act(async () => button('Review Receipt')!.click());
+
+    const summary = tableOf('Receipt summary');
+    expect(summary.querySelectorAll('tbody')).toHaveLength(1);
+    expect([...summary.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual(['Measure', 'S', 'L', 'Total']);
+    const block = summary.querySelector('tbody')!;
+    expect(cells(block, 'Dispatched')).toEqual(['Dispatched', '10', '5', '15']);
+    expect(cells(block, 'Received')).toEqual(['Received', '7', '5', '12']);
+    expect(cells(block, 'Short')).toEqual(['Short', '3', '0', '3']);
+    // The two Sale Order lines behind ST-1 / S keep their own allocation: nothing is merged away.
+    expect(block.textContent).toContain('S · EISO/1 · Sale or Return: dispatched 6, received 3, short 3');
+    expect(block.textContent).toContain('S · EISO/2 · Outright: dispatched 4, received 4, short 0');
+    expect(summary.querySelector('svg')).not.toBeNull();
+  });
+
+  it('evidence detail groups the Style, keeps both source lines of a Size, and flags a source that differs from the ledger in use', async () => {
+    current = {
+      ...baseDispatch,
+      status: 'DELIVERED',
+      canSubmitDistributorReceipt: false,
+      deliveryConfirmationSource: 'USER_CONFIRMED',
+      distributorReceipt: receipt({
+        ledgerDisposition: 'EVIDENCE_ONLY_EXISTING',
+        downstreamBasis: 'EXISTING_LEDGER',
+        hasLedgerDiscrepancy: true,
+        lines: receipt().lines.map((l) => (l.saleOrderLineId === 'a' ? { ...l, currentLedgerQuantity: 6 } : l)),
+      }),
+    };
+    await render('ADMIN');
+
+    const detail = tableOf('Distributor receipt detail');
+    expect(detail.querySelectorAll('tbody')).toHaveLength(1);
+    const block = detail.querySelector('tbody')!;
+    expect(cells(block, 'Dispatched')).toEqual(['Dispatched', '10', '5', '15']);
+    expect(cells(block, 'Received')).toEqual(['Received', '8', '5', '13']);
+    expect(cells(block, 'Short')).toEqual(['Short', '2', '0', '2']);
+    expect(cells(block, 'Ledger in Use')).toEqual(['Ledger in Use', '10', '5', '15']);
+    expect(block.textContent).toContain('EISO/1 · Sale or Return: dispatched 6, received 4, short 2, ledger in use 6');
+    expect(block.textContent).toContain('(differs from the Distributor receipt)');
+    expect(block.textContent).toContain('EISO/2 · Outright: dispatched 4, received 4, short 0, ledger in use 4');
+    expect(active().textContent).toMatch(/differs from the quantities currently used/);
+  });
+
+  it('evidence detail omits the ledger measure when the receipt itself is the ledger', async () => {
+    current = {
+      ...baseDispatch,
+      status: 'DELIVERED',
+      canSubmitDistributorReceipt: false,
+      deliveryConfirmationSource: 'DISTRIBUTOR_CONFIRMED',
+      distributorReceipt: receipt(),
+    };
+    await render('ADMIN');
+    const labels = [...tableOf('Distributor receipt detail').querySelectorAll('tbody th[scope="row"]')].map((th) => th.textContent);
+    expect(labels).toEqual(['Dispatched', 'Received', 'Short']);
+  });
+});

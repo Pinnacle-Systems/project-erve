@@ -14,12 +14,19 @@ import { useAuth } from '../../../auth/AuthContext.js';
 import { apiClient } from '../../../lib/api-client.js';
 import { getApiErrorMessage } from '../../../lib/api-errors.js';
 import {
+  SourceLinesDisclosure,
+  StyleSizeMetricMatrix,
+  type StyleSizeMetric,
+} from '../../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { groupSourceLinesByStyle, type StyleSizeMatrixRowModel } from '../style-size-grouping.js';
+import {
   ReconciliationIndicators,
   ledgerSourceLabel,
   reviewActionLabel,
 } from './ReconciliationIndicators.js';
 
 const quantity = (n: number | null) => (n === null ? 'Not recorded' : n.toLocaleString('en-IN'));
+const NOT_RECORDED = 'Not recorded';
 const time = (value: string) =>
   new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
@@ -96,11 +103,9 @@ function ReconciliationContent({
     },
     onError: () => setStale(true),
   });
-  const groups = new Map<string, ReconciliationLine[]>();
-  for (const line of d.lines) {
-    const key = `${line.styleId}:${line.sizeId}`;
-    groups.set(key, [...(groups.get(key) ?? []), line]);
-  }
+  // One Style row per Style (a Dispatch is the single context here). Source lines — one per Sale
+  // Order line — are never merged: each stays listed under its Style with its own figures.
+  const matrix = groupSourceLinesByStyle(d.lines);
   return (
     <div className="min-w-0 space-y-4">
       <Panel title="Physical Dispatch summary">
@@ -178,11 +183,22 @@ function ReconciliationContent({
           Difference = Distributor Received − Ledger in Use. “Not recorded” is missing evidence, not
           zero. Source-line differences remain visible even when group totals agree.
         </p>
-        <div className="space-y-4">
-          {[...groups.entries()].map(([key, lines]) => (
-            <ComparisonGroup key={key} lines={lines} showDiscrepancy={d.summary.receiptDiffers} />
-          ))}
-        </div>
+        <StyleSizeMetricMatrix
+          label="Style and Size comparison and shortages"
+          columns={matrix.columns}
+          rows={matrix.rows}
+          metrics={comparisonMetrics}
+          detail={(row) => (
+            <SourceLineDetail
+              row={row}
+              summary="Source lines"
+              showDiscrepancy={d.summary.receiptDiffers}
+              figures={(l) =>
+                `Dispatched ${quantity(l.dispatchedQuantity)} · Distributor Received ${quantity(l.receivedQuantity)} · Ledger in Use ${quantity(l.ledgerQuantity)} · Difference ${quantity(l.difference)} · Shortage ${quantity(l.shortageQuantity)}`
+              }
+            />
+          )}
+        />
       </Panel>
       <Panel title="Downstream Sales / Returns exposure">
         <p className="mb-2 text-sm">
@@ -195,24 +211,24 @@ function ReconciliationContent({
             Follow-up required — supporting quantities are preserved; no correction has been made.
           </p>
         )}
-        {d.lines.map((l) => (
-          <div key={l.saleOrderLineId} className="mt-2 rounded border p-2 text-sm">
-            <p className="break-words">
-              {l.styleNumber} / {l.sizeLabel} · {l.saleOrderNumber} · {l.purchaseMode}
-            </p>
-            <p>
-              Actual Sales {l.actualSoldQuantity} · Returned {l.returnedQuantity} · Approved
-              awaiting receipt {l.approvedAwaitingReceiptQuantity} · Pending requests{' '}
-              {l.pendingRequestedQuantity}
-            </p>
-            {l.purchaseMode === 'SALE_RETURN' && (
-              <p>
-                Available for Actual Sale {l.availableForActualSale} · Available for new Return{' '}
-                {l.availableForNewReturn}
-              </p>
-            )}
-          </div>
-        ))}
+        <StyleSizeMetricMatrix
+          label="Downstream Sales and Returns exposure by Style and Size"
+          columns={matrix.columns}
+          rows={matrix.rows}
+          metrics={exposureMetrics}
+          detail={(row) => (
+            <SourceLineDetail
+              row={row}
+              summary="Source orders"
+              figures={(l) =>
+                `Actual Sales ${l.actualSoldQuantity} · Returned ${l.returnedQuantity} · Approved awaiting receipt ${l.approvedAwaitingReceiptQuantity} · Pending requests ${l.pendingRequestedQuantity}` +
+                (l.purchaseMode === 'SALE_RETURN'
+                  ? ` · Available for Actual Sale ${l.availableForActualSale} · Available for new Return ${l.availableForNewReturn}`
+                  : '')
+              }
+            />
+          )}
+        />
       </Panel>
       <Panel title="Internal reconciliation review history">
         <p className="text-sm">
@@ -301,86 +317,66 @@ function ReconciliationContent({
   );
 }
 
-function ComparisonGroup({
-  lines,
-  showDiscrepancy,
-}: {
-  lines: ReconciliationLine[];
-  showDiscrepancy: boolean;
-}) {
-  const sum = (
-    key:
-      | 'dispatchedQuantity'
-      | 'receivedQuantity'
-      | 'ledgerQuantity'
-      | 'difference'
-      | 'shortageQuantity',
-  ) => (lines.every((l) => l[key] !== null) ? lines.reduce((n, l) => n + l[key]!, 0) : null);
-  const first = lines[0]!;
-  return (
-    <section className="min-w-0 rounded border p-2">
-      <h3 className="break-words font-medium">
-        {first.styleNumber} — {first.styleName} / {first.sizeLabel}
-      </h3>
-      {showDiscrepancy && lines.some((l) => l.differs) && (
-        <p className="text-sm font-medium">Source-line receipt / ledger discrepancy</p>
-      )}
-      <QuantityRow
-        dispatched={sum('dispatchedQuantity')}
-        received={sum('receivedQuantity')}
-        ledger={sum('ledgerQuantity')}
-        difference={sum('difference')}
-        shortage={sum('shortageQuantity')}
-      />
-      {lines.map((l) => (
-        <details
-          key={l.saleOrderLineId}
-          className="mt-2 border-t pt-2 text-sm"
-          open={lines.length > 1}
-        >
-          <summary className="break-words">
-            {l.saleOrderNumber} · {l.purchaseMode} · source {l.saleOrderLineId}
-          </summary>
-          <QuantityRow
-            dispatched={l.dispatchedQuantity}
-            received={l.receivedQuantity}
-            ledger={l.ledgerQuantity}
-            difference={l.difference}
-            shortage={l.shortageQuantity}
-          />
-        </details>
-      ))}
-    </section>
-  );
-}
+/**
+ * `null` = the evidence is absent ("Not recorded"), which is NOT a recorded zero; a Style / Size
+ * with any unrecorded source line therefore shows "Not recorded" for the aggregate too.
+ */
+const comparisonMetrics: StyleSizeMetric<ReconciliationLine>[] = [
+  { key: 'dispatched', label: 'Dispatched', value: (l) => l.dispatchedQuantity, missingLabel: NOT_RECORDED },
+  { key: 'received', label: 'Distributor Received', value: (l) => l.receivedQuantity, missingLabel: NOT_RECORDED },
+  { key: 'ledger', label: 'Ledger in Use', value: (l) => l.ledgerQuantity, missingLabel: NOT_RECORDED },
+  { key: 'difference', label: 'Difference', value: (l) => l.difference, missingLabel: NOT_RECORDED },
+  {
+    key: 'shortage',
+    label: 'Shortage',
+    value: (l) => l.shortageQuantity,
+    missingLabel: NOT_RECORDED,
+    tone: (total) => (total > 0 ? 'danger' : undefined),
+  },
+];
 
-function QuantityRow({
-  dispatched,
-  received,
-  ledger,
-  difference,
-  shortage,
+/** Available-to-sell / return quantities only exist for Sale-or-Return source lines (`null` = not applicable). */
+const exposureMetrics: StyleSizeMetric<ReconciliationLine>[] = [
+  { key: 'sold', label: 'Actual Sales', value: (l) => l.actualSoldQuantity },
+  { key: 'returned', label: 'Returned', value: (l) => l.returnedQuantity },
+  { key: 'awaiting', label: 'Approved Awaiting Receipt', value: (l) => l.approvedAwaitingReceiptQuantity },
+  { key: 'pending', label: 'Pending Requests', value: (l) => l.pendingRequestedQuantity },
+  { key: 'availableSale', label: 'Available for Actual Sale', value: (l) => l.availableForActualSale ?? undefined },
+  { key: 'availableReturn', label: 'Available for New Return', value: (l) => l.availableForNewReturn ?? undefined },
+];
+
+/**
+ * Per-source-line drilldown under a Style block: every Sale Order line keeps its own figures and
+ * attribution (order, purchase mode, source id), so an aggregated Style total can never hide a
+ * source-line discrepancy. Opened automatically when a Style / Size has several sources or differs.
+ */
+function SourceLineDetail({
+  row,
+  summary,
+  figures,
+  showDiscrepancy = false,
 }: {
-  dispatched: number | null;
-  received: number | null;
-  ledger: number | null;
-  difference: number | null;
-  shortage: number | null;
+  row: StyleSizeMatrixRowModel<ReconciliationLine>;
+  summary: string;
+  figures: (line: ReconciliationLine) => string;
+  showDiscrepancy?: boolean;
 }) {
+  const differs = showDiscrepancy && row.sources.some((l) => l.differs);
+  const split = Object.values(row.sourcesBySize).some((sources) => sources.length > 1);
   return (
-    <dl className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
-      {[
-        ['Dispatched', dispatched],
-        ['Distributor Received', received],
-        ['Ledger in Use', ledger],
-        ['Difference', difference],
-        ['Shortage', shortage],
-      ].map(([label, value]) => (
-        <div key={String(label)} className="min-w-0 rounded bg-muted p-2">
-          <dt className="break-words">{label}</dt>
-          <dd className="font-medium tabular-nums">{quantity(value as number | null)}</dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      {differs && <p className="text-sm font-medium">Source-line receipt / ledger discrepancy</p>}
+      <SourceLinesDisclosure summary={`${summary} (${row.sources.length})`} open={differs || split}>
+        <ul className="space-y-1">
+          {row.sources.map((l) => (
+            <li key={l.saleOrderLineId} className="min-w-0 break-words border-t pt-1">
+              <span className="font-medium">{l.sizeLabel}</span> · {l.saleOrderNumber} · {l.purchaseMode} · source{' '}
+              {l.saleOrderLineId}
+              <div className="text-muted-foreground">{figures(l)}</div>
+            </li>
+          ))}
+        </ul>
+      </SourceLinesDisclosure>
+    </>
   );
 }

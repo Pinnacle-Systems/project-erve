@@ -1,3 +1,5 @@
+import type { StyleImage } from '../master-data/types.js';
+
 export interface StyleSizeQuantityLine {
   styleId: string;
   styleNumber: string;
@@ -285,4 +287,80 @@ export function groupFinancialLinesByStyle<T extends FinancialStyleSizeLine>(lin
     if (hasOrdering) group.sizeEntries = orderEntries(group.sizeEntries, columns);
     return group;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Source-preserving Style x Size matrix model (ISS-023 / DEMO-003 post-dispatch screens)
+// ---------------------------------------------------------------------------
+
+export interface StyleSizeSourceLine {
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  primaryImage?: StyleImage | null;
+  sizeId: string;
+  sizeCode: string;
+  sizeLabel: string;
+  sizeSortOrder?: number;
+}
+
+export interface StyleSizeMatrixRowModel<T extends StyleSizeSourceLine> {
+  /** Stable React/table row key: `${contextKey}::${styleId}`. */
+  key: string;
+  /** Identifies the business context (Dispatch, source order, ...) this Style row is scoped to; '' when there is only one. */
+  contextKey: string;
+  styleId: string;
+  styleNumber: string;
+  styleName: string;
+  primaryImage: StyleImage | null;
+  /** Every original source line of this Style row, unmodified and in input order. */
+  sources: T[];
+  /** The same source lines keyed by Size. A Size with several sources keeps ALL of them. */
+  sourcesBySize: Record<string, T[]>;
+}
+
+export interface StyleSizeMatrixModel<T extends StyleSizeSourceLine> {
+  /** Canonical Size order (Size.sortOrder, then code) across every row, not alphabetical. */
+  columns: SizeColumn[];
+  rows: StyleSizeMatrixRowModel<T>[];
+}
+
+/**
+ * Presentation-only grouping of source lines into one logical Style row per business context.
+ *
+ * - Identity is the real `styleId` UUID (never the display number) plus the caller's `contextKey`,
+ *   so the same Style under different Dispatches / source orders stays in separate rows.
+ * - Nothing is summed or dropped here: each Style x Size cell keeps every contributing source line
+ *   (callers aggregate only what they display and keep per-source editing/drilldown on `sources`).
+ * - Rows keep first appearance; Size columns use the canonical configured order shared with
+ *   `groupLinesByStyle`/`distinctSizeColumns`.
+ */
+export function groupSourceLinesByStyle<T extends StyleSizeSourceLine>(
+  lines: T[],
+  contextKey: (line: T) => string = () => '',
+): StyleSizeMatrixModel<T> {
+  const rows = new Map<string, StyleSizeMatrixRowModel<T>>();
+  for (const line of lines) {
+    const context = contextKey(line);
+    const key = `${context}::${line.styleId}`;
+    let row = rows.get(key);
+    if (!row) {
+      row = {
+        key,
+        contextKey: context,
+        styleId: line.styleId,
+        styleNumber: line.styleNumber,
+        styleName: line.styleName,
+        primaryImage: line.primaryImage ?? null,
+        sources: [],
+        sourcesBySize: {},
+      };
+      rows.set(key, row);
+    } else if (!row.primaryImage && line.primaryImage) {
+      row.primaryImage = line.primaryImage;
+    }
+    row.sources.push(line);
+    (row.sourcesBySize[line.sizeId] ??= []).push(line);
+  }
+  return { columns: distinctSizeColumns(lines), rows: [...rows.values()] };
 }

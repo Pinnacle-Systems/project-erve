@@ -191,8 +191,17 @@ async function clickConfirmDelivery() {
   await act(async () => button!.click());
 }
 
+const deliveryTable = () =>
+  container.querySelector<HTMLTableElement>('table[aria-label="Delivery confirmation by Style and Size"]')!;
+// One logical Style block per <tbody>: its identity row, then one labelled row per measure.
+const styleBlocks = () => Array.from(deliveryTable().querySelectorAll('tbody'));
+const rowCells = (block: Element, label: string) => {
+  const row = Array.from(block.querySelectorAll('tr')).find((tr) => tr.querySelector('th')?.textContent === label)!;
+  return Array.from(row.children).map((cell) => cell.textContent);
+};
+
 describe('ISS-080: receipt entry grouped by Style then Size', () => {
-  it('groups one Style with multiple Sizes under one Style header with a reconciling subtotal', async () => {
+  it('groups one Style with multiple Sizes into one Style row with Size columns and a reconciling total', async () => {
     const dispatch = buildDispatch({
       status: 'DISPATCHED',
       version: 3,
@@ -206,12 +215,15 @@ describe('ISS-080: receipt entry grouped by Style then Size', () => {
       throw new Error(`Unexpected GET: ${url}`);
     });
 
-    expect(content()).toContain('ST-001');
-    expect(content()).toContain('Classic Tee');
-    expect(content()).toContain('Dispatched 15');
-    expect(content()).toContain('Received 15');
+    expect(styleBlocks()).toHaveLength(1);
+    expect(styleBlocks()[0]!.textContent).toContain('ST-001');
+    expect(styleBlocks()[0]!.textContent).toContain('Classic Tee');
+    // Sizes are columns: S, M, then the Total.
+    expect(Array.from(deliveryTable().querySelectorAll('thead th')).map((th) => th.textContent)).toEqual(['Measure', 'S', 'M', 'Total']);
+    expect(rowCells(styleBlocks()[0]!, 'Dispatched')).toEqual(['Dispatched', '5', '10', '15']);
     const quantities = container.querySelectorAll<HTMLInputElement>('input[type="number"]');
     expect(quantities).toHaveLength(2);
+    expect(rowCells(styleBlocks()[0]!, 'Short')).toEqual(['Short', '0', '0', '0']);
   });
 
   it('keeps two Styles as separate groups that never mix their Size rows', async () => {
@@ -221,15 +233,18 @@ describe('ISS-080: receipt entry grouped by Style then Size', () => {
       throw new Error(`Unexpected GET: ${url}`);
     });
 
-    expect(content()).toContain('STYLE-OUT');
-    expect(content()).toContain('STYLE-SR');
+    expect(styleBlocks()).toHaveLength(2);
     const groups = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="number"]')).map(
-      (input) => input.closest('.p-3')?.textContent ?? '',
+      (input) => input.closest('tbody')?.textContent ?? '',
     );
     expect(groups[0]).toContain('STYLE-OUT');
     expect(groups[0]).not.toContain('STYLE-SR');
     expect(groups[1]).toContain('STYLE-SR');
     expect(groups[1]).not.toContain('STYLE-OUT');
+    // Each Style only shows a value under the Size it actually has (legacy handoffs carry no Size
+    // order, so the columns keep first appearance: M then L).
+    expect(rowCells(styleBlocks()[0]!, 'Dispatched')).toEqual(['Dispatched', '10', '—', '10']);
+    expect(rowCells(styleBlocks()[1]!, 'Dispatched')).toEqual(['Dispatched', '—', '25', '25']);
   });
 
   it('preserves two duplicate Style+Size source lines as individually traceable, independently editable rows', async () => {
@@ -251,9 +266,15 @@ describe('ISS-080: receipt entry grouped by Style then Size', () => {
     expect(quantities).toHaveLength(2);
     expect(quantities[0]!.value).toBe('10');
     expect(quantities[1]!.value).toBe('6');
-    expect(content()).toContain('Dispatched 16');
+    // One Style / Size cell aggregates for display (16) but keeps one captioned input per source line.
+    expect(rowCells(styleBlocks()[0]!, 'Dispatched')).toEqual(['Dispatched', '16', '16']);
+    expect(deliveryTable().textContent).toContain('Line 1');
+    expect(deliveryTable().textContent).toContain('Line 2');
+    expect(quantities[0]!.getAttribute('aria-label')).toContain('sol-dup-1');
+    expect(quantities[1]!.getAttribute('aria-label')).toContain('sol-dup-2');
 
     changeInput(quantities[0]!, '9');
+    expect(rowCells(styleBlocks()[0]!, 'Short')).toEqual(['Short', '1', '1']);
     await clickConfirmDelivery();
     expect(patch).toHaveBeenCalledExactlyOnceWith('/erve-dispatches/ed-1/delivery', {
       expectedVersion: 9,

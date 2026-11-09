@@ -886,10 +886,16 @@ export interface SaleOrReturnPositionRow {
   saleOrderNumber: string;
   distributor: { id: string; code: string; name: string };
   saleOrderLineId: string;
+  /** Real Style/Size identities, so grouped views and the authenticated thumbnail never fall back to display labels. */
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  /** Null when the Style has no image, or the viewer's role may not read Style images. */
+  primaryImage: StylePrimaryImageView | null;
+  sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder: number;
   dispatchedQuantity: number;
   receivedQuantity: number;
   actualSoldQuantity: number;
@@ -914,10 +920,17 @@ export interface DistributorReturnLineView {
   id: string;
   erveDispatch: { id: string; erveDispatchNumber: string };
   saleOrderLineId: string;
+  saleOrderId: string;
+  saleOrderNumber: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  /** Populated by the detail endpoint only; null on list responses and for roles that may not read Style images. */
+  primaryImage: StylePrimaryImageView | null;
+  sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder: number;
   requestedQuantity: number;
   approvedQuantity: number | null;
   receivedQuantity: number | null;
@@ -952,10 +965,17 @@ export interface DistributorSalesReportLineView {
   id: string;
   erveDispatch: { id: string; erveDispatchNumber: string };
   saleOrderLineId: string;
+  saleOrderId: string;
+  saleOrderNumber: string;
+  styleId: string;
   styleNumber: string;
   styleName: string;
+  /** Populated by the detail endpoint only; null on list responses and for roles that may not read Style images. */
+  primaryImage: StylePrimaryImageView | null;
+  sizeId: string;
   sizeCode: string;
   sizeLabel: string;
+  sizeSortOrder: number;
   quantitySold: number;
 }
 

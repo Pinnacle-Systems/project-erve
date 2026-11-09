@@ -1,6 +1,7 @@
-import { Fragment } from 'react';
 import type { ErveDispatchDistributorReceiptView, ErveDispatchView } from '@erve/types';
 import { DescriptionList, Panel } from '@erve/layout';
+import { StyleSizeMetricMatrix } from '../../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { groupSourceLinesByStyle } from '../style-size-grouping.js';
 import { DispatchQuantityMatrix } from './DispatchQuantityMatrix.js';
 
 const purchaseModeLabel = (mode: string) => (mode === 'SALE_RETURN' ? 'Sale or Return' : 'Outright');
@@ -21,11 +22,11 @@ export function DistributorReceiptEvidence({
   receipt: ErveDispatchDistributorReceiptView;
 }) {
   const applied = receipt.ledgerDisposition === 'APPLIED';
-  const rows = new Map<string, ErveDispatchDistributorReceiptView['lines']>();
-  for (const line of receipt.lines) {
-    const key = `${line.styleId}::${line.sizeId}`;
-    rows.set(key, [...(rows.get(key) ?? []), line]);
-  }
+  // Primary images come from the Dispatch's own quantity lines (the receipt lines carry none).
+  const imageByStyle = new Map((dispatch.quantityLines ?? []).map((line) => [line.styleId, line.primaryImage]));
+  const detailMatrix = groupSourceLinesByStyle(
+    receipt.lines.map((line) => ({ ...line, primaryImage: imageByStyle.get(line.styleId) ?? null })),
+  );
   const matrixLines = receipt.lines.map((line) => ({
     saleOrderLineId: line.saleOrderLineId,
     styleId: line.styleId,
@@ -72,56 +73,47 @@ export function DistributorReceiptEvidence({
       </Panel>
 
       <Panel title="Receipt Detail" padding="sm">
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-xs sm:text-sm" aria-label="Distributor receipt detail">
-            <thead>
-              <tr className="border-b border-[var(--erp-border)] text-left text-xs text-muted-foreground">
-                <th className="px-1 py-1 sm:px-2">Style / Size</th>
-                <th className="w-14 px-1 py-1 text-right sm:w-24 sm:px-2"><span className="sm:hidden">Disp.</span><span className="hidden sm:inline">Dispatched</span></th>
-                <th className="w-14 px-1 py-1 text-right sm:w-24 sm:px-2"><span className="sm:hidden">Recd.</span><span className="hidden sm:inline">Received</span></th>
-                <th className="w-12 px-1 py-1 text-right sm:w-20 sm:px-2">Short</th>
-                {!applied && <th className="w-14 px-1 py-1 text-right sm:w-28 sm:px-2">Ledger<span className="hidden sm:inline"> in Use</span></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {[...rows.entries()].map(([key, lines]) => {
-                const dispatched = lines.reduce((sum, l) => sum + l.dispatchedQuantity, 0);
-                const got = lines.reduce((sum, l) => sum + l.receivedQuantity, 0);
-                const ledger = lines.every((l) => l.currentLedgerQuantity !== null)
-                  ? lines.reduce((sum, l) => sum + (l.currentLedgerQuantity ?? 0), 0)
-                  : null;
-                const differs = !applied && ledger !== null && ledger !== got;
-                const first = lines[0]!;
+        <StyleSizeMetricMatrix
+          label="Distributor receipt detail"
+          columns={detailMatrix.columns}
+          rows={detailMatrix.rows}
+          metrics={[
+            { key: 'dispatched', label: 'Dispatched', value: (line) => line.dispatchedQuantity },
+            { key: 'received', label: 'Received', value: (line) => line.receivedQuantity },
+            {
+              key: 'short',
+              label: 'Short',
+              value: (line) => line.shortageQuantity,
+              tone: (total) => (total > 0 ? 'danger' : undefined),
+            },
+            // Only while an earlier confirmation, not this receipt, still drives Sales and Returns.
+            ...(applied
+              ? []
+              : [
+                  {
+                    key: 'ledger',
+                    label: 'Ledger in Use',
+                    value: (line: ErveDispatchDistributorReceiptView['lines'][number]) => line.currentLedgerQuantity,
+                    tone: undefined,
+                  },
+                ]),
+          ]}
+          detail={(row) => (
+            <ul className="space-y-0.5 text-xs text-muted-foreground">
+              {row.sources.map((line) => {
+                const differs = !applied && line.currentLedgerQuantity !== null && line.currentLedgerQuantity !== line.receivedQuantity;
                 return (
-                  <Fragment key={key}>
-                    <tr className="border-b border-[var(--erp-border)]">
-                      <td className="break-all px-1 py-1 sm:px-2">{first.styleNumber} / {first.sizeLabel}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{dispatched}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{got}</td>
-                      <td className={`px-2 py-1 text-right tabular-nums ${dispatched > got ? 'font-medium text-danger' : ''}`}>{dispatched - got}</td>
-                      {!applied && (
-                        <td className={`px-2 py-1 text-right tabular-nums ${differs ? 'font-medium text-danger' : ''}`}>
-                          {ledger === null ? '—' : ledger}
-                          {differs && <span className="sr-only"> (differs from the Distributor receipt)</span>}
-                        </td>
-                      )}
-                    </tr>
-                    {lines.length > 1 &&
-                      lines.map((line) => (
-                        <tr key={line.saleOrderLineId} className="text-xs text-muted-foreground">
-                          <td className="break-words px-1 py-0.5 pl-3 sm:px-2 sm:pl-6">{line.saleOrderNumber} · {purchaseModeLabel(line.purchaseMode)}</td>
-                          <td className="px-2 py-0.5 text-right tabular-nums">{line.dispatchedQuantity}</td>
-                          <td className="px-2 py-0.5 text-right tabular-nums">{line.receivedQuantity}</td>
-                          <td className="px-2 py-0.5 text-right tabular-nums">{line.shortageQuantity}</td>
-                          {!applied && <td className="px-2 py-0.5 text-right tabular-nums">{line.currentLedgerQuantity ?? '—'}</td>}
-                        </tr>
-                      ))}
-                  </Fragment>
+                  <li key={line.saleOrderLineId} className="break-words">
+                    {line.sizeCode} · {line.saleOrderNumber} · {purchaseModeLabel(line.purchaseMode)}: dispatched{' '}
+                    {line.dispatchedQuantity}, received {line.receivedQuantity}, short {line.shortageQuantity}
+                    {!applied && <>, ledger in use {line.currentLedgerQuantity ?? '—'}</>}
+                    {differs && <span className="font-medium text-danger"> (differs from the Distributor receipt)</span>}
+                  </li>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </ul>
+          )}
+        />
         {receipt.hasLedgerDiscrepancy && (
           <p className="mt-3 text-sm font-medium text-danger" role="alert">
             The Distributor&rsquo;s confirmation differs from the quantities currently used for Sales and Returns. No

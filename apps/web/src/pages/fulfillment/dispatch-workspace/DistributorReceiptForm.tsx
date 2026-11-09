@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import type { ApiSuccessResponse } from '@erve/types';
@@ -8,6 +8,8 @@ import { Button, NumericField, TextField, ValidationMessage } from '@erve/primit
 import { apiClient } from '../../../lib/api-client.js';
 import { getApiErrorMessage } from '../../../lib/api-errors.js';
 import { StyleSizeGrid } from '../../../components/style-size-grid/StyleSizeGrid.js';
+import { StyleSizeMetricMatrix } from '../../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { groupSourceLinesByStyle } from '../style-size-grouping.js';
 import type { ErveDispatchView } from '../types.js';
 import {
   buildReceiptEntryGroups,
@@ -135,6 +137,7 @@ export function DistributorReceiptForm({ dispatch }: { dispatch: ErveDispatchVie
       values: Object.fromEntries(styleGroups.map((group) => [group.sizeId, received[group.key] ?? null])),
     };
   });
+  const reviewMatrix = useMemo(() => groupSourceLinesByStyle(groups), [groups]);
   const groupBySize = (styleId: string, sizeId: string) => groups.find((g) => g.styleId === styleId && g.sizeId === sizeId);
 
   const ambiguous = groups.filter((group) => needsAllocation(group, received[group.key]));
@@ -306,51 +309,42 @@ export function DistributorReceiptForm({ dispatch }: { dispatch: ErveDispatchVie
                 <dd className={validation.totalShortage > 0 ? 'font-medium text-danger' : 'font-medium'}>{validation.totalShortage.toLocaleString()}</dd>
               </div>
             </dl>
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed border-collapse text-xs sm:text-sm" aria-label="Receipt summary">
-                <thead>
-                  <tr className="border-b border-[var(--erp-border)] text-left text-xs text-muted-foreground">
-                    <th className="px-1 py-1 sm:px-2">Style / Size</th>
-                    <th className="w-[4.5rem] px-1 py-1 text-right sm:w-24 sm:px-2">Dispatched</th>
-                    <th className="w-[4.25rem] px-1 py-1 text-right sm:w-24 sm:px-2">Received</th>
-                    <th className="w-12 px-1 py-1 text-right sm:w-20 sm:px-2">Short</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.map((group) => {
-                    const entered = received[group.key] ?? 0;
-                    const lines = needsAllocation(group, entered)
-                      ? group.sources.map((source) => ({
-                          source,
-                          quantity: Number(allocations[group.key]?.[source.saleOrderLineId] ?? 0),
-                        }))
-                      : [];
-                    return (
-                      <Fragment key={group.key}>
-                        <tr className="border-b border-[var(--erp-border)]">
-                          <td className="break-all px-1 py-1 sm:px-2">{group.styleNumber} / {group.sizeLabel}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{group.dispatchedQuantity}</td>
-                          <td className="px-2 py-1 text-right tabular-nums">{entered}</td>
-                          <td className={`px-2 py-1 text-right tabular-nums ${group.dispatchedQuantity > entered ? 'font-medium text-danger' : ''}`}>
-                            {group.dispatchedQuantity - entered}
-                          </td>
-                        </tr>
-                        {lines.map(({ source, quantity }) => (
-                          <tr key={`${group.key}:${source.saleOrderLineId}`} className="text-xs text-muted-foreground">
-                            <td className="break-words px-1 py-0.5 pl-3 sm:px-2 sm:pl-6">
-                              {source.saleOrderNumber ?? 'Order'} · {purchaseModeLabel(source.purchaseMode)}
-                            </td>
-                            <td className="px-2 py-0.5 text-right tabular-nums">{source.dispatchedQuantity}</td>
-                            <td className="px-2 py-0.5 text-right tabular-nums">{quantity}</td>
-                            <td className="px-2 py-0.5 text-right tabular-nums">{source.dispatchedQuantity - quantity}</td>
-                          </tr>
-                        ))}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <StyleSizeMetricMatrix
+              label="Receipt summary"
+              columns={reviewMatrix.columns}
+              rows={reviewMatrix.rows}
+              metrics={[
+                { key: 'dispatched', label: 'Dispatched', value: (group) => group.dispatchedQuantity },
+                { key: 'received', label: 'Received', value: (group) => received[group.key] ?? 0 },
+                {
+                  key: 'short',
+                  label: 'Short',
+                  value: (group) => group.dispatchedQuantity - (received[group.key] ?? 0),
+                  tone: (total) => (total > 0 ? 'danger' : undefined),
+                },
+              ]}
+              detail={(row) => {
+                // Source-line allocations of a partial receipt, exactly as entered above.
+                const allocated = row.sources.filter((group) => needsAllocation(group, received[group.key] ?? 0));
+                if (allocated.length === 0) return null;
+                return (
+                  <ul className="space-y-1 text-xs text-muted-foreground">
+                    {allocated.flatMap((group) =>
+                      group.sources.map((source) => {
+                        const quantity = Number(allocations[group.key]?.[source.saleOrderLineId] ?? 0);
+                        return (
+                          <li key={`${group.key}:${source.saleOrderLineId}`}>
+                            {group.sizeCode} · {source.saleOrderNumber ?? 'Order'} · {purchaseModeLabel(source.purchaseMode)}:
+                            dispatched {source.dispatchedQuantity}, received {quantity}, short{' '}
+                            {source.dispatchedQuantity - quantity}
+                          </li>
+                        );
+                      }),
+                    )}
+                  </ul>
+                );
+              }}
+            />
             {remarks.trim() && (
               <p className="text-sm"><span className="text-muted-foreground">Remarks: </span>{remarks.trim()}</p>
             )}

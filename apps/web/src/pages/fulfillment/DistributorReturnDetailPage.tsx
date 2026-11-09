@@ -5,16 +5,19 @@ import type { ApiSuccessResponse } from '@erve/types';
 import { createEnterToNextHandler, PageHeader, StatusBadge } from '@erve/app-components';
 import { Button, DatePicker, TextField, ValidationMessage } from '@erve/primitives';
 import { DescriptionList, Panel } from '@erve/layout';
-import { DataTable, EmptyState, ErrorState, LoadingState } from '@erve/data-display';
+import { EmptyState, ErrorState, LoadingState } from '@erve/data-display';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
+import { StyleSizeMetricMatrix } from '../../components/style-size-grid/StyleSizeMetricMatrix.js';
+import { SourceQuantityInputs } from '../../components/style-size-grid/SourceQuantityInputs.js';
+import { groupSourceLinesByStyle, type StyleSizeMatrixRowModel } from './style-size-grouping.js';
 import {
   canApproveDistributorReturns,
   canReceiveDistributorReturns,
   canSubmitDistributorReturns,
 } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
-import type { DistributorReturnStatus, DistributorReturnView } from './types.js';
+import type { DistributorReturnLineView, DistributorReturnStatus, DistributorReturnView } from './types.js';
 
 const statusTone: Record<DistributorReturnStatus, 'submitted' | 'approved' | 'rejected' | 'posted' | 'cancelled'> = {
   SUBMITTED: 'submitted',
@@ -31,6 +34,24 @@ const statusLabel: Record<DistributorReturnStatus, string> = {
   RECEIVED: 'Received',
   CANCELLED: 'Cancelled',
 };
+
+/**
+ * A Return's Style rows are scoped to one Erve Dispatch + source Sale Order: the same Style under
+ * another Dispatch or order is a separate row. Presentation only — every `lines[].id` the approve /
+ * receive payloads key on stays on its own source line and input.
+ */
+const returnContext = (line: DistributorReturnLineView) => `${line.erveDispatch.id}::${line.saleOrderId}`;
+
+function ReturnLineContext({ row }: { row: StyleSizeMatrixRowModel<DistributorReturnLineView> }) {
+  const first = row.sources[0]!;
+  return (
+    <div className="truncate text-xs text-muted-foreground">
+      {first.erveDispatch.erveDispatchNumber} · Order {first.saleOrderNumber}
+    </div>
+  );
+}
+
+const lineCaption = (line: DistributorReturnLineView, index: number) => `Line ${index + 1} · ${line.saleOrderNumber}`;
 
 export function DistributorReturnDetailPage() {
   const { id } = useParams();
@@ -147,6 +168,7 @@ export function DistributorReturnDetailPage() {
     return <ErrorState title="Unable to load return" description={query.error.message} />;
   if (!record) return <EmptyState title="Distributor Return not found" tone="error" />;
 
+  const matrix = groupSourceLinesByStyle(record.lines, returnContext);
   const hasCreditNote = Boolean(record.creditNoteReference);
   const canCancel =
     (canSubmitOwn && record.status === 'SUBMITTED') ||
@@ -205,17 +227,17 @@ export function DistributorReturnDetailPage() {
         </DescriptionList>
       </Panel>
 
-      <Panel title="Lines" padding="none">
-        <DataTable
-          rowKey="id"
-          data={record.lines}
-          emptyState={<EmptyState title="No lines" />}
-          columns={[
-            { key: 'dispatch', header: 'Erve Dispatch #', render: (l) => l.erveDispatch.erveDispatchNumber },
-            { key: 'style', header: 'Style / Size', render: (l) => `${l.styleNumber} / ${l.sizeLabel}` },
-            { key: 'requested', header: 'Requested', align: 'right', render: (l) => l.requestedQuantity.toLocaleString() },
-            { key: 'approved', header: 'Approved', align: 'right', render: (l) => l.approvedQuantity?.toLocaleString() ?? '—' },
-            { key: 'received', header: 'Received', align: 'right', render: (l) => l.receivedQuantity?.toLocaleString() ?? '—' },
+      <Panel title="Lines" padding="sm">
+        <StyleSizeMetricMatrix
+          label="Return lines by Style and Size"
+          columns={matrix.columns}
+          rows={matrix.rows}
+          context={(row) => <ReturnLineContext row={row} />}
+          emptyMessage={<EmptyState title="No lines" />}
+          metrics={[
+            { key: 'requested', label: 'Requested', value: (l) => l.requestedQuantity },
+            { key: 'approved', label: 'Approved', value: (l) => l.approvedQuantity },
+            { key: 'received', label: 'Received', value: (l) => l.receivedQuantity },
           ]}
         />
       </Panel>
@@ -223,21 +245,31 @@ export function DistributorReturnDetailPage() {
       {canApprove && record.status === 'SUBMITTED' && (
         <Panel title="Finance Review">
           <div className="space-y-3">
-            {record.lines.map((l) => (
-              <div key={l.id} className="flex items-center gap-3">
-                <span className="w-56 text-sm">
-                  {l.styleNumber} / {l.sizeLabel} (requested {l.requestedQuantity.toLocaleString()})
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  max={l.requestedQuantity}
-                  className="w-24 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                  value={approvedQuantities[l.id] ?? String(l.requestedQuantity)}
-                  onChange={(e) => setApprovedQuantities((current) => ({ ...current, [l.id]: e.target.value }))}
-                />
-              </div>
-            ))}
+            <StyleSizeMetricMatrix
+              label="Finance review by Style and Size"
+              columns={matrix.columns}
+              rows={matrix.rows}
+              context={(row) => <ReturnLineContext row={row} />}
+              metrics={[
+                { key: 'requested', label: 'Requested', value: (l) => l.requestedQuantity },
+                {
+                  key: 'approve',
+                  label: 'Approve',
+                  value: (l) => Number(approvedQuantities[l.id] ?? l.requestedQuantity),
+                  renderCell: ({ sources }) => (
+                    <SourceQuantityInputs
+                      sources={sources}
+                      idOf={(l) => l.id}
+                      valueOf={(l) => approvedQuantities[l.id] ?? String(l.requestedQuantity)}
+                      onChange={(l, value) => setApprovedQuantities((current) => ({ ...current, [l.id]: value }))}
+                      maxOf={(l) => l.requestedQuantity}
+                      ariaLabelOf={(l) => `${l.styleNumber} ${l.sizeLabel} approved quantity (${l.erveDispatch.erveDispatchNumber}, ${l.saleOrderNumber}, requested ${l.requestedQuantity})`}
+                      captionOf={lineCaption}
+                    />
+                  ),
+                },
+              ]}
+            />
             <TextField label="Approval Remarks (optional)" value={approvalRemarks} onChange={(e) => setApprovalRemarks(e.target.value)} />
           </div>
           <div className="mt-3 flex flex-wrap justify-end gap-3">
@@ -254,23 +286,31 @@ export function DistributorReturnDetailPage() {
 
       {canReceive && record.status === 'APPROVED' && (
         <Panel title="Record Physical Receipt">
-          <div className="space-y-3">
-            {record.lines.map((l) => (
-              <div key={l.id} className="flex items-center gap-3">
-                <span className="w-56 text-sm">
-                  {l.styleNumber} / {l.sizeLabel} (approved {l.approvedQuantity?.toLocaleString() ?? 0})
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  max={l.approvedQuantity ?? 0}
-                  className="w-24 rounded border border-[var(--erp-border)] px-2 py-1 text-sm"
-                  value={receivedQuantities[l.id] ?? String(l.approvedQuantity ?? 0)}
-                  onChange={(e) => setReceivedQuantities((current) => ({ ...current, [l.id]: e.target.value }))}
-                />
-              </div>
-            ))}
-          </div>
+          <StyleSizeMetricMatrix
+            label="Physical receipt by Style and Size"
+            columns={matrix.columns}
+            rows={matrix.rows}
+            context={(row) => <ReturnLineContext row={row} />}
+            metrics={[
+              { key: 'approved', label: 'Approved', value: (l) => l.approvedQuantity ?? 0 },
+              {
+                key: 'receive',
+                label: 'Receive',
+                value: (l) => Number(receivedQuantities[l.id] ?? l.approvedQuantity ?? 0),
+                renderCell: ({ sources }) => (
+                  <SourceQuantityInputs
+                    sources={sources}
+                    idOf={(l) => l.id}
+                    valueOf={(l) => receivedQuantities[l.id] ?? String(l.approvedQuantity ?? 0)}
+                    onChange={(l, value) => setReceivedQuantities((current) => ({ ...current, [l.id]: value }))}
+                    maxOf={(l) => l.approvedQuantity ?? 0}
+                    ariaLabelOf={(l) => `${l.styleNumber} ${l.sizeLabel} received quantity (${l.erveDispatch.erveDispatchNumber}, ${l.saleOrderNumber}, approved ${l.approvedQuantity ?? 0})`}
+                    captionOf={lineCaption}
+                  />
+                ),
+              },
+            ]}
+          />
           <div className="mt-3 flex justify-end">
             <Button onClick={() => receiveMutation.mutate()} loading={receiveMutation.isPending}>
               Record Receipt
