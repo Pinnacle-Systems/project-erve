@@ -70,7 +70,7 @@ import { ErvePackingListCreatePage } from '../pages/fulfillment/ErvePackingListC
 import { ErvePackingListDetailPage } from '../pages/fulfillment/ErvePackingListDetailPage.js';
 import { ErveDispatchListPage } from '../pages/fulfillment/ErveDispatchListPage.js';
 import { PostDispatchReconciliationPage } from '../pages/fulfillment/PostDispatchReconciliationPage.js';
-import { RECONCILIATION_VIEW_ROLES } from '@erve/shared';
+import { RECONCILIATION_VIEW_ROLES, RETAIL_STORE_INVENTORY_VIEW_ROLES } from '@erve/shared';
 import { ErveDispatchRecordPage } from '../pages/fulfillment/ErveDispatchRecordPage.js';
 import { ErveDispatchDetailPage } from '../pages/fulfillment/ErveDispatchDetailPage.js';
 import { RetiredInvoiceHandoffPage } from '../pages/fulfillment/RetiredInvoiceHandoffPage.js';
@@ -79,6 +79,7 @@ import { FactoryInvoiceDetailPage } from '../pages/fulfillment/FactoryInvoiceDet
 import { TaxInvoiceListPage } from '../pages/fulfillment/TaxInvoiceListPage.js';
 import { TaxInvoiceDetailPage } from '../pages/fulfillment/TaxInvoiceDetailPage.js';
 import { SaleOrReturnPositionListPage } from '../pages/fulfillment/SaleOrReturnPositionListPage.js';
+import { RetailStoreInventoryPage } from '../pages/fulfillment/RetailStoreInventoryPage.js';
 import { DistributorSalesReportListPage } from '../pages/fulfillment/DistributorSalesReportListPage.js';
 import { DistributorSalesReportDetailPage } from '../pages/fulfillment/DistributorSalesReportDetailPage.js';
 import { DistributorReturnListPage } from '../pages/fulfillment/DistributorReturnListPage.js';
@@ -783,6 +784,16 @@ export function AppRoutes() {
         }
       >
         <Route index element={<SaleOrReturnPositionListPage />} />
+      </Route>
+      <Route
+        path="/fulfillment/retail-store-inventory"
+        element={
+          <RoleRoute allowed={RETAIL_STORE_INVENTORY_VIEW_ROLES}>
+            <AppLayout />
+          </RoleRoute>
+        }
+      >
+        <Route index element={<RetailStoreInventoryPage />} />
       </Route>
       <Route
         path="/fulfillment/distributor-sales-reports"

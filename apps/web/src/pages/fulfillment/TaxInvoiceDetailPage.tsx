@@ -228,7 +228,8 @@ function TaxInvoiceDetail({
   return (
     <div className="space-y-4">
       <PageHeader
-        className="[&>div]:flex-col [&>div]:items-stretch sm:[&>div]:flex-row sm:[&>div]:items-start [&_h1]:break-words max-sm:[&>div>div:last-child]:flex-wrap"
+        className="[&_h1]:break-words"
+        wrapActions
         title={
           invoice.status === 'DRAFT'
             ? 'Tax Invoice — Draft'
