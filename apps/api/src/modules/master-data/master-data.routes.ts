@@ -39,9 +39,20 @@ import { HttpError } from '../../errors/http-error.js';
 
 const canManageMasterData = requireRoles('ADMIN', 'MERCHANDISER');
 const canViewStyles = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT');
-// Job Order viewers can read Style image bytes without gaining Style master
-// browsing/edit permissions. The service enforces resource-scoped access.
-const canReadStyleImages = requireRoles('ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'FACTORY_USER', 'QA_USER');
+// Read-only image routes: Job Order viewers (Factory/QA), ACCOUNTANT (all Style
+// images) and DISTRIBUTOR (own-records Styles only) can read Style image bytes
+// without gaining Style master browsing/edit permissions. This is route-level
+// role admission only; assertStyleImageReadAccess enforces the resource scope.
+// Upload/replace/delete/primary stay behind canManageMasterData.
+const canReadStyleImages = requireRoles(
+  'ADMIN',
+  'MERCHANDISER',
+  'SENIOR_MANAGEMENT',
+  'ACCOUNTANT',
+  'DISTRIBUTOR',
+  'FACTORY_USER',
+  'QA_USER',
+);
 // FACTORY_USER consumes their own factory's name/details through assigned Job
 // Orders (already embedded there), not by browsing the Factory master module.
 const canViewFactories = requireRoles('ADMIN', 'MERCHANDISER');

@@ -838,10 +838,12 @@ describe('ISS-015 Draft invoice media scope', () => {
         .expect(403);
     }
     await request(app).get(path).expect(401);
+    // ACCOUNTANT may now also read any Style image read-only via the shared Style image route
+    // (approved policy); the Tax Invoice route remains the invoice-scoped one tested above.
     await request(app)
       .get(`/styles/${fixture.stock.styleId}/images/${imageId}/content`)
       .set('Authorization', `Bearer ${accountantToken}`)
-      .expect(403);
+      .expect(200);
     await request(app)
       .get(`/tax-invoices/${createId()}/styles/${fixture.stock.styleId}/images/${imageId}/content`)
       .set('Authorization', `Bearer ${accountantToken}`)

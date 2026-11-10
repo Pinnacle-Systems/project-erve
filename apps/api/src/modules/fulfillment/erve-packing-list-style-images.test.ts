@@ -146,17 +146,18 @@ describe('ISS-053 — Erve Packing List Style identity and image projection', ()
     expect(Buffer.from(contentB.body).equals(PNG_B)).toBe(true);
   });
 
-  it('rejects a role that cannot view Style images at all from reading an Erve-Packing-List-sourced Style image, even knowing its real id', async () => {
+  it('does not let a Distributor read a Style image just because it owns the Sale Order, even knowing its real id; an Accountant (read-only, any Style) can', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
     const uploaded = await uploadStyleImage(fixture.merchToken, fixture.stock.styleId, PNG_A).expect(201);
 
-    // DISTRIBUTOR can view other Erve/fulfillment data (ERVE_DISPATCH_VIEW_ROLES) but is outside
-    // both ERVE_PACKING_LIST_VIEW_ROLES and canReadStyleImages — this is the defense-in-depth check
-    // on the image endpoint itself, independent of the Erve Packing List route gate.
+    // The Style is on this Distributor's Sale Order but on none of its Dispatches, Sale-or-Return
+    // positions, Actual Sales Reports or Returns yet - the approved own-records scope - so the
+    // image endpoint itself (defense in depth, independent of any route gate) still refuses it.
     const distributorToken = await createDistributorToken(fixture.stock.distributorId);
     await readStyleImageContent(distributorToken, fixture.stock.styleId, uploaded.body.data.id).expect(403);
 
+    // ACCOUNTANT may read any Style image (read-only; no management rights).
     const { token: accountantToken } = await createRoleToken('ACCOUNTANT');
-    await readStyleImageContent(accountantToken, fixture.stock.styleId, uploaded.body.data.id).expect(403);
+    await readStyleImageContent(accountantToken, fixture.stock.styleId, uploaded.body.data.id).expect(200);
   });
 });
