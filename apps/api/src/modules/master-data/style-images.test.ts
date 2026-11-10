@@ -229,7 +229,9 @@ describe('style images API', () => {
       .set('Authorization', `Bearer ${seniorManagement}`);
     expect(smDelete.status).toBe(403);
 
-    // Factory and distributor users gain no style-image access at all.
+    // Factory and distributor users gain no access to a Style that is on none of their own
+    // Job Orders / operational records (and never gain management rights). Positive
+    // scoped access is covered in fulfillment/style-image-access.test.ts.
     for (const token of [factoryUser, distributor]) {
       expect((await upload(token, style.id, JPEG_ALT)).status).toBe(403);
       const forbiddenContent = await request(app)

@@ -13,7 +13,7 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
 import { resolveDistributorPricingForSnapshot } from '../price-lists/price-lookup.js';
-import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
+import { canReadAnyStyleImage, stylePrimaryImageInclude, stylePrimaryImageIncludeFor, toPrimaryImageView } from '../master-data/style-images.service.js';
 import {
   decodeEligibleCartonCursor, eligibleCartonCandidateQuery, eligibleCartonContext,
   ELIGIBLE_CARTON_SCAN_BUDGET, encodeEligibleCartonCursor,
@@ -1162,9 +1162,11 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
   const record = await loadErveDispatch(id);
   assertDispatchViewAccess(actor, record.distributor.id);
   // Detail-only, after ownership authorization. Do not widen the history/PDF response
-  // or expose factory provenance. Style image reads already permit these three roles.
-  const canReadImages = actor.roles.some((role) =>
-    role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT');
+  // or expose factory provenance. assertDispatchViewAccess above already proved a
+  // DISTRIBUTOR actor owns this dispatch, so every Style on it is one of that
+  // Distributor's own-record Styles (distributorHasStyleAssociation) and the image
+  // content endpoint will accept them; broad roles may read any Style image.
+  const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
   const [view, packedLines, deliveryLines, distributorReceipt] = await Promise.all([
     toErveDispatchView(record),
     prisma.factoryPackingCartonLine.findMany({
@@ -1176,7 +1178,7 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
           saleOrder: { select: { saleOrderNumber: true } },
           destination: { select: { saleOrderDistributor: { select: { purchaseMode: true } } } },
           style: { select: { id: true, styleNumber: true, styleName: true,
-            images: { ...stylePrimaryImageInclude, take: canReadImages ? 1 : 0 } } },
+            images: stylePrimaryImageIncludeFor(canReadImages) } },
           size: { select: { id: true, code: true, label: true, sortOrder: true } },
         } },
       },

@@ -103,28 +103,38 @@ it('projects carton quantities with real identities and native Size order, aggre
   });
 });
 
+// Style image reads: ACCOUNTANT may read any Style image and a DISTRIBUTOR (already proven by
+// assertDispatchViewAccess to own this dispatch) may read the Styles on it, so both receive the
+// primary image metadata; the content endpoint accepts exactly the same callers.
 it.each(['DISTRIBUTOR', 'ACCOUNTANT'] as const)(
-  'does not expose protected images to %s',
+  'projects the primary image to %s',
   async (role) => {
+    const stored = new Date('2026-11-02T00:00:00Z');
     db.factoryPackingCartonLine.findMany.mockResolvedValue([
       {
         saleOrderLineId: 'line',
         quantity: 2,
         saleOrderLine: {
           saleOrder: { saleOrderNumber: 'SO1' },
-          style: { id: 'style', styleNumber: 'ST1', styleName: 'Tee', images: [{ secret: true }] },
+          style: {
+            id: 'style', styleNumber: 'ST1', styleName: 'Tee',
+            images: [{
+              id: 'img', styleId: 'style', fileId: 'file', isPrimary: true, sortOrder: 0,
+              createdAt: stored, updatedAt: stored,
+              file: { fileName: 'photo.png', mimeType: 'image/png', sizeBytes: 10 },
+            }],
+          },
           size: { id: 'size', code: 'M', label: 'Medium', sortOrder: 2 },
           destination: { saleOrderDistributor: { purchaseMode: 'OUTRIGHT' } },
         },
       },
     ]);
     const view = await getErveDispatchDetail(actor(role), 'dispatch');
-    expect(view).toMatchObject({ quantityLines: [{ primaryImage: null }] });
-    expect(JSON.stringify(view)).not.toContain('secret');
+    expect(view).toMatchObject({ quantityLines: [{ primaryImage: { id: 'img', styleId: 'style', fileName: 'photo.png' } }] });
     const query = db.factoryPackingCartonLine.findMany.mock.calls
       .map((call) => call[0])
       .find((query) => query.select?.saleOrderLine?.select?.style?.select?.images);
-    expect(query.select.saleOrderLine.select.style.select.images.take).toBe(0);
+    expect(query.select.saleOrderLine.select.style.select.images.take).toBe(1);
   },
 );
 

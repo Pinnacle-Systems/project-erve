@@ -3,7 +3,7 @@ import { createId } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
-import { getSoleFactoryId } from '../../auth/access.js';
+import { getSoleDistributorId, getSoleFactoryId } from '../../auth/access.js';
 import { env } from '../../config/env.js';
 import { HttpError } from '../../errors/http-error.js';
 import { FileNotFoundInStorageError, getFileStorage } from '../../storage/index.js';
@@ -14,25 +14,113 @@ import {
 } from '../../storage/image-sniff.js';
 
 /**
- * Factory and QA readers see Style images only when the Style belongs to
- * Job Orders they are authorized to view. A Job Order may include image
- * metadata without granting broad access to the Style master.
- * The master-data editing and full Style detail endpoints remain restricted.
+ * Roles that may read ANY Style's image (read-only). ACCOUNTANT joins the three
+ * Style-master viewers for image reads only: it gains no Style master browsing,
+ * edit or image-management permission (those stay behind `canManageMasterData`).
+ * Factory/QA are Job-Order-scoped and DISTRIBUTOR is own-records-scoped, so
+ * neither is "any" - see `assertStyleImageReadAccess`.
+ */
+export function canReadAnyStyleImage(actor: Pick<CurrentUser, 'roles'>): boolean {
+  return actor.roles.some(
+    (role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT' || role === 'ACCOUNTANT',
+  );
+}
+
+/** `stylePrimaryImageInclude`, fetching nothing at all when the viewer may not read Style images. */
+export function stylePrimaryImageIncludeFor(canRead: boolean) {
+  return { ...stylePrimaryImageInclude, take: canRead ? 1 : 0 } satisfies Prisma.StyleImageFindManyArgs;
+}
+
+/**
+ * Whether `styleId` appears on at least one operational record belonging to
+ * `distributorId`: an Erve Dispatch, a Sale-or-Return stock position, an Actual
+ * Sales Report or a Distributor Return. Up to four indexed existence probes
+ * (`findFirst`, id only, short-circuiting) - never a gallery or result-set load.
+ *
+ * The caller supplies the distributor from the authenticated user
+ * (`getSoleDistributorId`), never from request input.
+ */
+export async function distributorHasStyleAssociation(distributorId: string, styleId: string): Promise<boolean> {
+  const dispatch = await prisma.erveDispatch.findFirst({
+    where: {
+      distributorId,
+      ervePackingList: { cartons: { some: { retiredAt: null, lines: { some: { saleOrderLine: { styleId } } } } } },
+    },
+    select: { id: true },
+  });
+  if (dispatch) return true;
+
+  // Sale-or-Return positions are keyed by the Sale Order destination's Distributor
+  // (see sale-or-return-position-query.service.ts): a carton line on a live carton
+  // that has been Erve-dispatched, for a SALE_RETURN destination of this Distributor.
+  const position = await prisma.factoryPackingCartonLine.findFirst({
+    where: {
+      saleOrderLine: {
+        styleId,
+        destination: { saleOrderDistributor: { distributorId, purchaseMode: 'SALE_RETURN' } },
+      },
+      carton: { retiredAt: null, ervePackingList: { dispatch: { isNot: null } } },
+    },
+    select: { id: true },
+  });
+  if (position) return true;
+
+  const report = await prisma.distributorSalesReportLine.findFirst({
+    where: { saleOrderLine: { styleId }, report: { distributorId } },
+    select: { id: true },
+  });
+  if (report) return true;
+
+  const distributorReturn = await prisma.distributorReturnLine.findFirst({
+    where: { saleOrderLine: { styleId }, distributorReturn: { distributorId } },
+    select: { id: true },
+  });
+  return distributorReturn !== null;
+}
+
+/**
+ * Style image read authorization (the list and content endpoints share this).
+ *  - ADMIN / MERCHANDISER / SENIOR_MANAGEMENT / ACCOUNTANT: any Style.
+ *  - DISTRIBUTOR: only a Style on that Distributor's own Dispatch, Sale-or-Return
+ *    position, Actual Sales Report or Return (`distributorHasStyleAssociation`).
+ *  - FACTORY_USER / QA_USER: only Styles on Job Orders they may view. A Job Order
+ *    may include image metadata without granting broad access to the Style master.
+ * A multi-role user is granted when ANY of their scoped pathways grants; a pathway
+ * that cannot be evaluated (e.g. an unprovisioned mapping) fails closed and its
+ * error surfaces only if nothing else grants. The master-data editing and full
+ * Style detail endpoints remain restricted.
  */
 export async function assertStyleImageReadAccess(user: CurrentUser, styleId: string): Promise<void> {
-  if (user.roles.some((role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT')) {
-    return;
-  }
+  if (canReadAnyStyleImage(user)) return;
   const isQa = user.roles.includes('QA_USER');
   const isFactory = user.roles.includes('FACTORY_USER');
-  if (!isQa && !isFactory) throw HttpError.forbidden('You cannot view Style images');
+  const isDistributor = user.roles.includes('DISTRIBUTOR');
+  if (!isQa && !isFactory && !isDistributor) throw HttpError.forbidden('You cannot view Style images');
 
-  const where: Prisma.JobOrderWhereInput = {
-    lines: { some: { styleId } },
-    ...(isQa ? {} : { factoryId: getSoleFactoryId(user), status: { not: 'DRAFT' } }),
-  };
-  const visible = await prisma.jobOrder.findFirst({ where, select: { id: true } });
-  if (!visible) throw HttpError.forbidden('You do not have access to this Style image');
+  const pathways: Array<() => Promise<boolean>> = [];
+  if (isDistributor) {
+    pathways.push(() => distributorHasStyleAssociation(getSoleDistributorId(user), styleId));
+  }
+  if (isQa || isFactory) {
+    pathways.push(async () => {
+      const where: Prisma.JobOrderWhereInput = {
+        lines: { some: { styleId } },
+        ...(isQa ? {} : { factoryId: getSoleFactoryId(user), status: { not: 'DRAFT' } }),
+      };
+      return (await prisma.jobOrder.findFirst({ where, select: { id: true } })) !== null;
+    });
+  }
+
+  let failure: HttpError | null = null;
+  for (const pathway of pathways) {
+    try {
+      if (await pathway()) return;
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      failure ??= error;
+    }
+  }
+  throw failure ?? HttpError.forbidden('You do not have access to this Style image');
 }
 
 const styleImageInclude = { file: true } satisfies Prisma.StyleImageInclude;
