@@ -4,6 +4,7 @@ import {
   groupFinancialLinesByStyle,
   groupLinesByStyle,
   groupReceiptLinesByStyle,
+  groupSourceLinesByStyle,
   type FinancialStyleSizeLine,
   type ReceiptTraceableLine,
   type StyleSizeQuantityLine,
@@ -351,5 +352,64 @@ describe('groupReceiptLinesByStyle (ISS-080)', () => {
 
   it('returns an empty array for no lines', () => {
     expect(groupReceiptLinesByStyle([])).toEqual([]);
+  });
+});
+
+describe('groupSourceLinesByStyle (ISS-023 / DEMO-003)', () => {
+  const src = (overrides: Record<string, unknown>) => ({
+    id: 'x',
+    order: 'SO-1',
+    styleId: 'style-a',
+    styleNumber: 'ST-A',
+    styleName: 'A',
+    sizeId: 's',
+    sizeCode: 'S',
+    sizeLabel: 'Small',
+    sizeSortOrder: 1,
+    ...overrides,
+  });
+
+  it('groups by the real styleId, not the display styleNumber', () => {
+    const { rows } = groupSourceLinesByStyle([
+      src({ id: '1', styleId: 'uuid-1', styleNumber: 'SAME' }),
+      src({ id: '2', styleId: 'uuid-2', styleNumber: 'SAME', sizeId: 'm', sizeCode: 'M', sizeSortOrder: 2 }),
+    ]);
+    expect(rows.map((r) => r.styleId)).toEqual(['uuid-1', 'uuid-2']);
+  });
+
+  it('keeps a Style in separate rows per business context and preserves first appearance', () => {
+    const lines = [
+      src({ id: '1', order: 'SO-2' }),
+      src({ id: '2', order: 'SO-1' }),
+      src({ id: '3', order: 'SO-2', sizeId: 'm', sizeCode: 'M', sizeSortOrder: 2 }),
+    ];
+    const { rows } = groupSourceLinesByStyle(lines, (l) => l.order as string);
+    expect(rows.map((r) => r.key)).toEqual(['SO-2::style-a', 'SO-1::style-a']);
+    expect(rows[0]!.sources.map((l) => l.id)).toEqual(['1', '3']);
+  });
+
+  it('never merges or mutates source lines: duplicate Style/Size sources all stay in the cell, in input order', () => {
+    const lines = [src({ id: '1' }), src({ id: '2' }), src({ id: '3' })];
+    const snapshot = JSON.parse(JSON.stringify(lines));
+    const { rows } = groupSourceLinesByStyle(lines);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.sourcesBySize.s!.map((l) => l.id)).toEqual(['1', '2', '3']);
+    expect(rows[0]!.sources).toEqual(lines);
+    expect(lines).toEqual(snapshot);
+  });
+
+  it('orders Size columns canonically across Styles with different Size sets', () => {
+    const { columns } = groupSourceLinesByStyle([
+      src({ id: '1', sizeId: 'xl', sizeCode: 'XL', sizeSortOrder: 4 }),
+      src({ id: '2', styleId: 'style-b', sizeId: 'm', sizeCode: 'M', sizeSortOrder: 2 }),
+      src({ id: '3', sizeId: 's', sizeCode: 'S', sizeSortOrder: 1 }),
+    ]);
+    expect(columns.map((c) => c.sizeCode)).toEqual(['S', 'M', 'XL']);
+  });
+
+  it('adopts a later source line image when the first had none, and falls back to null', () => {
+    const image = { id: 'img' } as never;
+    expect(groupSourceLinesByStyle([src({ id: '1' }), src({ id: '2', primaryImage: image })]).rows[0]!.primaryImage).toBe(image);
+    expect(groupSourceLinesByStyle([src({ id: '1' })]).rows[0]!.primaryImage).toBeNull();
   });
 });

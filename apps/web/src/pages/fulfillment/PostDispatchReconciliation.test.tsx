@@ -21,7 +21,9 @@ const line = {
   styleId: 'st',
   styleNumber: 'ST-1',
   styleName: 'Tee',
+  primaryImage: null,
   sizeId: 's',
+  sizeCode: 'S',
   sizeLabel: 'Small',
   sizeSortOrder: 1,
   dispatchedQuantity: 60,
@@ -179,6 +181,85 @@ describe('A5 reconciliation UI', () => {
     expect(container.textContent).toContain('Follow-up required');
     expect(container.textContent).toContain('Available for new Return 33');
     expect(container.querySelector('input[type="number"]')).toBeNull();
+  });
+  describe('grouped Style x Size layout (ISS-023 / DEMO-003)', () => {
+    const table = (label: string) =>
+      container.querySelector<HTMLTableElement>(`table[aria-label="${label}"]`)!;
+    const cells = (block: Element, label: string) => {
+      const row = Array.from(block.querySelectorAll('tr')).find(
+        (tr) => tr.querySelector('th')?.textContent === label,
+      )!;
+      return Array.from(row.children).map((cell) => cell.textContent);
+    };
+    const comparison = () => table('Style and Size comparison and shortages');
+    const exposure = () => table('Downstream Sales and Returns exposure by Style and Size');
+
+    it('shows one Style row with one Size column even when two source lines back it, keeping both sources visible', async () => {
+      // Same Style + Size on two source orders whose aggregate receipt equals the ledger (50 = 50)
+      // while each source line differs (+10 / -10).
+      data.lines = [
+        { ...data.lines[0]!, receivedQuantity: 30, ledgerQuantity: 20, difference: 10, differs: true },
+        { ...data.lines[1]!, sizeId: 's', sizeCode: 'S', sizeLabel: 'Small', receivedQuantity: 20, ledgerQuantity: 30, difference: -10, differs: true },
+      ];
+      await render('MERCHANDISER');
+
+      expect(comparison().querySelectorAll('tbody')).toHaveLength(1);
+      expect(Array.from(comparison().querySelectorAll('thead th')).map((th) => th.textContent)).toEqual(['Measure', 'S', 'Total']);
+      const block = comparison().querySelector('tbody')!;
+      expect(cells(block, 'Dispatched')).toEqual(['Dispatched', '100', '100']);
+      expect(cells(block, 'Distributor Received')).toEqual(['Distributor Received', '50', '50']);
+      expect(cells(block, 'Ledger in Use')).toEqual(['Ledger in Use', '50', '50']);
+      expect(cells(block, 'Difference')).toEqual(['Difference', '0', '0']);
+      // The aggregate nets to zero but every source line and its discrepancy is still shown.
+      expect(block.textContent).toContain('Source-line receipt / ledger discrepancy');
+      expect(block.textContent).toContain('SO-1 · SALE_RETURN · source a');
+      expect(block.textContent).toContain('SO-2 · OUTRIGHT · source b');
+      expect(block.textContent).toContain('Difference 10');
+      expect(block.textContent).toContain('Difference -10');
+    });
+
+    it('keeps two Styles in separate rows with Sizes in canonical order, not alphabetical', async () => {
+      data.lines = [
+        { ...data.lines[0]!, sizeId: 'm', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 2 },
+        { ...data.lines[0]!, saleOrderLineId: 'c', styleId: 'other', styleNumber: 'ST-2', styleName: 'Polo', sizeId: 's', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 1 },
+      ];
+      await render('ADMIN');
+      expect(comparison().querySelectorAll('tbody')).toHaveLength(2);
+      // Size.sortOrder (S=1, M=2) wins over alphabetical order (M before S) and over first appearance.
+      expect(Array.from(comparison().querySelectorAll('thead th')).map((th) => th.textContent)).toEqual(['Measure', 'S', 'M', 'Total']);
+      const [first, second] = Array.from(comparison().querySelectorAll('tbody'));
+      expect(cells(first!, 'Dispatched')).toEqual(['Dispatched', '—', '60', '60']);
+      expect(cells(second!, 'Dispatched')).toEqual(['Dispatched', '60', '—', '60']);
+    });
+
+    it('renders missing evidence as "Not recorded" and a recorded zero as 0', async () => {
+      data.lines = [
+        { ...data.lines[0]!, receivedQuantity: null, ledgerQuantity: null, difference: null, shortageQuantity: null },
+        { ...data.lines[0]!, saleOrderLineId: 'z', sizeId: 'm', sizeCode: 'M', sizeLabel: 'Medium', sizeSortOrder: 2, receivedQuantity: 0, ledgerQuantity: 0, difference: 0, shortageQuantity: 60, differs: false },
+      ];
+      await render('ADMIN');
+      const block = comparison().querySelector('tbody')!;
+      expect(cells(block, 'Distributor Received')).toEqual(['Distributor Received', 'Not recorded', '0', 'Not recorded']);
+      expect(cells(block, 'Shortage')).toEqual(['Shortage', 'Not recorded', '60', 'Not recorded']);
+    });
+
+    it('shows downstream exposure per Size, with source-order attribution and Sale-or-Return-only availability', async () => {
+      // SALE_RETURN line a: sold 5, available 35/33.  OUTRIGHT line b has no availability.
+      data.lines[1] = { ...data.lines[1]!, sizeId: 's', sizeCode: 'S', availableForActualSale: null, availableForNewReturn: null };
+      await render('MERCHANDISER');
+      const block = exposure().querySelector('tbody')!;
+      expect(cells(block, 'Actual Sales')).toEqual(['Actual Sales', '10', '10']);
+      expect(cells(block, 'Available for Actual Sale')).toEqual(['Available for Actual Sale', '35', '35']);
+      expect(cells(block, 'Available for New Return')).toEqual(['Available for New Return', '33', '33']);
+      expect(block.textContent).toContain('SO-1 · SALE_RETURN');
+      expect(block.textContent).toContain('SO-2 · OUTRIGHT');
+    });
+
+    it('shows the image placeholder, with no image request, when the Style has no primary image', async () => {
+      await render('ADMIN');
+      expect(comparison().querySelector('svg')).not.toBeNull();
+      expect(comparison().querySelector('img')).toBeNull();
+    });
   });
   it('distinguishes absent receipt from final zero', async () => {
     data.receipt = null;

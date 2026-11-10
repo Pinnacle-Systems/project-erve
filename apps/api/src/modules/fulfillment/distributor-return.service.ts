@@ -5,6 +5,11 @@ import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import {
+  canReadAnyStyleImage,
+  stylePrimaryImageIncludeFor,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
@@ -39,30 +44,37 @@ function assertViewAccess(actor: CurrentUser, distributorId: string): void {
 // View shaping
 // ---------------------------------------------------------------------------
 
-const returnInclude = {
-  distributor: { select: { id: true, code: true, name: true } },
-  submittedBy: { select: { id: true, name: true, email: true } },
-  approvedBy: { select: { id: true, name: true, email: true } },
-  receivedBy: { select: { id: true, name: true, email: true } },
-  cancelledBy: { select: { id: true, name: true, email: true } },
-  creditNoteRecordedBy: { select: { id: true, name: true, email: true } },
-  lines: {
-    include: {
-      erveDispatch: { select: { id: true, erveDispatchNumber: true } },
-      saleOrderLine: {
-        select: {
-          style: { select: { styleNumber: true, styleName: true } },
-          size: { select: { code: true, label: true } },
+// `canReadImages` only decides whether the primary-image relation fetches a row: callers that
+// never render a line's Style image (the list, which has no per-line UI) pass false and pay nothing.
+function returnInclude(canReadImages: boolean) {
+  return {
+    distributor: { select: { id: true, code: true, name: true } },
+    submittedBy: { select: { id: true, name: true, email: true } },
+    approvedBy: { select: { id: true, name: true, email: true } },
+    receivedBy: { select: { id: true, name: true, email: true } },
+    cancelledBy: { select: { id: true, name: true, email: true } },
+    creditNoteRecordedBy: { select: { id: true, name: true, email: true } },
+    lines: {
+      include: {
+        erveDispatch: { select: { id: true, erveDispatchNumber: true } },
+        saleOrderLine: {
+          select: {
+            saleOrder: { select: { id: true, saleOrderNumber: true } },
+            style: {
+              select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageIncludeFor(canReadImages) },
+            },
+            size: { select: { id: true, code: true, label: true, sortOrder: true } },
+          },
         },
+        returnedStockLot: { select: { id: true, quantity: true } },
       },
-      returnedStockLot: { select: { id: true, quantity: true } },
     },
-  },
-} satisfies Prisma.DistributorReturnInclude;
+  } satisfies Prisma.DistributorReturnInclude;
+}
 
-type ReturnRecord = Prisma.DistributorReturnGetPayload<{ include: typeof returnInclude }>;
+type ReturnRecord = Prisma.DistributorReturnGetPayload<{ include: ReturnType<typeof returnInclude> }>;
 
-function toReturnView(record: ReturnRecord) {
+function toReturnView(record: ReturnRecord, canReadImages: boolean) {
   return {
     id: record.id,
     returnNumber: record.returnNumber,
@@ -90,10 +102,16 @@ function toReturnView(record: ReturnRecord) {
       id: line.id,
       erveDispatch: line.erveDispatch,
       saleOrderLineId: line.saleOrderLineId,
+      saleOrderId: line.saleOrderLine.saleOrder.id,
+      saleOrderNumber: line.saleOrderLine.saleOrder.saleOrderNumber,
+      styleId: line.saleOrderLine.style.id,
       styleNumber: line.saleOrderLine.style.styleNumber,
       styleName: line.saleOrderLine.style.styleName,
+      primaryImage: canReadImages ? toPrimaryImageView(line.saleOrderLine.style.images) : null,
+      sizeId: line.saleOrderLine.size.id,
       sizeCode: line.saleOrderLine.size.code,
       sizeLabel: line.saleOrderLine.size.label,
+      sizeSortOrder: line.saleOrderLine.size.sortOrder,
       requestedQuantity: line.requestedQuantity,
       approvedQuantity: line.approvedQuantity,
       receivedQuantity: line.receivedQuantity,
@@ -102,16 +120,20 @@ function toReturnView(record: ReturnRecord) {
   };
 }
 
-async function loadReturn(id: string): Promise<ReturnRecord> {
-  const record = await prisma.distributorReturn.findUnique({ where: { id }, include: returnInclude });
+async function loadReturn(id: string, canReadImages: boolean): Promise<ReturnRecord> {
+  const record = await prisma.distributorReturn.findUnique({ where: { id }, include: returnInclude(canReadImages) });
   if (!record) throw HttpError.notFound('Distributor return not found');
   return record;
 }
 
 export async function getDistributorReturnDetail(actor: CurrentUser, id: string) {
-  const record = await loadReturn(id);
+  // Same contract as the Sales Report detail: the role gate only decides whether the primary-image
+  // relation is fetched; `assertViewAccess` proves Return ownership before any projection, and the
+  // owning Distributor's Return lines are an accepted pathway on the image content endpoint.
+  const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
+  const record = await loadReturn(id, canReadImages);
   assertViewAccess(actor, record.distributorId);
-  return toReturnView(record);
+  return toReturnView(record, canReadImages);
 }
 
 export async function listDistributorReturns(
@@ -125,7 +147,7 @@ export async function listDistributorReturns(
 
   const records = await prisma.distributorReturn.findMany({
     where: { distributorId, status: filters.status as never },
-    include: returnInclude,
+    include: returnInclude(false),
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
     cursor: filters.cursor ? { id: filters.cursor } : undefined,
@@ -134,7 +156,7 @@ export async function listDistributorReturns(
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   return {
-    items: page.map(toReturnView),
+    items: page.map((record) => toReturnView(record, false)),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }

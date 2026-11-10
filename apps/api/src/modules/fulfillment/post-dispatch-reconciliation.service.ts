@@ -6,6 +6,11 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import {
+  canReadAnyStyleImage,
+  stylePrimaryImageIncludeFor,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
+import {
   reconciliationCte,
   summaryView,
   type ReconciliationFilters,
@@ -58,7 +63,15 @@ export async function listReconciliation(
   }, readOptions);
 }
 
-async function loadDetail(tx: Tx, id: string): Promise<ReconciliationDetail> {
+/**
+ * What a review freezes into its immutable snapshot: the observed evidence only. Presentation
+ * identity (`primaryImage`, `sizeCode`) is added on the read path alone (`getReconciliation`), so a
+ * recorded review never embeds viewer-dependent image metadata and its stored shape is unchanged.
+ */
+type ObservedReconciliationLine = Omit<ReconciliationLine, 'primaryImage' | 'sizeCode'>;
+type ObservedReconciliationDetail = Omit<ReconciliationDetail, 'lines'> & { lines: ObservedReconciliationLine[] };
+
+async function loadDetail(tx: Tx, id: string): Promise<ObservedReconciliationDetail> {
   const rows = await tx.$queryRaw<SummaryRow[]>(
     Prisma.sql`${reconciliationCte({}, id)} SELECT * FROM filtered`,
   );
@@ -104,7 +117,7 @@ async function loadDetail(tx: Tx, id: string): Promise<ReconciliationDetail> {
     },
   });
   const downstream = await getSaleOrReturnDownstreamQuantitiesForDispatch(tx, id);
-  const lines: ReconciliationLine[] = [];
+  const lines: ObservedReconciliationLine[] = [];
   for (const source of sources) {
     const dispatchedQuantity = packed.get(source.id) ?? 0;
     const receivedQuantity = evidence.get(source.id) ?? null;
@@ -187,7 +200,33 @@ export async function getReconciliation(
   id: string,
 ): Promise<ReconciliationDetail> {
   assertView(actor);
-  return prisma.$transaction((tx) => loadDetail(tx, id), readOptions);
+  const detail = await prisma.$transaction((tx) => loadDetail(tx, id), readOptions);
+  return { ...detail, lines: await withLineIdentity(detail.lines, canReadAnyStyleImage(actor)) };
+}
+
+/** One batched read of the Size code and primary image for every source line (never per-row). */
+async function withLineIdentity(
+  lines: ObservedReconciliationLine[],
+  canReadImages: boolean,
+): Promise<ReconciliationLine[]> {
+  if (lines.length === 0) return [];
+  const sources = await prisma.saleOrderLine.findMany({
+    where: { id: { in: lines.map((line) => line.saleOrderLineId) } },
+    select: {
+      id: true,
+      style: { select: { images: stylePrimaryImageIncludeFor(canReadImages) } },
+      size: { select: { code: true } },
+    },
+  });
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  return lines.map((line) => {
+    const source = byId.get(line.saleOrderLineId);
+    return {
+      ...line,
+      primaryImage: canReadImages && source ? toPrimaryImageView(source.style.images) : null,
+      sizeCode: source?.size.code ?? line.sizeLabel,
+    };
+  });
 }
 
 export async function recordReconciliationReview(

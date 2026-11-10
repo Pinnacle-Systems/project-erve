@@ -1,3 +1,5 @@
+import type { StylePrimaryImageView } from './operations.js';
+
 export type ReconciliationReviewAction = 'ACKNOWLEDGE' | 'FOLLOW_UP' | 'FINANCE_REVIEW';
 
 export interface ReconciliationSummary {
@@ -36,7 +38,10 @@ export interface ReconciliationLine {
   styleId: string;
   styleNumber: string;
   styleName: string;
+  /** Null when the Style has no image, or the viewer's role may not read Style images. */
+  primaryImage: StylePrimaryImageView | null;
   sizeId: string;
+  sizeCode: string;
   sizeLabel: string;
   sizeSortOrder: number;
   dispatchedQuantity: number;

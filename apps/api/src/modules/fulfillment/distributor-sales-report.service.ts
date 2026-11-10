@@ -11,6 +11,11 @@ import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import {
+  canReadAnyStyleImage,
+  stylePrimaryImageIncludeFor,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
+import {
   computeAvailability,
   getActualSoldQuantityForPair,
   getApprovedAwaitingReceiptQuantityForPair,
@@ -21,10 +26,12 @@ import {
 } from './sale-or-return-quantities.js';
 import {
   listSaleOrReturnPositionsPage,
-  type SaleOrReturnPositionRow,
+  type SaleOrReturnPositionRow as SaleOrReturnPositionQueryRow,
 } from './sale-or-return-position-query.service.js';
+import type { SaleOrReturnPositionRow as SaleOrReturnPositionView } from '@erve/types';
 
-export type { SaleOrReturnPositionRow };
+/** The query row plus its presentation identity (real Style/Size ids, Size order, primary image). */
+export type SaleOrReturnPositionRow = SaleOrReturnPositionView;
 
 function isBroadViewer(actor: CurrentUser): boolean {
   return actor.roles.some((r) => r === 'ADMIN' || r === 'MERCHANDISER' || r === 'SENIOR_MANAGEMENT' || r === 'ACCOUNTANT');
@@ -78,11 +85,52 @@ export async function listSaleOrReturnPositions(
   }
   const distributorId = resolveViewerDistributorScope(actor, filters.distributorId);
 
-  return listSaleOrReturnPositionsPage({
+  const page = await listSaleOrReturnPositionsPage({
     distributorId,
     onlyWithRemaining: filters.onlyWithRemaining,
     cursor: filters.cursor,
     limit: filters.limit ?? 25,
+  });
+  // `distributorId` is the already-verified scope: for a non-broad viewer it is always the
+  // authenticated user's own Distributor (a different requested id was rejected above), and every
+  // position in it is a Sale-or-Return position of that Distributor - exactly the pathway
+  // `distributorHasStyleAssociation` accepts on the image content endpoint. The decision is
+  // therefore driven by that scope, never by the mere presence of a DISTRIBUTOR role.
+  const canReadImages =
+    canReadAnyStyleImage(actor) || (distributorId !== undefined && actor.roles.includes('DISTRIBUTOR'));
+  return { ...page, items: await withStyleSizeIdentity(page.items, canReadImages) };
+}
+
+/**
+ * Presentation identity for one page of positions: the real Style/Size ids, canonical Size order
+ * and primary image metadata, resolved by ONE batched read keyed on the page's own SaleOrderLine
+ * ids (bounded by the page size) — the paginated raw-SQL position query is left untouched, so its
+ * eligibility, ordering, cursor and totals semantics cannot drift.
+ */
+async function withStyleSizeIdentity(
+  items: SaleOrReturnPositionQueryRow[],
+  canReadImages: boolean,
+): Promise<SaleOrReturnPositionRow[]> {
+  if (items.length === 0) return [];
+  const lines = await prisma.saleOrderLine.findMany({
+    where: { id: { in: [...new Set(items.map((item) => item.saleOrderLineId))] } },
+    select: {
+      id: true,
+      style: { select: { id: true, images: stylePrimaryImageIncludeFor(canReadImages) } },
+      size: { select: { id: true, sortOrder: true } },
+    },
+  });
+  const byId = new Map(lines.map((line) => [line.id, line]));
+  return items.map((item) => {
+    const line = byId.get(item.saleOrderLineId);
+    if (!line) throw new Error(`Sale order line ${item.saleOrderLineId} disappeared while projecting its position`);
+    return {
+      ...item,
+      styleId: line.style.id,
+      primaryImage: canReadImages ? toPrimaryImageView(line.style.images) : null,
+      sizeId: line.size.id,
+      sizeSortOrder: line.size.sortOrder,
+    };
   });
 }
 
@@ -91,27 +139,34 @@ export async function listSaleOrReturnPositions(
 // against previously-dispatched SALE_RETURN stock (BRD 6.7/8.13).
 // ---------------------------------------------------------------------------
 
-const reportInclude = {
-  distributor: { select: { id: true, code: true, name: true } },
-  submittedBy: { select: { id: true, name: true, email: true } },
-  lines: {
-    include: {
-      erveDispatch: { select: { id: true, erveDispatchNumber: true } },
-      saleOrderLine: {
-        select: {
-          style: { select: { styleNumber: true, styleName: true } },
-          size: { select: { code: true, label: true } },
+// `canReadImages` only decides whether the primary-image relation fetches a row: the list, which
+// never renders a report's lines, passes false and pays nothing for it.
+function reportInclude(canReadImages: boolean) {
+  return {
+    distributor: { select: { id: true, code: true, name: true } },
+    submittedBy: { select: { id: true, name: true, email: true } },
+    lines: {
+      include: {
+        erveDispatch: { select: { id: true, erveDispatchNumber: true } },
+        saleOrderLine: {
+          select: {
+            saleOrder: { select: { id: true, saleOrderNumber: true } },
+            style: {
+              select: { id: true, styleNumber: true, styleName: true, images: stylePrimaryImageIncludeFor(canReadImages) },
+            },
+            size: { select: { id: true, code: true, label: true, sortOrder: true } },
+          },
         },
       },
     },
-  },
-} as const;
+  } satisfies Prisma.DistributorSalesReportInclude;
+}
 
 type DistributorSalesReportRecord = Prisma.DistributorSalesReportGetPayload<{
-  include: typeof reportInclude;
+  include: ReturnType<typeof reportInclude>;
 }>;
 
-function toReportView(record: DistributorSalesReportRecord) {
+function toReportView(record: DistributorSalesReportRecord, canReadImages: boolean) {
   return {
     id: record.id,
     distributor: record.distributor,
@@ -119,16 +174,25 @@ function toReportView(record: DistributorSalesReportRecord) {
     remarks: record.remarks,
     submittedBy: record.submittedBy,
     createdAt: record.createdAt.toISOString(),
-    lines: record.lines.map((line) => ({
-      id: line.id,
-      erveDispatch: line.erveDispatch,
-      saleOrderLineId: line.saleOrderLineId,
-      styleNumber: line.saleOrderLine.style.styleNumber,
-      styleName: line.saleOrderLine.style.styleName,
-      sizeCode: line.saleOrderLine.size.code,
-      sizeLabel: line.saleOrderLine.size.label,
-      quantitySold: line.quantitySold,
-    })),
+    lines: record.lines.map((line) => {
+      const { saleOrder, style, size } = line.saleOrderLine;
+      return {
+        id: line.id,
+        erveDispatch: line.erveDispatch,
+        saleOrderLineId: line.saleOrderLineId,
+        saleOrderId: saleOrder.id,
+        saleOrderNumber: saleOrder.saleOrderNumber,
+        styleId: style.id,
+        styleNumber: style.styleNumber,
+        styleName: style.styleName,
+        primaryImage: canReadImages ? toPrimaryImageView(style.images) : null,
+        sizeId: size.id,
+        sizeCode: size.code,
+        sizeLabel: size.label,
+        sizeSortOrder: size.sortOrder,
+        quantitySold: line.quantitySold,
+      };
+    }),
   };
 }
 
@@ -142,10 +206,18 @@ function assertReportViewAccess(actor: CurrentUser, distributorId: string): void
 }
 
 export async function getDistributorSalesReportDetail(actor: CurrentUser, id: string) {
-  const record = await prisma.distributorSalesReport.findUnique({ where: { id }, include: reportInclude });
+  // Role-level eligibility only decides whether the relation is fetched. `assertReportViewAccess`
+  // below proves record ownership BEFORE anything is projected, so a Distributor reading another
+  // Distributor's report gets a 403 and no image metadata. Once ownership is proven, every Style
+  // on the report is one of that Distributor's own-record Styles (distributorHasStyleAssociation).
+  const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
+  const record = await prisma.distributorSalesReport.findUnique({
+    where: { id },
+    include: reportInclude(canReadImages),
+  });
   if (!record) throw HttpError.notFound('Distributor Sales Report not found');
   assertReportViewAccess(actor, record.distributorId);
-  return toReportView(record);
+  return toReportView(record, canReadImages);
 }
 
 export async function listDistributorSalesReports(
@@ -159,7 +231,7 @@ export async function listDistributorSalesReports(
 
   const records = await prisma.distributorSalesReport.findMany({
     where: { distributorId },
-    include: reportInclude,
+    include: reportInclude(false),
     orderBy: { id: 'desc' },
     take: filters.limit + 1,
     cursor: filters.cursor ? { id: filters.cursor } : undefined,
@@ -168,7 +240,7 @@ export async function listDistributorSalesReports(
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   return {
-    items: page.map(toReportView),
+    items: page.map((record) => toReportView(record, false)),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }

@@ -69,10 +69,14 @@ function positionRow(overrides: Partial<SaleOrReturnPositionRow> = {}): SaleOrRe
     saleOrderNumber: 'EISO/26-27/0001',
     distributor: { id: 'dist-A', code: 'DIST-A', name: 'Distributor A' },
     saleOrderLineId: 'line-1',
+    styleId: `style-${overrides.styleNumber ?? 'ST-001'}`,
     styleNumber: 'ST-001',
     styleName: 'Classic Tee',
+    primaryImage: null,
+    sizeId: `size-${overrides.sizeCode ?? 'M'}`,
     sizeCode: 'M',
     sizeLabel: 'Medium',
+    sizeSortOrder: 2,
     dispatchedQuantity: 100,
     receivedQuantity: 100,
     actualSoldQuantity: 0,
@@ -523,5 +527,119 @@ describe('SaleOrReturnPositionListPage — UXAUTH-016', () => {
       expect(postSpy.mock.calls.find((c) => c[0] === '/distributor-sales-reports')).toBeUndefined();
       expect(content()).toContain('single Distributor');
     });
+  });
+});
+
+describe('SaleOrReturnPositionListPage — grouped Style x Size matrix (ISS-023 / DEMO-003)', () => {
+  const table = () => container.querySelector<HTMLTableElement>('table[aria-label="Sale-or-Return stock by Style and Size"]')!;
+  const blocks = () => Array.from(table().querySelectorAll('tbody'));
+  const cells = (block: Element, label: string) => {
+    const row = Array.from(block.querySelectorAll('tr')).find((tr) => tr.querySelector('th')?.textContent === label)!;
+    return Array.from(row.children).map((cell) => cell.textContent);
+  };
+  const setValue = (input: HTMLInputElement, value: string) => {
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  const sizeRows = [
+    positionRow({ saleOrderLineId: 'line-L', sizeCode: 'L', sizeLabel: 'Large', sizeSortOrder: 3, dispatchedQuantity: 30, receivedQuantity: 30, actualSoldQuantity: 5, remainingWithDistributor: 25, returnableQuantity: 20, pendingRequestedQuantity: 5 }),
+    positionRow({ saleOrderLineId: 'line-S', sizeCode: 'S', sizeLabel: 'Small', sizeSortOrder: 1, dispatchedQuantity: 10, receivedQuantity: 8, actualSoldQuantity: 2, returnedQuantity: 1, approvedAwaitingReceiptQuantity: 1, remainingWithDistributor: 5, returnableQuantity: 4 }),
+  ];
+
+  it('shows one Style row per Dispatch/order with canonical Size columns and every measure per Size', async () => {
+    await renderPage('MERCHANDISER', '/fulfillment/sale-or-return', async () => ({ data: { data: { items: sizeRows } } }));
+
+    expect(blocks()).toHaveLength(1);
+    expect(blocks()[0]!.textContent).toContain('ST-001');
+    expect(blocks()[0]!.textContent).toContain('EIED/26-27/0001 · Order EISO/26-27/0001 · Distributor A');
+    // Size.sortOrder (S=1, L=3), not API order (L first) and not alphabetical.
+    expect(Array.from(table().querySelectorAll('thead th')).map((th) => th.textContent)).toEqual(['Measure', 'S', 'L', 'Total']);
+    expect(cells(blocks()[0]!, 'Dispatched')).toEqual(['Dispatched', '10', '30', '40']);
+    expect(cells(blocks()[0]!, 'Received')).toEqual(['Received', '8', '30', '38']);
+    expect(cells(blocks()[0]!, 'Actual Sold')).toEqual(['Actual Sold', '2', '5', '7']);
+    expect(cells(blocks()[0]!, 'Returned')).toEqual(['Returned', '1', '0', '1']);
+    expect(cells(blocks()[0]!, 'Awaiting Receipt')).toEqual(['Awaiting Receipt', '1', '0', '1']);
+    expect(cells(blocks()[0]!, 'Pending Request')).toEqual(['Pending Request', '0', '5', '5']);
+    expect(cells(blocks()[0]!, 'Remaining')).toEqual(['Remaining', '5', '25', '30']);
+    expect(cells(blocks()[0]!, 'Returnable')).toEqual(['Returnable', '4', '20', '24']);
+  });
+
+  it('keeps the same Style under different Dispatches and source orders in separate rows', async () => {
+    await renderPage('MERCHANDISER', '/fulfillment/sale-or-return', async () => ({
+      data: {
+        data: {
+          items: [
+            positionRow({ erveDispatchId: 'ed-1', saleOrderLineId: 'a' }),
+            positionRow({ erveDispatchId: 'ed-2', erveDispatchNumber: 'EIED/26-27/0002', saleOrderLineId: 'b' }),
+            positionRow({ erveDispatchId: 'ed-2', erveDispatchNumber: 'EIED/26-27/0002', saleOrderId: 'so-2', saleOrderNumber: 'EISO/26-27/0002', saleOrderLineId: 'c' }),
+          ],
+        },
+      },
+    }));
+    expect(blocks()).toHaveLength(3);
+    expect(blocks().map((block) => block.querySelector('th')?.textContent)).toEqual([
+      'ST-001Classic TeeEIED/26-27/0001 · Order EISO/26-27/0001 · Distributor A',
+      'ST-001Classic TeeEIED/26-27/0002 · Order EISO/26-27/0001 · Distributor A',
+      'ST-001Classic TeeEIED/26-27/0002 · Order EISO/26-27/0002 · Distributor A',
+    ]);
+    // The all-Styles footer totals the three positions exactly once.
+    expect(table().querySelector('tfoot')!.textContent).toContain('300');
+  });
+
+  it('submits the original per-position lines unchanged, and keeps separate inputs for two lines of one Size', async () => {
+    const duplicate = [
+      positionRow({ saleOrderLineId: 'line-dup-1', remainingWithDistributor: 40, returnableQuantity: 40 }),
+      positionRow({ saleOrderLineId: 'line-dup-2', remainingWithDistributor: 60, returnableQuantity: 60 }),
+    ];
+    const { postSpy } = await renderPage(
+      'DISTRIBUTOR',
+      '/fulfillment/sale-or-return',
+      async () => ({ data: { data: { items: duplicate } } }),
+      async () => ({ data: { data: { id: 'report-1' } } }),
+    );
+
+    expect(cells(blocks()[0]!, 'Dispatched')).toEqual(['Dispatched', '200', '200']);
+    const inputs = Array.from(table().querySelectorAll<HTMLInputElement>('input[aria-label*="sold quantity to report"]'));
+    expect(inputs).toHaveLength(2);
+    expect(table().textContent).toContain('Line 1');
+    expect(table().textContent).toContain('Line 2');
+    expect(inputs.map((input) => input.max)).toEqual(['40', '60']);
+
+    setValue(inputs[1]!, '7');
+    await flush();
+    setValue(container.querySelector('input[placeholder="DD/MM/YYYY"]') as HTMLInputElement, '2026-09-01');
+    await flush();
+    const submit = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Submit ('))!;
+    act(() => {
+      submit.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+
+    expect(postSpy).toHaveBeenCalledExactlyOnceWith('/distributor-sales-reports', {
+      distributorId: 'dist-A',
+      reportDate: '2026-09-01',
+      lines: [{ erveDispatchId: 'ed-1', saleOrderLineId: 'line-dup-2', quantitySold: 7 }],
+    });
+  });
+
+  it('does not pretend a partial page is complete: warns and omits the all-Styles totals when more pages exist', async () => {
+    await renderPage('MERCHANDISER', '/fulfillment/sale-or-return', async () => ({
+      data: {
+        data: {
+          items: [positionRow({ saleOrderLineId: 'a' }), positionRow({ erveDispatchId: 'ed-2', saleOrderLineId: 'b' })],
+          pageInfo: { limit: 25, hasMore: true, nextCursor: 'next' },
+        },
+      },
+    }));
+    expect(container.querySelector('[role="note"]')!.textContent).toContain('Only the first 2 positions are loaded');
+    expect(table().querySelector('tfoot')).toBeNull();
+  });
+
+  it('shows the placeholder (and requests no image) when the Style has no primary image', async () => {
+    await renderPage('MERCHANDISER', '/fulfillment/sale-or-return', async () => ({ data: { data: { items: [positionRow()] } } }));
+    expect(table().querySelector('svg')).not.toBeNull();
+    expect(table().querySelector('img')).toBeNull();
   });
 });
