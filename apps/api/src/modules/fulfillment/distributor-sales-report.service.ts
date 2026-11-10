@@ -91,7 +91,14 @@ export async function listSaleOrReturnPositions(
     cursor: filters.cursor,
     limit: filters.limit ?? 25,
   });
-  return { ...page, items: await withStyleSizeIdentity(page.items, canReadAnyStyleImage(actor)) };
+  // `distributorId` is the already-verified scope: for a non-broad viewer it is always the
+  // authenticated user's own Distributor (a different requested id was rejected above), and every
+  // position in it is a Sale-or-Return position of that Distributor - exactly the pathway
+  // `distributorHasStyleAssociation` accepts on the image content endpoint. The decision is
+  // therefore driven by that scope, never by the mere presence of a DISTRIBUTOR role.
+  const canReadImages =
+    canReadAnyStyleImage(actor) || (distributorId !== undefined && actor.roles.includes('DISTRIBUTOR'));
+  return { ...page, items: await withStyleSizeIdentity(page.items, canReadImages) };
 }
 
 /**
@@ -199,7 +206,11 @@ function assertReportViewAccess(actor: CurrentUser, distributorId: string): void
 }
 
 export async function getDistributorSalesReportDetail(actor: CurrentUser, id: string) {
-  const canReadImages = canReadAnyStyleImage(actor);
+  // Role-level eligibility only decides whether the relation is fetched. `assertReportViewAccess`
+  // below proves record ownership BEFORE anything is projected, so a Distributor reading another
+  // Distributor's report gets a 403 and no image metadata. Once ownership is proven, every Style
+  // on the report is one of that Distributor's own-record Styles (distributorHasStyleAssociation).
+  const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
   const record = await prisma.distributorSalesReport.findUnique({
     where: { id },
     include: reportInclude(canReadImages),

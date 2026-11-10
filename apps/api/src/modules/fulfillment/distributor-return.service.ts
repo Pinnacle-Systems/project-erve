@@ -127,7 +127,10 @@ async function loadReturn(id: string, canReadImages: boolean): Promise<ReturnRec
 }
 
 export async function getDistributorReturnDetail(actor: CurrentUser, id: string) {
-  const canReadImages = canReadAnyStyleImage(actor);
+  // Same contract as the Sales Report detail: the role gate only decides whether the primary-image
+  // relation is fetched; `assertViewAccess` proves Return ownership before any projection, and the
+  // owning Distributor's Return lines are an accepted pathway on the image content endpoint.
+  const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
   const record = await loadReturn(id, canReadImages);
   assertViewAccess(actor, record.distributorId);
   return toReturnView(record, canReadImages);
