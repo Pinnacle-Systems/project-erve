@@ -117,6 +117,25 @@ async function attest(world: World, dispatch: { id: string; version: number }, s
     .expect(201);
 }
 
+function pngFixture(fillByte: number): Buffer {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([0x00, 0x00, 0x00, 0x0d]),
+    Buffer.from('IHDR', 'latin1'),
+    Buffer.alloc(17, fillByte),
+  ]);
+}
+const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+/** A real upload through the Style image endpoint (so the bytes exist in storage), as a Merchandiser would. */
+async function uploadImage(merchToken: string, styleId: string, fill: number) {
+  const res = await request(app)
+    .post(`/styles/${styleId}/images`)
+    .set(auth(merchToken))
+    .attach('image', pngFixture(fill), { filename: 'photo.png', contentType: 'image/png' })
+    .expect(201);
+  return res.body.data.id as string;
+}
+
 async function inventory(token: string, query: Record<string, string | number> = {}, expected = 200) {
   const res = await request(app).get('/retail-store-inventory').query(query).set('Authorization', `Bearer ${token}`).expect(expected);
   return res.body.data as RetailStoreInventoryResponse;
@@ -484,23 +503,136 @@ describe('A6 Retail Store Inventory — authorization', () => {
     await sources(token, { storeKey: 'X:1', styleId: 's', purchaseMode: 'SALE_RETURN' }, 400);
   });
 
-  it('serves no Style image to a Distributor but does to Admin/Merchandiser, reusing the protected-media policy', async () => {
+  it('returns the Style primary image to every inventory viewer role and the content endpoint serves it to each', async () => {
     const w = await newWorld();
     const style = await newStyle();
     const [m] = await newSizes([{ code: 'M', order: 1 }]);
-    const file = await prisma.file.create({
-      data: { id: createId(), fileName: 'a.png', mimeType: 'image/png', sizeBytes: 10, storageKey: `k/${createId()}`, checksumSha256: createId() },
-    });
-    await prisma.styleImage.create({ data: { id: createId(), styleId: style.id, fileId: file.id, isPrimary: true } });
+    const imageId = await uploadImage(w.merchToken, style.id, 0xaa);
     const store = await createTestRetailStore(w.distributor.id);
     await ship(w, { retailStoreId: store.id, styleId: style.id, sizeId: m!.id, quantity: 5 });
 
-    expect(findStore(await inventory(w.distributorToken), store.id).styles[0]!.primaryImage).toBeNull();
-    const admin = (await createRoleToken('ADMIN')).token;
-    const image = findStore(await inventory(admin, { distributorId: w.distributor.id }), store.id).styles[0]!.primaryImage;
-    expect(image).toMatchObject({ styleId: style.id, isPrimary: true });
+    const viewers: Array<[string, string, Record<string, string>]> = [['DISTRIBUTOR', w.distributorToken, {}]];
+    for (const role of ['ADMIN', 'MERCHANDISER', 'SENIOR_MANAGEMENT', 'ACCOUNTANT'] as const) {
+      viewers.push([role, (await createRoleToken(role)).token, { distributorId: w.distributor.id }]);
+    }
+    for (const [role, token, query] of viewers) {
+      const image = findStore(await inventory(token, query), store.id).styles[0]!.primaryImage;
+      expect(image, role).toMatchObject({ id: imageId, styleId: style.id, isPrimary: true, mimeType: 'image/png' });
+      // Every thumbnail the inventory returns must be servable by the shared image endpoint to the same viewer.
+      const content = await request(app).get(`/styles/${style.id}/images/${image!.id}/content`).set(auth(token)).expect(200);
+      expect(content.headers['content-type']).toBe('image/png');
+      // ... and the full-resolution viewer's gallery list.
+      const gallery = await request(app).get(`/styles/${style.id}/images`).set(auth(token)).expect(200);
+      expect(gallery.body.data.map((i: { id: string }) => i.id)).toContain(imageId);
+    }
+  });
+
+  it('returns primaryImage null (the normal placeholder state) for a Style with no image, for every viewer', async () => {
+    const w = await newWorld();
+    const style = await newStyle();
+    const [m] = await newSizes([{ code: 'M', order: 1 }]);
+    const store = await createTestRetailStore(w.distributor.id);
+    await ship(w, { retailStoreId: store.id, styleId: style.id, sizeId: m!.id, quantity: 5 });
     const accountant = (await createRoleToken('ACCOUNTANT')).token;
-    expect(findStore(await inventory(accountant, { distributorId: w.distributor.id }), store.id).styles[0]!.primaryImage).toBeNull();
+    for (const r of [
+      await inventory(w.distributorToken),
+      await inventory(accountant, { distributorId: w.distributor.id }),
+      await inventory(w.merchToken, { distributorId: w.distributor.id }),
+    ]) {
+      expect(findStore(r, store.id).styles[0]!.primaryImage).toBeNull();
+    }
+  });
+
+  it('keeps two Distributors apart end to end: inventory, forged filters, image metadata, image gallery and bytes', async () => {
+    const a = await newWorld();
+    const b = await newWorld();
+    const styleA = await newStyle('IMGA');
+    const styleB = await newStyle('IMGB');
+    const [m] = await newSizes([{ code: 'M', order: 1 }]);
+    const imageA = await uploadImage(a.merchToken, styleA.id, 0x11);
+    const imageB = await uploadImage(b.merchToken, styleB.id, 0x22);
+    const storeA = await createTestRetailStore(a.distributor.id);
+    const storeB = await createTestRetailStore(b.distributor.id);
+    await ship(a, { retailStoreId: storeA.id, styleId: styleA.id, sizeId: m!.id, quantity: 5 });
+    await ship(b, { retailStoreId: storeB.id, styleId: styleB.id, sizeId: m!.id, quantity: 8 });
+
+    for (const [me, other, myStyle, otherStyle, myImage, otherImage, myStore, otherStore] of [
+      [a, b, styleA, styleB, imageA, imageB, storeA, storeB],
+      [b, a, styleB, styleA, imageB, imageA, storeB, storeA],
+    ] as const) {
+      const own = await inventory(me.distributorToken);
+      expect(own.items.map((s) => s.retailStoreId)).toEqual([myStore.id]);
+      expect(own.items[0]!.styles.map((c) => [c.styleId, c.primaryImage?.id])).toEqual([[myStyle.id, myImage]]);
+
+      // Forged filters / identifiers reach nothing of the other Distributor, with or without an image.
+      await inventory(me.distributorToken, { distributorId: other.distributor.id }, 403);
+      for (const probe of [{ storeKey: `S:${otherStore.id}` }, { style: otherStyle.styleNumber }, { store: otherStore.name }] as Array<Record<string, string>>) {
+        const r = await inventory(me.distributorToken, probe);
+        expect(r.items, JSON.stringify(probe)).toEqual([]);
+        expect(JSON.stringify(r)).not.toContain(otherImage);
+      }
+      const forgedSources = await sources(me.distributorToken, { storeKey: `S:${otherStore.id}`, styleId: otherStyle.id, purchaseMode: 'SALE_RETURN' });
+      expect(forgedSources.items).toEqual([]);
+      await sources(me.distributorToken, { distributorId: other.distributor.id, storeKey: `S:${otherStore.id}`, styleId: otherStyle.id, purchaseMode: 'SALE_RETURN' }, 403);
+      // Whole-response check: nothing of the other side leaks anywhere in the payload.
+      const payload = JSON.stringify(own);
+      for (const leaked of [otherImage, otherStyle.id, otherStyle.styleNumber, otherStore.id, other.distributor.id, other.distributor.code, other.distributor.name]) {
+        expect(payload).not.toContain(leaked);
+      }
+
+      // The linked image endpoints: own image served; the other Distributor's gallery, bytes and a cross-style imageId are denied.
+      await request(app).get(`/styles/${myStyle.id}/images/${myImage}/content`).set(auth(me.distributorToken)).expect(200);
+      for (const url of [`/styles/${otherStyle.id}/images`, `/styles/${otherStyle.id}/images/${otherImage}/content`]) {
+        const denied = await request(app).get(url).set(auth(me.distributorToken));
+        expect(denied.status, url).toBe(403);
+        expect(denied.headers['content-type']).not.toMatch(/image/);
+      }
+      // A valid foreign imageId smuggled under the caller's own (authorized) styleId finds nothing.
+      const smuggled = await request(app).get(`/styles/${myStyle.id}/images/${otherImage}/content`).set(auth(me.distributorToken));
+      expect(smuggled.status).toBe(404);
+      expect(smuggled.headers['content-type']).not.toMatch(/image/);
+    }
+  });
+
+  it("exposes no Factory or Transporter identity, and nothing beyond the caller's own Distributor, in the inventory or its drilldown", async () => {
+    const w = await newWorld();
+    const style = await newStyle();
+    const [m] = await newSizes([{ code: 'M', order: 1 }]);
+    await uploadImage(w.merchToken, style.id, 0x33);
+    const store = await createTestRetailStore(w.distributor.id);
+    const shipped = await ship(w, { retailStoreId: store.id, styleId: style.id, sizeId: m!.id, quantity: 5 });
+    const factories = await prisma.factory.findMany({ select: { id: true, code: true } });
+    expect(factories.length).toBeGreaterThan(0);
+    const accountant = (await createRoleToken('ACCOUNTANT')).token;
+
+    for (const [token, query] of [[w.distributorToken, {}], [accountant, { distributorId: w.distributor.id }]] as const) {
+      const body = JSON.stringify([
+        await inventory(token, query),
+        await sources(token, { ...query, storeKey: `S:${store.id}`, styleId: style.id, purchaseMode: 'SALE_RETURN' }),
+      ]);
+      for (const f of factories) {
+        expect(body).not.toContain(f.id);
+        expect(body).not.toContain(f.code);
+      }
+      expect(body).not.toMatch(/"(factory|transporter|vehicle|lr)\w*"\s*:/i);
+      expect(body).toContain(shipped.dispatch!.id);
+    }
+  });
+
+  it('still gives no inventory (so no image metadata) to Factory, Transporter, QA and unauthenticated callers', async () => {
+    const w = await newWorld();
+    const style = await newStyle();
+    const [m] = await newSizes([{ code: 'M', order: 1 }]);
+    await uploadImage(w.merchToken, style.id, 0x44);
+    const store = await createTestRetailStore(w.distributor.id);
+    await ship(w, { retailStoreId: store.id, styleId: style.id, sizeId: m!.id, quantity: 5 });
+    const tokens = [w.factoryToken, (await createRoleToken('TRANSPORTER')).token, (await createRoleToken('QA_USER')).token];
+    for (const token of tokens) {
+      await inventory(token, { distributorId: w.distributor.id }, 403);
+      await sources(token, { distributorId: w.distributor.id, storeKey: `S:${store.id}`, styleId: style.id, purchaseMode: 'SALE_RETURN' }, 403);
+    }
+    await request(app).get('/retail-store-inventory').expect(401);
+    await request(app).get('/retail-store-inventory/sources').expect(401);
   });
 });
 

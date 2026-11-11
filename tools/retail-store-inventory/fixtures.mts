@@ -66,6 +66,7 @@ try {
   });
   const distributorToken = await helpers.createDistributorToken(distributor.id);
   const admin = await helpers.createRoleToken('ADMIN');
+  const accountant = await helpers.createRoleToken('ACCOUNTANT');
   const merch = await helpers.createRoleToken('MERCHANDISER');
   const season = await base.createTestSeason();
   const mkStyle = (styleNumber: string, styleName: string) =>
@@ -280,17 +281,26 @@ try {
   await setSizes(tee.id, [s!, m!, l!, xl!]);
   await setSizes(jeans.id, [w28!, w30!, w32!, w34!]);
 
-  // A real image for the Tee: Admin sees it, the Distributor must not.
+  // A real image for the Tee (IMG-25: Admin, Accountant and the owning Distributor all see it);
+  // the Jeans deliberately have none, to exercise the placeholder.
   await request(app)
     .post(`/styles/${tee.id}/images`)
     .set('Authorization', `Bearer ${admin.token}`)
     .attach('image', solidPng([200, 70, 70]), { filename: 'tee.png', contentType: 'image/png' })
+    .expect(201);
+  // A Style with an image that is on none of this Distributor's records: its image must be denied to it.
+  const foreign = await mkStyle('FOREIGN-2027', 'Style on no record of the review Distributor');
+  const foreignImage = await request(app)
+    .post(`/styles/${foreign.id}/images`)
+    .set('Authorization', `Bearer ${admin.token}`)
+    .attach('image', solidPng([40, 90, 200]), { filename: 'foreign.png', contentType: 'image/png' })
     .expect(201);
 
   // Token fixtures embed an uppercase ULID; browser login uses canonical email.
   const emails: Record<string, string> = {};
   for (const [key, userId] of [
     ['admin', admin.userId],
+    ['accountant', accountant.userId],
     [
       'distributor',
       (await prisma.userDistributor.findFirstOrThrow({ where: { distributorId: distributor.id } }))
@@ -304,7 +314,12 @@ try {
   void merch;
   await writeFile(
     process.env.A6_FIXTURES!,
-    JSON.stringify({ distributorId: distributor.id, emails, password: 'pass' }),
+    JSON.stringify({
+      distributorId: distributor.id,
+      emails,
+      password: 'pass',
+      foreign: { styleId: foreign.id, imageId: foreignImage.body.data.id as string },
+    }),
   );
 } finally {
   await prisma.$disconnect();
