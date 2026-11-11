@@ -20,6 +20,7 @@ import {
   canViewPriceLists,
   canViewPurchaseOrders,
   canViewQa,
+  canSubmitRetailStoreFifoAction,
   canViewStyles,
 } from './permissions.js';
 
@@ -190,5 +191,29 @@ describe('permissions', () => {
         expect(canMutateDispatchOrders(mockUser(role))).toBe(allowed.includes(role));
       }
     });
+  });
+});
+
+describe('Store-level FIFO actions (ISS-089): Distributor users only', () => {
+  const userWith = (roles: Role[]): AuthUser => ({ ...mockUser('ADMIN'), roles });
+
+  it.each([
+    [['DISTRIBUTOR'], true],
+    [['ADMIN'], false],
+    [['ADMIN', 'DISTRIBUTOR'], false],
+    [['DISTRIBUTOR', 'MERCHANDISER'], false],
+    [['MERCHANDISER'], false],
+    [['FACTORY_USER'], false],
+    [['TRANSPORTER'], false],
+    [['DISTRIBUTOR', 'FACTORY_USER'], false],
+    [['DISTRIBUTOR', 'TRANSPORTER'], false],
+    [[], false],
+  ] as Array<[Role[], boolean]>)('%j -> %s', (roles, expected) => {
+    expect(canSubmitRetailStoreFifoAction(userWith(roles))).toBe(expected);
+  });
+
+  it('is false for a missing user', () => {
+    expect(canSubmitRetailStoreFifoAction(null)).toBe(false);
+    expect(canSubmitRetailStoreFifoAction(undefined)).toBe(false);
   });
 });

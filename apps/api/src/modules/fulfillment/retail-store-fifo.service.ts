@@ -18,8 +18,9 @@ import { getDistributorReturnDetail, generateReturnNumber } from './distributor-
 import { getDistributorSalesReportDetail } from './distributor-sales-report.service.js';
 import {
   computeAvailability,
-  getSaleOrReturnPairQuantities,
+  getAvailabilityQuantitiesForPairs,
   saleOrReturnPositionLockKey,
+  sourcePositionKey,
 } from './sale-or-return-quantities.js';
 import {
   allocateFifo,
@@ -151,14 +152,17 @@ interface PositionQuantities {
   availableForReturn: number;
 }
 
+/**
+ * Authoritative availability of every candidate in a constant number of statements (see
+ * getAvailabilityQuantitiesForPairs), then the shared computeAvailability() per position.
+ */
 async function readAvailability(client: Tx, candidates: FifoCandidate[]): Promise<PositionQuantities[]> {
-  const result: PositionQuantities[] = [];
-  for (const candidate of candidates) {
-    const quantities = await getSaleOrReturnPairQuantities(client, candidate.erveDispatchId, candidate.saleOrderLineId);
-    const { availableForActualSale, availableForNewReturn } = computeAvailability(quantities);
-    result.push({ candidate, availableForSale: availableForActualSale, availableForReturn: availableForNewReturn });
-  }
-  return result;
+  const quantities = await getAvailabilityQuantitiesForPairs(client, candidates);
+  return candidates.map((candidate) => {
+    const q = quantities.get(sourcePositionKey(candidate.erveDispatchId, candidate.saleOrderLineId))!;
+    const { availableForActualSale, availableForNewReturn } = computeAvailability(q);
+    return { candidate, availableForSale: availableForActualSale, availableForReturn: availableForNewReturn };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -178,9 +182,11 @@ export async function getStoreFifoAvailability(
     async (tx) => {
       const candidates = await loadCandidates(tx, scope);
       const parts = partitionCandidates(candidates, query.date);
-      const eligible = await readAvailability(tx, parts.eligible);
-      const afterDate = await readAvailability(tx, parts.afterDate);
-      const unverified = await readAvailability(tx, parts.unverified);
+      // One batched read for every non-Outright candidate, then split by classification.
+      const all = await readAvailability(tx, [...parts.eligible, ...parts.afterDate, ...parts.unverified]);
+      const eligible = all.slice(0, parts.eligible.length);
+      const afterDate = all.slice(parts.eligible.length, parts.eligible.length + parts.afterDate.length);
+      const unverified = all.slice(parts.eligible.length + parts.afterDate.length);
       const sum = (list: PositionQuantities[], pick: (p: PositionQuantities) => number) =>
         list.reduce((total, p) => total + Math.max(0, pick(p)), 0);
       return {
@@ -229,8 +235,15 @@ async function lockAndAllocate(
 
   // (3) The same advisory-lock keys, in the same sorted order, as the Dispatch-linked mutations.
   const lockKeys = [...new Set(saleReturn.map((c) => saleOrReturnPositionLockKey(c.erveDispatchId, c.saleOrderLineId)))].sort();
-  for (const key of lockKeys) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  // One statement for all positions, acquired in exactly the JS-sorted order above (WITH ORDINALITY
+  // keeps that order independent of the database collation), so the number of statements does not
+  // grow with the number of source positions.
+  if (lockKeys.length > 0) {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(s.k))
+      FROM (
+        SELECT t.k, t.ord FROM unnest(${lockKeys}::text[]) WITH ORDINALITY AS t(k, ord) ORDER BY t.ord OFFSET 0
+      ) s`;
   }
 
   // (4) Candidate-set change guard.
@@ -369,15 +382,17 @@ export async function submitStoreFifoSalesReport(
           submittedById: actor.id,
           idempotencyKey,
           requestDigest: digest,
-          lines: {
-            create: allocations.map((a) => ({
-              id: createId(),
-              erveDispatchId: a.candidate.erveDispatchId,
-              saleOrderLineId: a.candidate.saleOrderLineId,
-              quantitySold: a.quantity,
-            })),
-          },
         },
+      });
+      // One INSERT for every allocation line, however many source positions it spans.
+      await tx.distributorSalesReportLine.createMany({
+        data: allocations.map((a) => ({
+          id: createId(),
+          distributorSalesReportId: reportId,
+          erveDispatchId: a.candidate.erveDispatchId,
+          saleOrderLineId: a.candidate.saleOrderLineId,
+          quantitySold: a.quantity,
+        })),
       });
       await recordAuditLog(
         {
@@ -456,15 +471,16 @@ export async function submitStoreFifoReturn(
           returnSerial,
           idempotencyKey,
           requestDigest: digest,
-          lines: {
-            create: allocations.map((a) => ({
-              id: createId(),
-              erveDispatchId: a.candidate.erveDispatchId,
-              saleOrderLineId: a.candidate.saleOrderLineId,
-              requestedQuantity: a.quantity,
-            })),
-          },
         },
+      });
+      await tx.distributorReturnLine.createMany({
+        data: allocations.map((a) => ({
+          id: createId(),
+          distributorReturnId: returnId,
+          erveDispatchId: a.candidate.erveDispatchId,
+          saleOrderLineId: a.candidate.saleOrderLineId,
+          requestedQuantity: a.quantity,
+        })),
       });
       await recordAuditLog(
         {

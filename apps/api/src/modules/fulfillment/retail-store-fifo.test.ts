@@ -5,6 +5,7 @@ import type { StoreFifoAvailability } from '@erve/types';
 import { createApp } from '../../app.js';
 import { prisma } from '../../db/prisma.js';
 import {
+  createTestUserAndToken,
   createTestDistributor,
   createTestFactory,
   createTestRetailStore,
@@ -313,6 +314,19 @@ describe('ISS-089 Store-level FIFO — Report Sold', { timeout: 90000 }, () => {
       .get('/retail-store-inventory/store-fifo/availability')
       .query({ ...srCell, date: today() })
       .set('Authorization', `Bearer ${sr.adminToken}`)
+      .expect(403);
+    expect(await soldBy(srShip.dispatchId, srShip.saleOrderLineId)).toBe(0);
+
+    // A user who holds DISTRIBUTOR *and* ADMIN is not a Distributor-only user: every Store-level
+    // endpoint refuses them, even though they own the Store's Distributor.
+    const mixed = await createTestUserAndToken({ email: `mixed-${createId()}@test.local`, password: 'pass', roles: ['ADMIN', 'DISTRIBUTOR'] });
+    await prisma.userDistributor.create({ data: { id: createId(), userId: mixed.userId, distributorId: sr.distributor.id } });
+    await postSale(mixed.token, { ...srCell, quantity: 1 }).expect(403);
+    await postReturn(mixed.token, { ...srCell, quantity: 1 }).expect(403);
+    await request(app)
+      .get('/retail-store-inventory/store-fifo/availability')
+      .query({ ...srCell, date: today() })
+      .set('Authorization', `Bearer ${mixed.token}`)
       .expect(403);
     expect(await soldBy(srShip.dispatchId, srShip.saleOrderLineId)).toBe(0);
 

@@ -385,4 +385,55 @@ describe('Store-level FIFO actions on the Retail Store Inventory grid', () => {
     expect(notes).toContain('40 unit(s) were received after');
     expect(notes).toContain('12 unit(s) have no verified receipt date');
   });
+
+  it('uses a new Idempotency-Key after the remarks are edited, and the same key for an unchanged retry', async () => {
+    mockAuth(['DISTRIBUTOR']);
+    mockApi([mappedStore]);
+    await render();
+    await act(async () => button('Report sold, size M')!.click());
+    await flush();
+    enterQuantity('20');
+
+    const networkError = Object.assign(new Error('Network Error'), { isAxiosError: true, response: undefined });
+    const keyOf = (call: number) => (post.mock.calls[call] as [string, unknown, { headers: Record<string, string> }])[2].headers['Idempotency-Key'];
+
+    // 1) failed submission
+    post.mockRejectedValueOnce(networkError);
+    await act(async () => submitButton('Report sold').click());
+    await flush();
+    expect(post).toHaveBeenCalledTimes(1);
+
+    // 2) unchanged retry: same key
+    post.mockRejectedValueOnce(networkError);
+    await act(async () => submitButton('Report sold').click());
+    await flush();
+    expect(keyOf(1)).toBe(keyOf(0));
+
+    // 3) edited remarks: a different request, so a fresh key, which then succeeds
+    const remarks = dialog()!.querySelector('textarea') as HTMLTextAreaElement;
+    setValue(remarks, 'Weekend promotion sales');
+    post.mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          replayed: false,
+          salesReport: {
+            id: 'sr-9',
+            distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+            reportDate: todayInIndia(),
+            remarks: 'Weekend promotion sales',
+            submittedBy: { id: 'u1', name: 'U', email: 'u@test.local' },
+            submittedAt: new Date().toISOString(),
+            lines: [{ id: 'l1', erveDispatch: { id: 'ed-a', erveDispatchNumber: 'ED/26-27/0001' }, quantitySold: 20 }],
+          },
+        },
+      },
+    });
+    await act(async () => submitButton('Report sold').click());
+    await flush();
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(keyOf(2)).not.toBe(keyOf(0));
+    expect((post.mock.calls[2] as [string, Record<string, unknown>])[1]).toMatchObject({ remarks: 'Weekend promotion sales', quantity: 20 });
+    expect(dialog()!.textContent).toContain('Sales Report recorded');
+  });
 });
