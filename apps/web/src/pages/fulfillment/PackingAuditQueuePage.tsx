@@ -78,7 +78,10 @@ export function PackingAuditQueuePage() {
           columns={[
             { key: 'saleOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
             { key: 'factory', header: 'Factory', render: (r) => r.factory.name },
-            { key: 'distributor', header: 'Distributor', render: (r) => r.destination.distributor.name },
+            // ISS-075: the API sends no Distributor to a QA reader, so the column is dropped for them.
+            ...(items.some((r) => r.destination.distributor)
+              ? [{ key: 'distributor', header: 'Distributor', render: (r: PackingAuditQueueItem) => r.destination.distributor?.name ?? '' }]
+              : []),
             { key: 'destination', header: 'Destination', render: (r) => packingAuditDestinationLabel(r.destination) },
             { key: 'carton', header: 'Carton #', accessor: 'cartonNumber' },
             { key: 'qty', header: 'Total Qty', align: 'right', render: (r) => r.totalQuantity.toLocaleString() },

@@ -17,6 +17,18 @@ const columns: PdfTableColumn<DispatchOrderListPdfRow>[] = [
   { key: 'stateLabel', header: 'State', width: '9%', value: (row) => row.stateLabel },
 ];
 
+// ISS-075: without the Distributors column (Factory reader) its 27% is handed to the Factory column
+// and the destination count so the table still fills the page.
+const columnsWithoutDistributors: PdfTableColumn<DispatchOrderListPdfRow>[] = columns
+  .filter((column) => column.key !== 'distributorsDisplay')
+  .map((column) =>
+    column.key === 'factoryName'
+      ? { ...column, width: '30%' }
+      : column.key === 'saleOrderNumber'
+        ? { ...column, width: '24%' }
+        : column,
+  );
+
 export interface DispatchOrderListDocumentProps {
   viewModel: DispatchOrderListPdfViewModel;
 }
@@ -33,7 +45,7 @@ export function DispatchOrderListDocument({ viewModel }: DispatchOrderListDocume
         recordLabel="Dispatch Orders"
       />
       <PdfFilterSummary filters={viewModel.filters} />
-      <PdfTable columns={columns} rows={viewModel.rows} rowKey={(row) => row.id} />
+      <PdfTable columns={viewModel.showDistributors ? columns : columnsWithoutDistributors} rows={viewModel.rows} rowKey={(row) => row.id} />
       <PdfFooter />
     </PdfDocument>
   );

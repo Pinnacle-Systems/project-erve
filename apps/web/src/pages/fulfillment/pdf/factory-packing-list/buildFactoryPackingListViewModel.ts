@@ -2,6 +2,7 @@ import type { FactoryPackingCartonView, PackingListLineView, PackingListView } f
 import { FACTORY_DISPATCH_STATUS_LABELS, PACKING_AUDIT_STATE_LABELS } from '../shared/fulfillmentPdfLabels.js';
 import { distinctSizeColumns, groupLinesByStyle, type SizeColumn } from '../../style-size-grouping.js';
 import type { PdfImageSource } from '../../../../lib/pdf/core/PdfThumbnail.js';
+import { destinationBaseName, destinationDisplayName } from '../../destination-display.js';
 
 export interface FactoryPackingListPdfMeta {
   generatedAt: string;
@@ -52,7 +53,8 @@ export interface FactoryPackingListRetiredCartonRow extends FactoryPackingListCa
 export interface FactoryPackingListDestinationSection {
   id: string;
   label: string;
-  distributorName: string;
+  /** ISS-075: `null` for a Factory/QA reader — the API sends no Distributor identity. */
+  distributorName: string | null;
   addressLine: string;
   contactName: string | null;
   /** ISS-023 Phase 2: Required/Packed progress as two Style x Size matrices (one metric per matrix — a single matrix cell cannot carry two quantities) instead of one flat row per Style+Size combination. */
@@ -152,8 +154,9 @@ export function buildFactoryPackingListViewModel(
 
   const destinations: FactoryPackingListDestinationSection[] = packingList.destinations.map((destination) => ({
     id: destination.id,
-    label: destination.label ?? `${destination.city}, ${destination.state}`,
-    distributorName: destination.distributor.name,
+    // Without a Distributor to tell destinations apart, the Store code is appended to the label.
+    label: destination.distributor ? destinationBaseName(destination) : destinationDisplayName(destination),
+    distributorName: destination.distributor?.name ?? null,
     addressLine: [destination.addressLine1, destination.addressLine2, destination.city, destination.state, destination.country]
       .filter(Boolean)
       .join(', '),

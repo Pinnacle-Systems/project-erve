@@ -66,7 +66,8 @@ export function buildPackingAuditCartonDetailViewModel(
     { label: 'Carton Number', value: carton.cartonNumber },
     { label: 'Dispatch Order', value: carton.saleOrder.saleOrderNumber },
     { label: 'Factory', value: carton.factory.name },
-    { label: 'Distributor', value: carton.destination.distributor.name },
+    // ISS-075: the API sends no Distributor to a QA reader — omit the row rather than print a blank.
+    ...(carton.destination.distributor ? [{ label: 'Distributor', value: carton.destination.distributor.name }] : []),
     { label: 'Destination', value: carton.destination.label ?? carton.destination.city },
     { label: 'Audit State', value: PACKING_AUDIT_STATE_LABELS[carton.auditState] },
   ];

@@ -26,6 +26,7 @@ function makeViewModel(rows: DispatchOrderListPdfRow[]): DispatchOrderListPdfVie
     generatedAt: '2026-09-15T10:00:00Z',
     generatedBy: 'Test Admin',
     totalCount: rows.length,
+    showDistributors: true,
     rows,
   };
 }

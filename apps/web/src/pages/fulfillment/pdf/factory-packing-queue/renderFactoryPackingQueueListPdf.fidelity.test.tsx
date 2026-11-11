@@ -9,11 +9,13 @@ function fixture(awaiting: number, dispatches: number): FactoryPackingQueueListP
     subtitle: 'Synthetic authorized queue',
     generatedAt: '2026-10-22T00:00:00Z',
     generatedBy: 'Queue fidelity test',
+    showDistributors: true,
     awaitingPackingCount: awaiting,
     awaitingPacking: Array.from({ length: awaiting }, (_, i) => ({
       id: `line-${i}`,
       saleOrderNumber: `EISO/${i}`,
       distributorName: `Distributor ${i}`,
+      destinationName: `Store ${i} (S${i})`,
       styleDisplay: `ST-${i} / Queue fixture`,
       sizeLabel: `Size ${i % 10}`,
       allocatedQuantity: 1000 + i,

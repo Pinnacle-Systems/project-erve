@@ -35,6 +35,8 @@ export interface DispatchOrderListPdfViewModel {
   generatedAt: string;
   generatedBy?: string | null;
   totalCount: number;
+  /** ISS-075: false when no row carries a Distributor (a Factory reader) — the column is then omitted, not printed blank. */
+  showDistributors: boolean;
   rows: DispatchOrderListPdfRow[];
 }
 
@@ -96,6 +98,7 @@ export function buildDispatchOrderListViewModel(
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,
     totalCount: rows.length,
+    showDistributors: saleOrders.some((so) => so.distributors.length > 0),
     rows,
   };
 }

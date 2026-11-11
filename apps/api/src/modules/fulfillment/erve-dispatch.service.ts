@@ -12,6 +12,7 @@ import { toBusinessCalendarDate } from '../master-data/financial-year.util.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { createInvoiceHandoffsForDispatch } from './invoice-handoff.service.js';
+import { staffRefForReader } from './staff-identity.js';
 import { resolveDistributorPricingForSnapshot } from '../price-lists/price-lookup.js';
 import { canReadAnyStyleImage, stylePrimaryImageInclude, stylePrimaryImageIncludeFor, toPrimaryImageView } from '../master-data/style-images.service.js';
 import {
@@ -1120,7 +1121,7 @@ async function computeDispatchFinancialBreakdown(erveDispatchId: string, ervePac
   return { invoiceHandoffs, saleOrReturnLines };
 }
 
-async function toErveDispatchView(record: ErveDispatchRecord) {
+async function toErveDispatchView(record: ErveDispatchRecord, internalReader: boolean) {
   const totalQuantity = await computePackingListQuantity(prisma, record.ervePackingListId);
   const { invoiceHandoffs, saleOrReturnLines } = await computeDispatchFinancialBreakdown(record.id, record.ervePackingListId);
   return {
@@ -1136,11 +1137,11 @@ async function toErveDispatchView(record: ErveDispatchRecord) {
     vehicleNumber: record.vehicleNumber,
     lrNumber: record.lrNumber,
     remarks: record.remarks,
-    dispatchedBy: record.dispatchedBy,
+    dispatchedBy: staffRefForReader(record.dispatchedBy, internalReader),
     dispatchedAt: record.dispatchedAt.toISOString(),
-    lrUpdatedBy: record.lrUpdatedBy,
+    lrUpdatedBy: staffRefForReader(record.lrUpdatedBy, internalReader),
     lrUpdatedAt: record.lrUpdatedAt?.toISOString() ?? null,
-    deliveredBy: record.deliveredBy,
+    deliveredBy: staffRefForReader(record.deliveredBy, internalReader),
     deliveredAt: record.deliveredAt?.toISOString() ?? null,
     deliveryRemarks: record.deliveryRemarks,
     deliveryConfirmationSource: record.deliveryConfirmationSource,
@@ -1168,7 +1169,7 @@ export async function getErveDispatchDetail(actor: CurrentUser, id: string) {
   // content endpoint will accept them; broad roles may read any Style image.
   const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
   const [view, packedLines, deliveryLines, distributorReceipt] = await Promise.all([
-    toErveDispatchView(record),
+    toErveDispatchView(record, isBroadErveDispatchViewer(actor)),
     prisma.factoryPackingCartonLine.findMany({
       where: { carton: { ervePackingListId: record.ervePackingListId, retiredAt: null } },
       select: {
@@ -1234,7 +1235,8 @@ export async function getErveDispatchList(
   });
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
-  const items = await Promise.all(page.map(toErveDispatchView));
+  const internalReader = isBroadErveDispatchViewer(actor);
+  const items = await Promise.all(page.map((record) => toErveDispatchView(record, internalReader)));
   return { items, pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null } };
 }
 

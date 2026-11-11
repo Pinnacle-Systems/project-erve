@@ -134,10 +134,9 @@ export function PackingAuditCartonDetailPage() {
 
       <Panel title="Carton Contents">
         <DescriptionList columns={2}>
-          <DescriptionList.Item
-            label="Distributor"
-            value={carton.destination.distributor.name}
-          />
+          {carton.destination.distributor && (
+            <DescriptionList.Item label="Distributor" value={carton.destination.distributor.name} />
+          )}
           <DescriptionList.Item
             label="Destination"
             value={[

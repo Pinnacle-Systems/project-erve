@@ -15,6 +15,11 @@ const columns: PdfTableColumn<PackingAuditListPdfRow>[] = [
   { key: 'auditStateLabel', header: 'Audit State', width: '12%', value: (row) => row.auditStateLabel },
 ];
 
+// ISS-075: without the Distributor column (QA reader) its width goes to Destination.
+const columnsWithoutDistributors: PdfTableColumn<PackingAuditListPdfRow>[] = columns
+  .filter((column) => column.key !== 'distributorName')
+  .map((column) => (column.key === 'destinationLabel' ? { ...column, width: '40%' } : column));
+
 export interface PackingAuditListDocumentProps {
   viewModel: PackingAuditListPdfViewModel;
 }
@@ -30,7 +35,7 @@ export function PackingAuditListDocument({ viewModel }: PackingAuditListDocument
         totalCount={viewModel.totalCount}
         recordLabel="Cartons"
       />
-      <PdfTable columns={columns} rows={viewModel.rows} rowKey={(row) => row.id} />
+      <PdfTable columns={viewModel.showDistributors ? columns : columnsWithoutDistributors} rows={viewModel.rows} rowKey={(row) => row.id} />
       <PdfFooter />
     </PdfDocument>
   );

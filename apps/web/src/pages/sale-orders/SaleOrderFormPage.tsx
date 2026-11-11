@@ -311,11 +311,13 @@ export function SaleOrderFormPage() {
     setRemarks(so.remarks ?? '');
     setExpectedVersion(so.version);
     setDistributorGroups(
-      so.distributorGroups.map((group) => ({
+      // The edit form is only reachable by ADMIN/MERCHANDISER, whose projection always
+      // carries the Distributor; a neutral (null) group simply has nothing to edit.
+      so.distributorGroups.filter((group) => group.distributor && group.purchaseMode).map((group) => ({
         clientKey: group.id,
         id: group.id,
-        distributorId: group.distributor.id,
-        distributor: { ...group.distributor, purchaseMode: group.purchaseMode },
+        distributorId: group.distributor!.id,
+        distributor: { ...group.distributor!, purchaseMode: group.purchaseMode! },
         destinations: group.destinations.map((dest) => {
           // DEMO-016: the server's per-Size lines for this destination
           // collapse into one draft row per Style, summing their

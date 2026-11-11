@@ -278,11 +278,21 @@ describe('DEMO-014 Distributor-owned Store destination snapshots', () => {
       .get(`/sale-orders/${order.id}/packing-list`)
       .set('Authorization', `Bearer ${factoryToken}`)
       .expect(200);
+    // ISS-075: the Factory still gets the Store snapshot it needs to pack (reference, label,
+    // address) but neither the owning Distributor nor the destination contact e-mail.
     expect(packing.body.data.destinations[0]!).toMatchObject({
-      distributor: { id: f.stock.distributorId },
       retailStoreId: f.store.id,
       label: storeFields.name,
       addressLine1: storeFields.addressLine1,
+    });
+    expect(packing.body.data.destinations[0]!).not.toHaveProperty('distributor');
+    expect(packing.body.data.destinations[0]!).not.toHaveProperty('contactEmail');
+    const internalPacking = await request(app)
+      .get(`/sale-orders/${order.id}/packing-list`)
+      .set('Authorization', `Bearer ${f.token}`)
+      .expect(200);
+    expect(internalPacking.body.data.destinations[0]!).toMatchObject({
+      distributor: { id: f.stock.distributorId },
       contactEmail: storeFields.contactEmail,
     });
     const dispatch = await consolidateAndDispatch(app, f.token, [packed.cartonId]);

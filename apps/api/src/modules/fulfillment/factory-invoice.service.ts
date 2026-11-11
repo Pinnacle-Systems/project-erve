@@ -5,6 +5,7 @@ import { getSoleFactoryId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
+import { staffRefForReader } from './staff-identity.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -85,7 +86,7 @@ const factoryInvoiceInclude = {
 
 type FactoryInvoiceRecord = Prisma.FactoryInvoiceGetPayload<{ include: typeof factoryInvoiceInclude }>;
 
-function toFactoryInvoiceView(record: FactoryInvoiceRecord) {
+function toFactoryInvoiceView(record: FactoryInvoiceRecord, internalReader: boolean) {
   return {
     id: record.id,
     status: record.status,
@@ -94,9 +95,9 @@ function toFactoryInvoiceView(record: FactoryInvoiceRecord) {
     factoryDispatch: { id: record.factoryDispatch.id, factoryDispatchNumber: record.factoryDispatch.factoryDispatchNumber },
     saleOrder: record.factoryDispatch.saleOrder,
     generatedAt: record.generatedAt.toISOString(),
-    factoryConfirmedBy: record.factoryConfirmedBy,
+    factoryConfirmedBy: staffRefForReader(record.factoryConfirmedBy, internalReader),
     factoryConfirmedAt: record.factoryConfirmedAt?.toISOString() ?? null,
-    finalizedBy: record.finalizedBy,
+    finalizedBy: staffRefForReader(record.finalizedBy, internalReader),
     finalizedAt: record.finalizedAt?.toISOString() ?? null,
     subtotal: record.subtotal.toNumber(),
     gstAmount: record.gstAmount.toNumber(),
@@ -238,7 +239,7 @@ export async function getFactoryInvoiceDetail(actor: CurrentUser, id: string) {
   assertViewAccess(actor);
   const record = await loadFactoryInvoice(prisma, id);
   assertFactoryInvoiceRowAccess(actor, record.factoryId);
-  return toFactoryInvoiceView(record);
+  return toFactoryInvoiceView(record, isBroadFactoryInvoiceViewer(actor));
 }
 
 export async function getFactoryInvoiceList(
@@ -259,7 +260,7 @@ export async function getFactoryInvoiceList(
   });
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
-  const items = page.map(toFactoryInvoiceView);
+  const items = page.map((record) => toFactoryInvoiceView(record, broad));
   return { items, pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null } };
 }
 

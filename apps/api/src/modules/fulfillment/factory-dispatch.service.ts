@@ -5,6 +5,7 @@ import {
   canViewFactoryDispatch,
   canViewPackingAudit,
   canReadFactoryDispatchBroadly,
+  canViewDistributorIdentityInFactoryFlows,
 } from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleFactoryId } from '../../auth/access.js';
@@ -165,10 +166,14 @@ export interface PackingListDestinationView {
   // several Distributors — this per-destination field is what makes the
   // owning Distributor obvious when selecting a destination for a carton
   // (the carton itself never carries a distributor field, only destinationId).
-  distributor: { id: string; code: string; name: string };
+  // ISS-075: absent for readers that may not identify Distributors (FACTORY_USER,
+  // QA_USER) — they identify a destination by its label, Store code and address.
+  distributor?: { id: string; code: string; name: string };
   label: string | null;
   contactName: string | null;
-  contactEmail: string | null;
+  // ISS-075: contactEmail and gstin are withheld from those same readers (see
+  // factory-flow-confidentiality notes on buildPackingListProjection).
+  contactEmail?: string | null;
   contactPhone: string | null;
   addressLine1: string;
   addressLine2: string | null;
@@ -176,7 +181,7 @@ export interface PackingListDestinationView {
   state: string;
   country: string;
   postalCode: string | null;
-  gstin: string | null;
+  gstin?: string | null;
   lines: PackingListLineView[];
   cartons: PackingListCartonView[];
 }
@@ -190,6 +195,7 @@ export interface PackingListView {
   // Packing List still mirrors the WHOLE Dispatch Order quantitatively
   // (one FPL per DO, never per-Distributor) — this is a header-level summary
   // only; per-destination ownership is on PackingListDestinationView.
+  // ISS-075: always empty for readers that may not identify Distributors.
   distributors: Array<{ id: string; code: string; name: string }>;
   factory: { id: string; code: string; name: string };
   factoryDispatch:
@@ -281,7 +287,19 @@ function toPackingListCartonView(carton: CartonRecord): PackingListCartonView {
 // Pure projection builder — no auth. Callers (getDispatchOrderPackingList in
 // sale-orders.service.ts, getFactoryDispatchDetail below) each perform their
 // own access check before calling this.
-export async function buildPackingListProjection(order: { id: string; factoryId: string }, client: Tx | typeof prisma = prisma): Promise<PackingListView> {
+//
+// ISS-075: `identified` says whether the reader may learn which Distributor a
+// destination belongs to (canViewDistributorIdentityInFactoryFlows). When false
+// the projection keeps everything physical fulfilment needs — destination id,
+// label (Store name), Store code/id, address, contact name/phone, Styles, Sizes,
+// quantities, cartons — and drops the Distributor identity, the destination
+// GSTIN (its PAN segment names the legal entity) and the destination contact
+// e-mail (its domain usually names the company).
+export async function buildPackingListProjection(
+  order: { id: string; factoryId: string },
+  identified: boolean,
+  client: Tx | typeof prisma = prisma,
+): Promise<PackingListView> {
   const [saleOrder, destinations, lines, dispatch, cartons] = await Promise.all([
     client.saleOrder.findUniqueOrThrow({
       where: { id: order.id },
@@ -358,7 +376,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
   return {
     saleOrderId: order.id,
     saleOrderNumber: saleOrder.saleOrderNumber,
-    distributors: [...distributorsById.values()],
+    distributors: identified ? [...distributorsById.values()] : [],
     factory: saleOrder.factory,
     factoryDispatch: dispatch
       ? {
@@ -373,10 +391,10 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       id: destination.id,
       retailStoreId: destination.retailStoreId,
       storeCode: destination.storeCode,
-      distributor: destination.saleOrderDistributor.distributor,
+      ...(identified ? { distributor: destination.saleOrderDistributor.distributor } : {}),
       label: destination.label,
       contactName: destination.contactName,
-      contactEmail: destination.contactEmail,
+      ...(identified ? { contactEmail: destination.contactEmail } : {}),
       contactPhone: destination.contactPhone,
       addressLine1: destination.addressLine1,
       addressLine2: destination.addressLine2,
@@ -384,7 +402,7 @@ export async function buildPackingListProjection(order: { id: string; factoryId:
       state: destination.state,
       country: destination.country,
       postalCode: destination.postalCode,
-      gstin: destination.gstin,
+      ...(identified ? { gstin: destination.gstin } : {}),
       lines: linesByDestination.get(destination.id) ?? [],
       cartons: activeCartonsByDestination.get(destination.id) ?? [],
     })),
@@ -397,7 +415,11 @@ export async function getFactoryDispatchDetail(actor: CurrentUser, id: string, c
   const dispatch = await client.factoryDispatch.findUnique({ where: { id }, select: { factoryId: true, saleOrderId: true } });
   if (!dispatch) throw HttpError.notFound('Factory dispatch not found');
   assertFactoryRowAccess(actor, dispatch.factoryId);
-  return buildPackingListProjection({ id: dispatch.saleOrderId, factoryId: dispatch.factoryId }, client);
+  return buildPackingListProjection(
+    { id: dispatch.saleOrderId, factoryId: dispatch.factoryId },
+    canViewDistributorIdentityInFactoryFlows(actor),
+    client,
+  );
 }
 
 export async function getFactoryDispatchList(
@@ -414,6 +436,7 @@ export async function getFactoryDispatchList(
   assertViewAccess(actor);
   const scope = resolveActorFactoryScope(actor);
   const factoryId = scope ?? filters.factoryId;
+  const identified = canViewDistributorIdentityInFactoryFlows(actor);
 
   // Phase 6: "consolidated" is now carton-level (a Factory Dispatch's
   // cartons may be split across several destination-specific Erve Packing
@@ -465,7 +488,8 @@ export async function getFactoryDispatchList(
         saleOrderNumber: record.saleOrder.saleOrderNumber,
         // Correction 8: a Dispatch Order may now involve several
         // Distributors — replaces the old singular `distributor` field.
-        distributors: record.saleOrder.distributorGroups.map((g) => g.distributor),
+        // ISS-075: empty for readers that may not identify Distributors.
+        distributors: identified ? record.saleOrder.distributorGroups.map((g) => g.distributor) : [],
       },
       status: record.status,
       version: record.version,
@@ -512,6 +536,11 @@ interface RawPackingQueueRow {
   distributorId: string;
   distributorCode: string;
   distributorName: string;
+  destinationId: string;
+  destinationLabel: string | null;
+  destinationStoreCode: string | null;
+  destinationCity: string;
+  destinationState: string;
   styleId: string;
   styleNumber: string;
   styleName: string;
@@ -562,6 +591,11 @@ export async function getFactoryPackingQueue(
       d.id AS "distributorId",
       d.code AS "distributorCode",
       d.name AS "distributorName",
+      sod.id AS "destinationId",
+      sod.label AS "destinationLabel",
+      sod.store_code AS "destinationStoreCode",
+      sod.city AS "destinationCity",
+      sod.state AS "destinationState",
       sty.id AS "styleId",
       sty.style_number AS "styleNumber",
       sty.style_name AS "styleName",
@@ -601,15 +635,23 @@ export async function getFactoryPackingQueue(
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
   const lastRow = page.at(-1);
+  // ISS-075: the destination (Store label/code/city/state) is how a Factory tells one packing
+  // group from another; the owning Distributor is only added for readers that may identify it.
+  const identified = canViewDistributorIdentityInFactoryFlows(actor);
 
   return {
     items: page.map((row) => ({
       saleOrderId: row.saleOrderId,
       saleOrderNumber: row.saleOrderNumber,
-      distributor: {
-        id: row.distributorId,
-        code: row.distributorCode,
-        name: row.distributorName,
+      ...(identified
+        ? { distributor: { id: row.distributorId, code: row.distributorCode, name: row.distributorName } }
+        : {}),
+      destination: {
+        id: row.destinationId,
+        label: row.destinationLabel,
+        storeCode: row.destinationStoreCode,
+        city: row.destinationCity,
+        state: row.destinationState,
       },
       saleOrderLineId: row.saleOrderLineId,
       styleId: row.styleId,
@@ -1178,13 +1220,15 @@ export async function confirmCartonPackingAudit(
 // Phase 5: Distributor/Destination context for the Packing Audit PDF. Reads
 // packingListCartonInclude's own destination relation (widened above) so the
 // two Packing-Audit call sites below share one shape and can't drift.
-function toPackingAuditDestinationView(carton: CartonRecord) {
+// ISS-075: `distributor` is only included for readers that may identify Distributors; the QA
+// inspector identifies a carton's destination by label, city and state alone.
+function toPackingAuditDestinationView(carton: CartonRecord, identified: boolean) {
   return {
     id: carton.destination.id,
     label: carton.destination.label,
     city: carton.destination.city,
     state: carton.destination.state,
-    distributor: carton.destination.saleOrderDistributor.distributor,
+    ...(identified ? { distributor: carton.destination.saleOrderDistributor.distributor } : {}),
   };
 }
 
@@ -1215,6 +1259,7 @@ export async function getPackingAuditQueue(actor: CurrentUser, filters: { factor
   });
   const hasMore = cartons.length > filters.limit;
   const page = hasMore ? cartons.slice(0, filters.limit) : cartons;
+  const identified = canViewDistributorIdentityInFactoryFlows(actor);
 
   return {
     items: page.map((carton) => ({
@@ -1222,7 +1267,7 @@ export async function getPackingAuditQueue(actor: CurrentUser, filters: { factor
       factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
       factory: carton.factoryDispatch.factory,
       saleOrder: carton.factoryDispatch.saleOrder,
-      destination: toPackingAuditDestinationView(carton),
+      destination: toPackingAuditDestinationView(carton, identified),
     })),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
@@ -1251,7 +1296,7 @@ export async function getPackingAuditCartonDetail(actor: CurrentUser, cartonId: 
     factoryDispatchNumber: carton.factoryDispatch.factoryDispatchNumber,
     factory: carton.factoryDispatch.factory,
     saleOrder: carton.factoryDispatch.saleOrder,
-    destination: toPackingAuditDestinationView(carton),
+    destination: toPackingAuditDestinationView(carton, canViewDistributorIdentityInFactoryFlows(actor)),
   };
 }
 

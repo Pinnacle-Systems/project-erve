@@ -64,6 +64,7 @@ function queueLine(overrides: Partial<FactoryPackingQueueLine> = {}): FactoryPac
     saleOrderId: 'so-1',
     saleOrderNumber: 'EISO/26-27/0001',
     distributor: { id: 'dist-1', code: 'D1', name: 'Distributor One' },
+    destination: { id: 'dest-1', label: 'Store One', storeCode: 'S1', city: 'Chennai', state: 'Tamil Nadu' },
     saleOrderLineId: 'line-1',
     styleId: 'style-1',
     styleNumber: 'ST-001',
@@ -143,6 +144,43 @@ describe('FactoryPackingQueuePage — UXAUTH-003/004/005', () => {
       expect((queueCall[1] as { params?: Record<string, unknown> } | undefined)?.params).toMatchObject({ limit: 25 });
       expect((queueCall[1] as { params?: Record<string, unknown> } | undefined)?.params?.factoryId).toBeUndefined();
       expect(content()).toContain('ST-001');
+      expect(content()).toContain('EIFD/26-27/0001');
+    });
+  });
+
+  describe('FACTORY_USER (ISS-075: the API sends no Distributor)', () => {
+    it('groups the queue by destination, names no Distributor and drops the Distributors column', async () => {
+      const neutral = (overrides: Partial<FactoryPackingQueueLine>) => {
+        const { distributor: _omitted, ...rest } = queueLine(overrides);
+        void _omitted;
+        return rest as FactoryPackingQueueLine;
+      };
+      await renderPage('FACTORY_USER', '/fulfillment/factory-dispatches', async (url) => {
+        if (url === '/factory-dispatches/packing-queue')
+          return queueApiResponse([
+            neutral({ saleOrderLineId: 'line-1' }),
+            neutral({
+              saleOrderLineId: 'line-2',
+              destination: { id: 'dest-2', label: 'Store Two', storeCode: 'S2', city: 'Madurai', state: 'Tamil Nadu' },
+            }),
+          ]);
+        if (url === '/factory-dispatches')
+          return {
+            data: {
+              data: {
+                items: [dispatchSummary({ saleOrder: { id: 'so-1', saleOrderNumber: 'EISO/26-27/0001', distributors: [] } })],
+                pageInfo: { limit: 25, hasMore: false, nextCursor: null },
+              },
+            },
+          };
+        throw new Error(`Unexpected GET: ${url}`);
+      });
+
+      // Same Dispatch Order, two destinations -> two sections, each titled by Store name + code.
+      expect(content()).toContain('EISO/26-27/0001 — Store One (S1)');
+      expect(content()).toContain('EISO/26-27/0001 — Store Two (S2)');
+      expect(content()).not.toContain('Distributor One');
+      expect(content()).not.toContain('Distributors');
       expect(content()).toContain('EIFD/26-27/0001');
     });
   });

@@ -55,8 +55,9 @@ export interface DispatchOrderDetailDestinationSection {
 
 export interface DispatchOrderDetailDistributorSection {
   id: string;
-  distributorName: string;
-  purchaseModeLabel: string;
+  /** ISS-075: `null` (with `purchaseModeLabel`) for a Factory reader — the API sends one neutral group with no Distributor identity. */
+  distributorName: string | null;
+  purchaseModeLabel: string | null;
   totalQuantity: number;
   destinations: DispatchOrderDetailDestinationSection[];
 }
@@ -149,15 +150,16 @@ export function buildDispatchOrderDetailViewModel(
     { label: 'Remarks', value: so.remarks },
     { label: 'State', value: so.isLocked ? 'Factory Dispatched (locked)' : 'Ready for Factory (editable)' },
     { label: 'Fulfillment', value: FULFILLMENT_STAGE_LABELS[so.fulfillment.stage] },
-    { label: 'Distributor Count', value: so.distributors.length },
+    // ISS-075: a Factory reader receives no Distributors, so no count is printed for them.
+    ...(so.distributors.length > 0 ? [{ label: 'Distributor Count', value: so.distributors.length }] : []),
     { label: 'Destination Count', value: so.destinationCount },
     { label: 'Total Quantity', value: so.totalQuantity },
   ];
 
   const distributorGroups: DispatchOrderDetailDistributorSection[] = so.distributorGroups.map((group) => ({
     id: group.id,
-    distributorName: group.distributor.name,
-    purchaseModeLabel: PURCHASE_MODE_LABELS[group.purchaseMode],
+    distributorName: group.distributor?.name ?? null,
+    purchaseModeLabel: group.purchaseMode ? PURCHASE_MODE_LABELS[group.purchaseMode] : null,
     totalQuantity: group.lines.reduce((sum, line) => sum + line.quantity, 0),
     destinations: group.destinations.map((dest) => {
       const destLines = group.lines.filter((line) => line.destinationId === dest.id);
@@ -168,7 +170,7 @@ export function buildDispatchOrderDetailViewModel(
           .filter(Boolean)
           .join(', '),
         contactLine: dest.contactName || dest.contactPhone ? [dest.contactName, dest.contactPhone].filter(Boolean).join(' · ') : null,
-        gstin: dest.gstin,
+        gstin: dest.gstin ?? null,
         totalQuantity: destLines.reduce((sum, line) => sum + line.quantity, 0),
         sizeColumns: distinctSizeColumns(destLines),
         styleRows: buildStyleRows(destLines),

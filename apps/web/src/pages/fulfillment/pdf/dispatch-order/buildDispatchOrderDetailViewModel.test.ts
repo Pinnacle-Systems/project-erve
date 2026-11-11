@@ -72,8 +72,8 @@ function makeSaleOrder(overrides: Partial<SaleOrder> = {}): SaleOrder {
     id: 'so-1',
     saleOrderNumber: 'EISO/26-27/0001',
     distributors: distributorGroups.map((g) => ({
-      ...g.distributor,
-      purchaseMode: g.purchaseMode,
+      ...g.distributor!,
+      purchaseMode: g.purchaseMode!,
     })),
     factory: { id: 'f1', code: 'F1', name: 'Acme Factory' },
     financialYear: { id: 'fy1', code: '2026-27' },
@@ -253,7 +253,7 @@ describe('buildDispatchOrderDetailViewModel', () => {
     });
 
     expect(vm.distributorGroups).toHaveLength(3);
-    const byName = Object.fromEntries(vm.distributorGroups.map((g) => [g.distributorName, g]));
+    const byName = Object.fromEntries(vm.distributorGroups.map((g) => [g.distributorName ?? '', g]));
 
     expect(byName['Distributor A']?.purchaseModeLabel).toBe('Outright');
     expect(byName['Distributor A']?.destinations.map((d) => d.id)).toEqual(['a1', 'a2']);

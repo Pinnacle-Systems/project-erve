@@ -241,7 +241,8 @@ export interface SaleOrderDestinationView {
   storeCode?: string | null;
   label: string | null;
   contactName: string | null;
-  contactEmail: string | null;
+  /** ISS-075: omitted for readers that may not identify the Distributor (FACTORY_USER) — the e-mail domain usually names the company. */
+  contactEmail?: string | null;
   contactPhone: string | null;
   addressLine1: string;
   addressLine2: string | null;
@@ -249,8 +250,8 @@ export interface SaleOrderDestinationView {
   state: string;
   country: string;
   postalCode: string | null;
-  /** Captured where supplied; nullable/optional, format-validated only — never used to infer Bill-To/Ship-To tax treatment (Correction 8 §7). */
-  gstin: string | null;
+  /** Captured where supplied; nullable/optional, format-validated only — never used to infer Bill-To/Ship-To tax treatment (Correction 8 §7). ISS-075: omitted for readers that may not identify the Distributor (its PAN segment names the legal entity). */
+  gstin?: string | null;
   /** Server-derived (Correction 8): true only while the whole Dispatch Order is still editable AND this destination has zero packed cartons — the exact, shared eligibility the "Move to Distributor" action must reflect. Never infer this client-side from other fields. */
   canMoveDistributor: boolean;
 }
@@ -273,8 +274,9 @@ export interface SaleOrderLineView {
 /** One Distributor's participation in a Dispatch Order (Correction 8) — groups its destinations and the lines under them. purchaseMode is a snapshot taken when this Distributor was attached (Distributor.purchaseMode is immutable after creation, so it can never diverge from the master); name/code are always the CURRENT Distributor master values (live-joined, not snapshotted — see the Correction 8 "Distributor identity snapshot scope" decision). */
 export interface SaleOrderDistributorGroupView {
   id: string;
-  distributor: { id: string; code: string; name: string };
-  purchaseMode: PurchaseMode;
+  /** ISS-075: `null` (with `purchaseMode: null`) for readers that may not identify Distributors (FACTORY_USER) — they receive ONE neutral group holding every destination and line. */
+  distributor: { id: string; code: string; name: string } | null;
+  purchaseMode: PurchaseMode | null;
   destinations: SaleOrderDestinationView[];
   lines: SaleOrderLineView[];
 }
@@ -282,7 +284,7 @@ export interface SaleOrderDistributorGroupView {
 export interface SaleOrderSummary extends VersionedResource {
   id: string;
   saleOrderNumber: string;
-  /** Every Distributor represented in this Dispatch Order (Correction 8 — replaces the old singular `distributor`, which assumed exactly one Distributor per Dispatch Order). */
+  /** Every Distributor represented in this Dispatch Order (Correction 8 — replaces the old singular `distributor`, which assumed exactly one Distributor per Dispatch Order). ISS-075: always empty for readers that may not identify Distributors (FACTORY_USER). */
   distributors: Array<{ id: string; code: string; name: string; purchaseMode: PurchaseMode }>;
   factory: { id: string; code: string; name: string };
   financialYear: { id: string; code: string };
@@ -296,11 +298,12 @@ export interface SaleOrderSummary extends VersionedResource {
 }
 
 export interface SaleOrderDetail extends SaleOrderSummary {
-  creator: { id: string; name: string; email: string };
+  creator: { id: string; name: string; email?: string };
   remarks: string | null;
   /** Distributor -> destination -> line hierarchy (Correction 8 — replaces the old flat `destinations`/`lines`). */
   distributorGroups: SaleOrderDistributorGroupView[];
   lines: SaleOrderLineView[];
+  /** ISS-075: for FACTORY_USER the stage never goes past FACTORY_DISPATCHED (Erve dispatch / delivery are downstream of the Factory). */
   fulfillment: DispatchOrderFulfillmentSummary;
 }
 
@@ -322,7 +325,10 @@ export type DistributorReceiptLedgerDisposition = 'APPLIED' | 'NOT_APPLIED_ZERO'
 export interface FactoryPackingQueueLine {
   saleOrderId: string;
   saleOrderNumber: string;
-  distributor: { id: string; code: string; name: string };
+  /** ISS-075: omitted for readers that may not identify Distributors (FACTORY_USER) — group by `destination` instead. */
+  distributor?: { id: string; code: string; name: string };
+  /** The destination this line is packed for: the neutral, always-present way to group the queue. */
+  destination: { id: string; label: string | null; storeCode: string | null; city: string; state: string };
   saleOrderLineId: string;
   styleId: string;
   styleNumber: string;
@@ -413,8 +419,8 @@ export interface PackingListLineView {
 }
 
 export interface PackingListDestinationView extends SaleOrderDestinationView {
-  /** Correction 8: which Distributor this destination belongs to — makes the owning Distributor obvious when selecting a destination for a carton (the carton itself never carries a distributor field, only destinationId). */
-  distributor: { id: string; code: string; name: string };
+  /** Correction 8: which Distributor this destination belongs to — makes the owning Distributor obvious when selecting a destination for a carton (the carton itself never carries a distributor field, only destinationId). ISS-075: omitted for readers that may not identify Distributors (FACTORY_USER, QA_USER) — the destination is then identified by label, Store code and address. */
+  distributor?: { id: string; code: string; name: string };
   lines: PackingListLineView[];
   cartons: FactoryPackingCartonView[];
 }
@@ -437,6 +443,7 @@ export interface FactoryDispatchSummary {
   id: string;
   factoryDispatchNumber: string;
   factory: { id: string; code: string; name: string };
+  /** ISS-075: `distributors` is always empty for readers that may not identify Distributors (FACTORY_USER). */
   saleOrder: { id: string; saleOrderNumber: string; distributors: Array<{ id: string; code: string; name: string }> };
   status: FactoryDispatchStatus;
   version: number;
@@ -518,9 +525,9 @@ export interface FactoryInvoiceView extends VersionedResource {
   factoryDispatch: { id: string; factoryDispatchNumber: string };
   saleOrder: { id: string; saleOrderNumber: string };
   generatedAt: string;
-  factoryConfirmedBy: { id: string; name: string; email: string } | null;
+  factoryConfirmedBy: { id: string; name: string; email?: string } | null;
   factoryConfirmedAt: string | null;
-  finalizedBy: { id: string; name: string; email: string } | null;
+  finalizedBy: { id: string; name: string; email?: string } | null;
   finalizedAt: string | null;
   subtotal: number;
   gstAmount: number;
@@ -535,7 +542,8 @@ export interface PackingAuditQueueItem extends FactoryPackingCartonView {
   factory: { id: string; code: string; name: string };
   saleOrder: { id: string; saleOrderNumber: string };
   /** Phase 5: Distributor/Destination context for the Packing Audit PDF — always present, both on the queue and (via `PackingAuditQueueItem & { factoryDispatchId }`) the carton detail endpoint. */
-  destination: { id: string; label: string | null; city: string; state: string; distributor: { id: string; code: string; name: string } };
+  /** ISS-075: `distributor` is omitted for readers that may not identify Distributors (QA_USER, or any account without an internal commercial role). */
+  destination: { id: string; label: string | null; city: string; state: string; distributor?: { id: string; code: string; name: string } };
 }
 
 /** Phase 6: cartons individually selected for Erve consolidation, filterable/groupable client-side by factory/Dispatch Order/destination — never a StockAllocation/Job Order id (Phase 6 plan §7). */
@@ -810,11 +818,11 @@ export interface ErveDispatchView extends VersionedResource {
   vehicleNumber: string | null;
   lrNumber: string | null;
   remarks: string | null;
-  dispatchedBy: { id: string; name: string; email: string };
+  dispatchedBy: { id: string; name: string; email?: string };
   dispatchedAt: string;
-  lrUpdatedBy: { id: string; name: string; email: string } | null;
+  lrUpdatedBy: { id: string; name: string; email?: string } | null;
   lrUpdatedAt: string | null;
-  deliveredBy: { id: string; name: string; email: string } | null;
+  deliveredBy: { id: string; name: string; email?: string } | null;
   deliveredAt: string | null;
   deliveryRemarks: string | null;
   deliveryConfirmationSource: DeliveryConfirmationSource | null;
@@ -945,18 +953,18 @@ export interface DistributorReturnView extends VersionedResource {
   status: DistributorReturnStatus;
   returnReason: string;
   remarks: string | null;
-  submittedBy: { id: string; name: string; email: string };
+  submittedBy: { id: string; name: string; email?: string };
   submittedAt: string;
-  approvedBy: { id: string; name: string; email: string } | null;
+  approvedBy: { id: string; name: string; email?: string } | null;
   approvedAt: string | null;
   approvalRemarks: string | null;
   rejectionReason: string | null;
-  receivedBy: { id: string; name: string; email: string } | null;
+  receivedBy: { id: string; name: string; email?: string } | null;
   receivedAt: string | null;
   creditNoteReference: string | null;
   creditNoteDate: string | null;
-  creditNoteRecordedBy: { id: string; name: string; email: string } | null;
-  cancelledBy: { id: string; name: string; email: string } | null;
+  creditNoteRecordedBy: { id: string; name: string; email?: string } | null;
+  cancelledBy: { id: string; name: string; email?: string } | null;
   cancelledAt: string | null;
   lines: DistributorReturnLineView[];
 }
@@ -984,7 +992,7 @@ export interface DistributorSalesReportView {
   distributor: { id: string; code: string; name: string };
   reportDate: string;
   remarks: string | null;
-  submittedBy: { id: string; name: string; email: string };
+  submittedBy: { id: string; name: string; email?: string };
   submittedAt: string;
   lines: DistributorSalesReportLineView[];
 }

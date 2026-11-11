@@ -81,7 +81,7 @@ describe('buildCartonLabelViewModel', () => {
     expect(vm.destinationName).toBe('Store 1');
     expect(vm.identityItems).toEqual([
       { label: 'Dispatch Order', value: 'EISO/26-27/0001' },
-      { label: 'Distributor', value: 'Distributor One' },
+      // ISS-075: the source destination carries a Distributor, yet the label never prints it.
       { label: 'Destination', value: 'Store 1' },
       { label: 'Address', value: '123 Test Street, Unit 4, Chennai, TN, 600001, India' },
       { label: 'Contact', value: 'Jane Doe' },

@@ -1,4 +1,5 @@
 import type { FactoryDispatchSummary, FactoryPackingQueueLine } from '../../types.js';
+import { destinationDisplayName } from '../../destination-display.js';
 import { FACTORY_DISPATCH_STATUS_LABELS } from '../shared/fulfillmentPdfLabels.js';
 
 export interface FactoryPackingQueueListPdfMeta {
@@ -15,7 +16,9 @@ export interface FactoryPackingQueueListPdfMeta {
 export interface FactoryPackingQueueAwaitingRow {
   id: string;
   saleOrderNumber: string;
+  /** ISS-075: empty for a Factory reader (the API sends no Distributor) — `destinationName` is then the grouping label. */
   distributorName: string;
+  destinationName: string;
   styleDisplay: string;
   sizeLabel: string;
   allocatedQuantity: number;
@@ -37,6 +40,8 @@ export interface FactoryPackingQueueListPdfViewModel {
   subtitle: string;
   generatedAt: string;
   generatedBy?: string | null;
+  /** ISS-075: false when no row carries a Distributor — the Distributor columns are then replaced by Destination / omitted. */
+  showDistributors: boolean;
   awaitingPackingCount: number;
   awaitingPacking: FactoryPackingQueueAwaitingRow[];
   factoryDispatchCount: number;
@@ -57,7 +62,8 @@ export function buildFactoryPackingQueueListViewModel(
   const awaitingRows: FactoryPackingQueueAwaitingRow[] = awaitingPacking.map((line) => ({
     id: line.saleOrderLineId,
     saleOrderNumber: line.saleOrderNumber,
-    distributorName: line.distributor.name,
+    distributorName: line.distributor?.name ?? '',
+    destinationName: destinationDisplayName({ ...line.destination, distributor: null }),
     styleDisplay: `${line.styleNumber} — ${line.styleName}`,
     sizeLabel: line.sizeLabel,
     allocatedQuantity: line.allocatedQuantity,
@@ -79,6 +85,9 @@ export function buildFactoryPackingQueueListViewModel(
     subtitle: 'Approved goods allocated from your Factory, awaiting packing',
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,
+    showDistributors:
+      awaitingPacking.some((line) => line.distributor) ||
+      factoryDispatches.some((dispatch) => dispatch.saleOrder.distributors.length > 0),
     awaitingPackingCount: awaitingRows.length,
     awaitingPacking: awaitingRows,
     factoryDispatchCount: dispatchRows.length,
