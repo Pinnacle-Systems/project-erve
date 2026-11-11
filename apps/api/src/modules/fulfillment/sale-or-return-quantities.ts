@@ -214,6 +214,89 @@ export async function getSaleOrReturnDownstreamQuantitiesForDispatch(
   return totals;
 }
 
+export type SaleOrReturnAvailabilityQuantities = Pick<
+  SaleOrReturnPairQuantities,
+  'receivedQuantity' | 'actualSoldQuantity' | 'returnedQuantity' | 'approvedAwaitingReceiptQuantity' | 'pendingRequestedQuantity'
+>;
+
+export const sourcePositionKey = (erveDispatchId: string, saleOrderLineId: string): string =>
+  `${erveDispatchId}:${saleOrderLineId}`;
+
+/**
+ * The availability inputs for MANY source positions in a constant number of statements (five),
+ * however many positions are asked for. Same sums and lifecycle predicates as the per-pair helpers
+ * above (ledger line; sales lines; RECEIVED / APPROVED / SUBMITTED return lines) - grouped by the
+ * exact (erveDispatchId, saleOrderLineId) so attribution never blends positions. The `in` filters
+ * may fetch a few rows of a cross pairing; those are dropped by exact key, never summed.
+ * Every requested position gets an entry (zeros when it has no rows).
+ */
+export async function getAvailabilityQuantitiesForPairs(
+  client: Client,
+  pairs: ReadonlyArray<{ erveDispatchId: string; saleOrderLineId: string }>,
+): Promise<Map<string, SaleOrReturnAvailabilityQuantities>> {
+  const result = new Map<string, SaleOrReturnAvailabilityQuantities>();
+  for (const pair of pairs) {
+    result.set(sourcePositionKey(pair.erveDispatchId, pair.saleOrderLineId), {
+      receivedQuantity: 0,
+      actualSoldQuantity: 0,
+      returnedQuantity: 0,
+      approvedAwaitingReceiptQuantity: 0,
+      pendingRequestedQuantity: 0,
+    });
+  }
+  if (pairs.length === 0) return result;
+
+  const erveDispatchIds = [...new Set(pairs.map((p) => p.erveDispatchId))];
+  const saleOrderLineIds = [...new Set(pairs.map((p) => p.saleOrderLineId))];
+  const scope = { erveDispatchId: { in: erveDispatchIds }, saleOrderLineId: { in: saleOrderLineIds } };
+  const by = ['erveDispatchId', 'saleOrderLineId'] as const;
+  const [ledger, sales, returned, approved, pending] = await Promise.all([
+    client.erveDispatchDeliveryLine.findMany({
+      where: scope,
+      select: { erveDispatchId: true, saleOrderLineId: true, receivedQuantity: true },
+    }),
+    client.distributorSalesReportLine.groupBy({ by: [...by], where: scope, _sum: { quantitySold: true } }),
+    client.distributorReturnLine.groupBy({
+      by: [...by],
+      where: { ...scope, distributorReturn: { status: 'RECEIVED' } },
+      _sum: { receivedQuantity: true },
+    }),
+    client.distributorReturnLine.groupBy({
+      by: [...by],
+      where: { ...scope, distributorReturn: { status: 'APPROVED' } },
+      _sum: { approvedQuantity: true },
+    }),
+    client.distributorReturnLine.groupBy({
+      by: [...by],
+      where: { ...scope, distributorReturn: { status: 'SUBMITTED' } },
+      _sum: { requestedQuantity: true },
+    }),
+  ]);
+  const entry = (row: { erveDispatchId: string; saleOrderLineId: string }) =>
+    result.get(sourcePositionKey(row.erveDispatchId, row.saleOrderLineId));
+  for (const row of ledger) {
+    const e = entry(row);
+    if (e) e.receivedQuantity = row.receivedQuantity;
+  }
+  for (const row of sales) {
+    const e = entry(row);
+    if (e) e.actualSoldQuantity = row._sum.quantitySold ?? 0;
+  }
+  for (const row of returned) {
+    const e = entry(row);
+    if (e) e.returnedQuantity = row._sum.receivedQuantity ?? 0;
+  }
+  for (const row of approved) {
+    const e = entry(row);
+    if (e) e.approvedAwaitingReceiptQuantity = row._sum.approvedQuantity ?? 0;
+  }
+  for (const row of pending) {
+    const e = entry(row);
+    if (e) e.pendingRequestedQuantity = row._sum.requestedQuantity ?? 0;
+  }
+  return result;
+}
+
 export function computeAvailability(
   q: Pick<
     SaleOrReturnPairQuantities,

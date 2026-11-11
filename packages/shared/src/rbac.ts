@@ -57,6 +57,24 @@ export function canViewRetailStoreInventory(user: RoleHolder): boolean {
   );
 }
 
+/**
+ * ISS-089 / A7: Store-level FIFO "Report Sold" / "Request Return" are for Distributor users only.
+ * The allocation is always made against the authenticated Distributor's own Retail Stores.
+ * Admin and the other internal roles keep the Dispatch-linked Sales Report / Return flows.
+ *
+ * The application's role policy only forbids mixing TRANSPORTER with other roles, so a user can
+ * hold DISTRIBUTOR together with ADMIN (or any internal role). Such a mixed account must NOT
+ * unlock this internal-impersonation-prone action: every role the user holds has to be
+ * DISTRIBUTOR. Row-level ownership (the sole mapped Distributor) is still enforced in the service.
+ */
+export const RETAIL_STORE_FIFO_ACTION_ROLES = ['DISTRIBUTOR'] as const satisfies readonly Role[];
+export function canSubmitRetailStoreFifoAction(user: RoleHolder): boolean {
+  return (
+    user.roles.length > 0 &&
+    user.roles.every((r) => (RETAIL_STORE_FIFO_ACTION_ROLES as readonly Role[]).includes(r))
+  );
+}
+
 export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
   return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
 }

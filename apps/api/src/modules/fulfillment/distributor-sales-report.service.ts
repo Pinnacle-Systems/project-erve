@@ -173,7 +173,9 @@ function toReportView(record: DistributorSalesReportRecord, canReadImages: boole
     reportDate: record.reportDate.toISOString().slice(0, 10),
     remarks: record.remarks,
     submittedBy: record.submittedBy,
-    createdAt: record.createdAt.toISOString(),
+    // ISS-092: the documented view contract (DistributorSalesReportView.submittedAt) and the
+    // semantically correct column; the Distributor Return view already uses the same name.
+    submittedAt: record.submittedAt.toISOString(),
     lines: record.lines.map((line) => {
       const { saleOrder, style, size } = line.saleOrderLine;
       return {

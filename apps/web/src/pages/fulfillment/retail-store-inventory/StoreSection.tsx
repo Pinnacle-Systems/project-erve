@@ -1,5 +1,11 @@
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { RetailStoreInventoryMeasures, RetailStoreInventoryPurchaseMode, RetailStoreInventoryStoreGroup } from '@erve/types';
+import type {
+  RetailStoreInventoryMeasures,
+  RetailStoreInventoryPurchaseMode,
+  RetailStoreInventoryStoreGroup,
+  RetailStoreInventoryStyleCard,
+  StoreFifoAction,
+} from '@erve/types';
 import { Badge } from '@erve/primitives';
 import { StyleInventoryCard, type DrillTarget } from './StyleInventoryCard.js';
 import { PURCHASE_MODE_LABEL, formatQuantity } from './measures.js';
@@ -34,13 +40,18 @@ interface Props {
   expanded: boolean;
   onToggle: () => void;
   onDrill: (target: DrillTarget) => void;
+  /** Present for a Distributor only; never offered on an unmapped historical destination. */
+  onFifoAction?: (
+    action: StoreFifoAction,
+    target: { store: RetailStoreInventoryStoreGroup; card: RetailStoreInventoryStyleCard; size: { sizeId: string; sizeCode: string } },
+  ) => void;
 }
 
 /**
  * One Retail Store group. The styles are only mounted while the group is
  * expanded, so a long page keeps its DOM (and Style image requests) small.
  */
-export function StoreSection({ store, expanded, onToggle, onDrill }: Props) {
+export function StoreSection({ store, expanded, onToggle, onDrill, onFifoAction }: Props) {
   const place = [store.city, store.state].filter(Boolean).join(', ');
   const panelId = `store-panel-${store.storeKey}`;
   return (
@@ -92,6 +103,11 @@ export function StoreSection({ store, expanded, onToggle, onDrill }: Props) {
               distributorId={store.distributor.id}
               card={card}
               onDrill={onDrill}
+              onFifoAction={
+                onFifoAction && store.mapped
+                  ? (action, size) => onFifoAction(action, { store, card, size })
+                  : undefined
+              }
             />
           ))}
         </div>

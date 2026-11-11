@@ -49,3 +49,38 @@ export const sourceCursorSchema = z.object({
   dispatchId: z.string().min(1),
   saleOrderLineId: z.string().min(1),
 });
+
+// ---------------------------------------------------------------------------
+// ISS-089 — Store-level FIFO actions. The Distributor is never asked for a Dispatch id.
+// ---------------------------------------------------------------------------
+
+const isoDate = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
+
+export const storeFifoAvailabilityQuerySchema = z.object({
+  storeKey: storeKeySchema,
+  styleId: id,
+  sizeId: id,
+  date: isoDate,
+});
+
+const storeFifoBase = {
+  storeKey: storeKeySchema,
+  styleId: id,
+  sizeId: id,
+  quantity: z.number().int().positive().max(1_000_000),
+  remarks: z.string().trim().max(1000).optional().nullable(),
+};
+
+export const storeFifoSalesReportSchema = z.object({ ...storeFifoBase, reportDate: isoDate });
+
+export const storeFifoReturnSchema = z.object({
+  ...storeFifoBase,
+  returnDate: isoDate,
+  returnReason: z.string().trim().min(1, 'A return reason is required').max(1000),
+});
+
+export const storeFifoIdempotencyKeySchema = z
+  .string({ error: 'Idempotency-Key header is required' })
+  .trim()
+  .min(8, 'Idempotency-Key must be at least 8 characters')
+  .max(200, 'Idempotency-Key must be at most 200 characters');

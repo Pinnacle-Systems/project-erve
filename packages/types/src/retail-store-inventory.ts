@@ -162,3 +162,49 @@ export interface RetailStoreInventorySourcesResponse {
   items: RetailStoreInventorySource[];
   pageInfo: { limit: number; hasMore: boolean; nextCursor: string | null };
 }
+
+// ---------------------------------------------------------------------------
+// ISS-089 — Store-level FIFO "Report Sold" / "Request Return".
+// The Distributor picks Store x Style x Size x quantity x date; the API allocates the quantity
+// across the original (Erve Dispatch, Sale Order line) positions oldest-receipt-first and posts
+// ordinary Sales Report / Return lines. FIFO is a source-allocation convention only.
+// ---------------------------------------------------------------------------
+
+export type StoreFifoAction = 'SALE' | 'RETURN';
+
+export interface StoreFifoAvailability {
+  storeKey: string;
+  styleId: string;
+  sizeId: string;
+  /** The transaction date (YYYY-MM-DD) the figures were evaluated for. */
+  asOfDate: string;
+  /** Units a Sales Report can allocate right now (verified receipts on or before asOfDate). */
+  availableForSale: number;
+  /** Units a new Return request can allocate right now (same eligibility, after pending/approved returns). */
+  availableForReturn: number;
+  eligibleSourceCount: number;
+  excluded: {
+    /** Units on Dispatches whose receipt is dated after asOfDate. */
+    receivedAfterDateUnits: number;
+    /** Units whose receipt date cannot be verified (legacy assumed / missing evidence). */
+    unverifiedReceiptUnits: number;
+  };
+}
+
+export interface StoreFifoSubmitInput {
+  storeKey: string;
+  styleId: string;
+  sizeId: string;
+  quantity: number;
+}
+
+export interface StoreFifoSalesSubmitInput extends StoreFifoSubmitInput {
+  reportDate: string;
+  remarks?: string | null;
+}
+
+export interface StoreFifoReturnSubmitInput extends StoreFifoSubmitInput {
+  returnDate: string;
+  returnReason: string;
+  remarks?: string | null;
+}
