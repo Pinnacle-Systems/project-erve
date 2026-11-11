@@ -87,14 +87,14 @@ describe('QR in the existing contents PDF', () => {
           'Carton C1',
           'DO/26-27/1',
           'Destination',
-          'Distributor',
           'SZ1',
           'SZ11',
           `Total: ${styles * 11}`,
           'CARTON-REFERENCE',
         ])
           expect(text).toContain(required);
-        expect(text + JSON.stringify(await document.getMetadata())).not.toMatch(/SECRET|AAAAAA/);
+        // ISS-075: the source destination carries a Distributor name; the printed label never does.
+        expect(text + JSON.stringify(await document.getMetadata())).not.toMatch(/SECRET|AAAAAA|Distributor/);
         if (styles > 1) expect(document.numPages).toBeGreaterThan(1);
         if (process.env.CARTON_QR_EVIDENCE_DIR) {
           const directory = resolve(process.env.CARTON_QR_EVIDENCE_DIR);

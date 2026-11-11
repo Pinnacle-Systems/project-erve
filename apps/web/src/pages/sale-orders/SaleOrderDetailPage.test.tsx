@@ -369,6 +369,39 @@ describe('ISS-021 Dispatch Order header layout', () => {
     expect(content()).toContain('Edit / Correct');
   });
 
+  it('renders a Factory user payload (ISS-075) as one neutral Destinations panel with no Distributor or Purchase Mode', async () => {
+    const saleOrder = buildSaleOrder();
+    const group = saleOrder.distributorGroups[0]!;
+    saleOrder.distributors = [];
+    saleOrder.distributorGroups = [
+      {
+        ...group,
+        id: 'so-1',
+        distributor: null,
+        purchaseMode: null,
+        destinations: [{ ...group.destinations[0]!, label: 'Max Mall Store', storeCode: 'MX-014' }],
+      },
+    ];
+    saleOrder.fulfillment = { stage: 'FACTORY_DISPATCHED', totalQuantity: 10, totalFactoryPackedQuantity: 10 };
+    await renderPage(
+      'FACTORY_USER',
+      async () => ({ data: { data: { items: [], pageInfo: { limit: 25, hasMore: false, nextCursor: null } } } }),
+      saleOrder,
+    );
+    await flush();
+
+    expect(content()).not.toContain('Distributor One');
+    expect(content()).not.toContain('Distributors');
+    expect(content()).not.toContain('Purchase Mode');
+    expect(content()).toContain('Destinations');
+    expect(content()).toContain('All destinations');
+    expect(content()).toContain('Max Mall Store');
+    expect(content()).toContain('Store Code: MX-014');
+    expect(content()).toContain('123 Test Street');
+    expect(content()).toContain('Factory Dispatched');
+    expect(content()).not.toContain('Delivered');
+  });
+
   it('keeps empty remarks compact without spanning the entire responsive grid', async () => {
     await renderPage(
       'ADMIN',

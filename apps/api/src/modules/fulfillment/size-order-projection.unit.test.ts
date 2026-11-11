@@ -38,7 +38,7 @@ it('projects authoritative Size ordering onto packing lines without filtering in
       size: { id: 'size', code: 'M', label: 'Medium', sortOrder: -2 },
     } }],
   }]);
-  const view = await buildPackingListProjection({ id: 'order', factoryId: 'factory' });
+  const view = await buildPackingListProjection({ id: 'order', factoryId: 'factory' }, true);
   expect(view.destinations[0]!.lines[0]).toMatchObject({ sizeSortOrder: -2, requiredQuantity: 5, packedQuantity: 0 });
   const query = db.saleOrderLine.findMany.mock.calls[0]![0];
   expect(query.include.size.select.sortOrder).toBe(true);

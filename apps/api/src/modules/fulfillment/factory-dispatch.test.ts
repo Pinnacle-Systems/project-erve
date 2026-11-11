@@ -1288,7 +1288,7 @@ describe('Packing Audit', () => {
     await confirmAudit(qaToken, factoryDispatchId, cartonId).expect(400);
   });
 
-  it('queue and carton detail both return Distributor/Destination context for a carton (Phase 5 projection)', async () => {
+  it('queue and carton detail both return Destination context for a carton, and the Distributor only to ADMIN (Phase 5 projection, ISS-075)', async () => {
     const fixture = await createSingleFactoryApprovedSaleOrder(app, 10);
     const factoryToken = await createFactoryUserToken(fixture.stock.factoryId);
     const { token: qaToken } = await createRoleToken('QA_USER');
@@ -1304,16 +1304,24 @@ describe('Packing Audit', () => {
 
     const queueRes = await request(app).get('/packing-audit/queue').set('Authorization', `Bearer ${qaToken}`).expect(200);
     const queueItem = queueRes.body.data.items.find((item: { id: string }) => item.id === cartonId);
+    // ISS-075: the QA inspector identifies the destination, never the owning Distributor.
     expect(queueItem.destination).toEqual({
       id: destination.id,
       label: destination.label,
       city: destination.city,
       state: destination.state,
-      distributor: { id: distributorGroup.distributor.id, code: distributorGroup.distributor.code, name: distributorGroup.distributor.name },
     });
 
     const detailRes = await request(app).get(`/packing-audit/cartons/${cartonId}`).set('Authorization', `Bearer ${qaToken}`).expect(200);
     expect(detailRes.body.data.destination).toEqual(queueItem.destination);
+
+    // ADMIN (oversight) keeps the Distributor on the same projection.
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const adminDetail = await request(app).get(`/packing-audit/cartons/${cartonId}`).set('Authorization', `Bearer ${adminToken}`).expect(200);
+    expect(adminDetail.body.data.destination).toEqual({
+      ...queueItem.destination,
+      distributor: { id: distributorGroup.distributor.id, code: distributorGroup.distributor.code, name: distributorGroup.distributor.name },
+    });
   });
 });
 

@@ -129,11 +129,11 @@ describe('generateCartonLabelPdfBlob', () => {
         const text = pages.join(' ');
         const metadata = await document.getMetadata();
         const exposed = text + JSON.stringify(metadata);
-        expect(exposed).not.toMatch(/SECRET-FACTORY|Factory Dispatch|Factory One/);
+        // ISS-075: the source destination names "Distributor One", but a printed label never does.
+        expect(exposed).not.toMatch(/SECRET-FACTORY|Factory Dispatch|Factory One|Distributor/);
         for (const required of [
           'Carton C1',
           'EISO/26-27/0001',
-          'Distributor One',
           'Store 1',
           '123 Test Street',
           'Chennai',

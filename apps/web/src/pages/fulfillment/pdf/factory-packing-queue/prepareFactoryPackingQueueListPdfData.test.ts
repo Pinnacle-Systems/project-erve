@@ -34,6 +34,7 @@ function makeQueueLine(overrides: Partial<FactoryPackingQueueLine> = {}): Factor
     saleOrderId: 'so-1',
     saleOrderNumber: 'EISO/26-27/0001',
     distributor: { id: 'd1', code: 'D1', name: 'Distributor One' },
+    destination: { id: 'dest-1', label: 'Store One', storeCode: 'S1', city: 'Chennai', state: 'Tamil Nadu' },
     saleOrderLineId: 'line-1',
     styleId: 'style-1',
     styleNumber: 'ST-001',

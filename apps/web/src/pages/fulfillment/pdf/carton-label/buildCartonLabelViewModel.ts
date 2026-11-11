@@ -58,6 +58,10 @@ function formatAddress(destination: PackingListDestinationView): string {
  * Field-by-field allowlist, never `...carton`/`...destination`.
  * ISS-074: external labels omit factory identity/references and generating-user identity;
  * the source records retain authorized internal provenance unchanged.
+ * ISS-075: a label is a physical document that is applied at the Factory and read by the
+ * receiving party, so it never names the Distributor, whoever prints it. The destination
+ * (Store name, address, contact) is what identifies where the carton goes; the Store code is
+ * not printed either. Net/Gross weight and Dimensions are unaffected.
  *
  * The destination is always the carton's owning Dispatch-Order destination record (full address
  * captured at Dispatch-Order creation) — never a live Distributor/master address lookup, which
@@ -81,7 +85,6 @@ export function buildCartonLabelViewModel(
   const destinationName = destination.label ?? `${destination.city}, ${destination.state}`;
 
   const identityItems: PdfKeyValueItem[] = [{ label: 'Dispatch Order', value: saleOrderNumber }];
-  identityItems.push({ label: 'Distributor', value: destination.distributor.name });
   identityItems.push({ label: 'Destination', value: destinationName });
 
   const address = formatAddress(destination);

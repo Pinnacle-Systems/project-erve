@@ -27,15 +27,51 @@ Server-side scoping held everywhere it was probed. One class of violation was co
 
 ## PDFs
 
-All fulfillment PDFs are rendered in the browser from the API payloads above, so they cannot contain more than those payloads. The Erve Dispatch detail PDF prints operator names only (never e-mail). The carton label PDF was already restricted by ISS-074. Server-side tax-invoice documents are ADMIN/ACCOUNTANT only (route guards, and 403 from every external role on `/tax-invoices`). Rendered PDF bytes were not regenerated in this audit.
+All fulfillment PDFs are rendered in the browser from the API payloads above, so they cannot contain more than those payloads. The Erve Dispatch detail PDF prints operator names only (never e-mail). The carton label PDF was already restricted by ISS-074. Server-side tax-invoice documents are ADMIN/ACCOUNTANT only (route guards, and 403 from every external role on `/tax-invoices`). Rendered PDF bytes were not regenerated in the first audit; the correction below renders them.
 
 ## Reviewed and deliberately not changed (needs a product decision)
 
-- Factory-facing Dispatch Orders (and their PDF) show each Distributor's Purchase Mode and a five-value fulfillment stage up to `DELIVERED`. Both are designed in the Dispatch Order PDF/Phase 3 work; no quantities or parties beyond the shipped Distributor are added. If Factories should not learn commercial terms or downstream status, remove them from the Factory projection.
+- ~~Factory-facing Dispatch Orders show each Distributor's Purchase Mode and a fulfillment stage up to `DELIVERED`.~~ **Superseded — fixed in the correction below** (tracker v119 requires that Factory and Distributor users cannot identify each other).
 - Distributors see Erve operator **names** ("Dispatched By", "Confirmed by", return approver) on screen and PDF. Only the e-mail address was removed.
 - A Distributor requesting another Distributor's record id gets 403 while an unknown id gets 404 (existence is distinguishable). IDs are unguessable ULIDs.
 - Accounts holding more than one role union their permissions (only TRANSPORTER is exclusive). Not changed here.
 
 ## Not covered
 
-Mobile app screens, rendered PDF byte inspection, a production data audit, and the web UI under each role (the e-mail field is not read by any web code; the API/web typecheck confirms the optional field).
+Mobile app screens, a production data audit, and the web UI under each role (the e-mail field is not read by any web code; the API/web typecheck confirms the optional field).
+
+## Correction — Factory and Distributor must not identify each other (tracker v119)
+
+The first audit left Factory-facing documents naming the Distributor. Tracker v119 requires that Factory and Distributor users cannot identify each other through interfaces, API responses, PDFs or carton labels, so this is now fixed. Evidence: the `ISS-075` blocks at the end of `post-dispatch-confidentiality.test.ts` (two Factories, two Distributors, plus a third, unpacked Dispatch Order used to walk the whole Factory flow), `factoryNeutralDocuments.test.tsx` (rendered PDF text) and the rendered-PDF inspection described below. The new tests were run against the pre-fix services and fail (13 of 60), and pass after.
+
+### Who sees the Distributor
+
+One shared predicate, `canViewDistributorIdentityInFactoryFlows` (`packages/shared/src/rbac.ts`): **ADMIN, MERCHANDISER, SENIOR_MANAGEMENT, ACCOUNTANT**. It is an allow-list, so FACTORY_USER, QA_USER and any role added later default to the restricted view. Accounts holding several roles keep the union of their permissions (unchanged): FACTORY_USER + QA_USER and FACTORY_USER + DISTRIBUTOR stay restricted; an account that is also MERCHANDISER/ADMIN is an internal reader.
+
+### What a restricted reader no longer receives
+
+| Surface | Removed for FACTORY_USER (and QA_USER on Packing Audit) | Kept (needed to pack/dispatch) |
+| --- | --- | --- |
+| Dispatch Order list/detail + PDF | `distributors[]`, per-group `distributor` and `purchaseMode`, destination `gstin` and `contactEmail`; per-Distributor grouping (one neutral group of destinations, `distributor: null`, `purchaseMode: null`); stages `ERVE_DISPATCHED`/`DELIVERED` (shown as `FACTORY_DISPATCHED`) | destination id, Store label/code/id, address, contact name/phone, Styles, Sizes, quantities, numbers, `isLocked` |
+| Factory Packing List (`/sale-orders/:id/packing-list`, `/factory-dispatches/:id`) + PDF | header `distributors[]`, per-destination `distributor`, `gstin`, `contactEmail` | same as above, cartons, audit history (operator names) |
+| Factory Dispatch list | `saleOrder.distributors[]` | numbers, status, `consolidated` |
+| Packing Queue + PDF | `distributor`; rows now carry `destination {id,label,storeCode,city,state}` for every reader and the page/PDF group by it | quantities, Style/Size |
+| Packing Audit queue/detail + PDF | `destination.distributor` | carton, destination label/city/state, Factory name, quantities |
+| Carton label | Distributor row (removed for **everyone**: a label is a physical document read by the receiving party) | Dispatch Order, destination name, address, contact, weights, contents, QR |
+
+Distributors still receive no Factory identity (asserted over every read surface, both directions). Staff e-mail stays withheld from every external reader; Erve operator names stay visible.
+
+### Residual disclosure that needs a business decision (not changed)
+
+These are physical-delivery fields. Removing them would stop a carton being routed, so they remain visible to the Factory:
+
+- `label` — the Store name, copied from the Retail Store master. If a Store trades under the Distributor's brand (e.g. "<Distributor> Mall Store") the Factory can infer the Distributor from it.
+- `storeCode` / `retailStoreId` — the Store reference the tracker asks to preserve; a code convention may embed the Distributor.
+- address, `contactName`, `contactPhone` — the carton label prints them and the Factory cannot pack per destination without telling destinations apart. A brand-owned store address or a named Distributor employee can identify the Distributor.
+
+Options if the business wants them closed: (a) a Factory-facing destination alias set on the Dispatch Order (schema change, out of scope here); (b) strip contact name/phone from Factory projections and the label (the label then carries address only); (c) accept as is. Also unchanged:
+
+- `FactoryDispatch.consolidated` is still shown to the Factory. It reports that Erve has put the Factory's cartons on an Erve Packing List (Erve-internal, before any Distributor event). Hide it if "Factory-visible progress" must stop at `FACTORY_DISPATCHED` strictly.
+- QA_USER now loses the Distributor on the Packing Audit surface. QA is cross-Factory, so an account holding both QA_USER and FACTORY_USER could otherwise have used `/packing-audit` as a Distributor lookup. Add QA_USER back to the allow-list if QA needs it.
+- Quality form `CUSTOMER_NAME` (`quality-executions.service.ts`, `derivedSystemContext`) is filled from the source Order Sheets' Distributor name and `MERCHANDISER_NAME` from the Merchandiser. It was found while sweeping and is outside the surfaces listed for this correction; whether a Factory account can read an execution detail carrying it was not verified live.
+- By code reading (`getPackingAuditQueue` applies no Factory scope, and the new test only exercises one Factory's open carton), a QA_USER + FACTORY_USER account can list other Factories' open cartons and Factory names through `/packing-audit`. Existing RBAC; a general RBAC change is out of scope.

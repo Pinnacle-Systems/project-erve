@@ -70,11 +70,13 @@ export function DispatchOrderDetailDocument({ viewModel, images = new Map() }: D
         <PdfKeyValueSection items={viewModel.identityItems} columns={4} />
       </PdfSection>
 
-      <PdfSection title="Distributors" wrap>
+      <PdfSection title={viewModel.distributorGroups.some((group) => group.distributorName) ? 'Distributors' : 'Destinations'} wrap>
         {viewModel.distributorGroups.map((group) => (
           <View key={group.id} style={styles.distributorBlock}>
             <Text style={styles.distributorHeading}>
-              {group.distributorName} — {group.purchaseModeLabel} (Total: {group.totalQuantity})
+              {group.distributorName
+                ? `${group.distributorName} — ${group.purchaseModeLabel ?? ''} (Total: ${group.totalQuantity})`
+                : `All destinations (Total: ${group.totalQuantity})`}
             </Text>
             {group.destinations.map((dest) => (
               <View key={dest.id} style={styles.destinationBlock}>

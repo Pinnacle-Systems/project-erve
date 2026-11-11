@@ -18,12 +18,14 @@ import { StyleSizeGrid } from '../../components/style-size-grid/StyleSizeGrid.js
 import type { StyleSizeGridRow } from '../../components/style-size-grid/types.js';
 import { distinctSizeColumns, groupLinesByStyle } from './style-size-grouping.js';
 import type { FactoryDispatchSummary, FactoryPackingQueueLine } from './types.js';
+import { destinationDisplayName } from './destination-display.js';
 
 interface PackingQueueSection {
   key: string;
   saleOrderId: string;
   saleOrderNumber: string;
-  distributorName: string;
+  /** The Distributor's name for readers that may identify it, otherwise the destination (Store name + code). */
+  groupName: string;
   lines: FactoryPackingQueueLine[];
 }
 
@@ -37,10 +39,11 @@ function groupQueueIntoSections(items: FactoryPackingQueueLine[]): PackingQueueS
   const order: string[] = [];
   const sections = new Map<string, PackingQueueSection>();
   for (const item of items) {
-    const key = `${item.saleOrderId}::${item.distributor.id}`;
+    // ISS-075: a Factory reader's lines carry no Distributor, so sections form per destination.
+    const key = `${item.saleOrderId}::${item.distributor ? `d:${item.distributor.id}` : `s:${item.destination.id}`}`;
     let section = sections.get(key);
     if (!section) {
-      section = { key, saleOrderId: item.saleOrderId, saleOrderNumber: item.saleOrderNumber, distributorName: item.distributor.name, lines: [] };
+      section = { key, saleOrderId: item.saleOrderId, saleOrderNumber: item.saleOrderNumber, groupName: item.distributor?.name ?? destinationDisplayName(item.destination), lines: [] };
       sections.set(key, section);
       order.push(key);
     }
@@ -252,7 +255,7 @@ export function FactoryPackingQueuePage() {
                       onClick={() => navigate(`/sale-orders/${section.saleOrderId}/packing-list`)}
                       className="text-sm font-semibold text-primary hover:underline"
                     >
-                      {section.saleOrderNumber} — {section.distributorName}
+                      {section.saleOrderNumber} — {section.groupName}
                     </button>
                     <div className="space-y-3">
                       <div>
@@ -304,7 +307,10 @@ export function FactoryPackingQueuePage() {
               columns={[
                 { key: 'number', header: 'Dispatch #', accessor: 'factoryDispatchNumber' },
                 { key: 'saleOrder', header: 'Dispatch Order', render: (r) => r.saleOrder.saleOrderNumber },
-                { key: 'distributor', header: 'Distributors', render: (r) => r.saleOrder.distributors.map((d) => d.name).join(', ') },
+                // ISS-075: the API sends no Distributors to a Factory user, so the column is dropped for them.
+                ...(dispatches.some((r) => r.saleOrder.distributors.length > 0)
+                  ? [{ key: 'distributor', header: 'Distributors', render: (r: FactoryDispatchSummary) => r.saleOrder.distributors.map((d) => d.name).join(', ') }]
+                  : []),
                 {
                   key: 'status',
                   header: 'Status',

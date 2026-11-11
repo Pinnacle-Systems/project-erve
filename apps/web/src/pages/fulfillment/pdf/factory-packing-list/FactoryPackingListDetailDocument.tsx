@@ -67,7 +67,7 @@ export function FactoryPackingListDetailDocument({ viewModel }: FactoryPackingLi
           items={[
             { label: 'Dispatch Order Number', value: viewModel.saleOrderNumber },
             { label: 'Factory', value: viewModel.factoryName },
-            { label: 'Distributors', value: viewModel.distributorsDisplay },
+            ...(viewModel.distributorsDisplay ? [{ label: 'Distributors', value: viewModel.distributorsDisplay }] : []),
             { label: 'Factory Dispatch Number', value: viewModel.factoryDispatchNumber },
             { label: 'Status', value: viewModel.statusLabel },
           ]}
@@ -79,7 +79,7 @@ export function FactoryPackingListDetailDocument({ viewModel }: FactoryPackingLi
         {viewModel.destinations.map((destination) => (
           <View key={destination.id} style={styles.destinationBlock}>
             <Text style={styles.destinationHeading}>
-              {destination.label} — {destination.distributorName}
+              {destination.distributorName ? `${destination.label} — ${destination.distributorName}` : destination.label}
             </Text>
             <Text style={styles.note}>
               {[destination.addressLine, destination.contactName].filter(Boolean).join(' · ')}

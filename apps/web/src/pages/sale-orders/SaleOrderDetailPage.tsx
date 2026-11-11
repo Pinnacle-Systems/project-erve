@@ -138,7 +138,7 @@ export function SaleOrderDetailPage() {
     <div className="space-y-5">
       <PageHeader
         title={so.saleOrderNumber}
-        subtitle={`${so.distributors.map((d) => d.name).join(', ')} — ${so.factory.name}`}
+        subtitle={[so.distributors.map((d) => d.name).join(', '), so.factory.name].filter(Boolean).join(' — ')}
         secondaryActions={
           <div className="flex items-center gap-2">
             <PdfActionButtons
@@ -171,10 +171,13 @@ export function SaleOrderDetailPage() {
             density="compact"
             className="min-w-0 @min-[30rem]:grid-cols-2 @min-[50rem]:grid-cols-3"
           >
-          <DescriptionList.Item
-            label={so.distributors.length === 1 ? 'Distributor' : `Distributors (${so.distributors.length})`}
-            value={so.distributors.map((d) => d.name).join(', ') || '—'}
-          />
+          {/* ISS-075: the API sends no Distributors to a Factory user; show nothing rather than a blank. */}
+          {so.distributors.length > 0 && (
+            <DescriptionList.Item
+              label={so.distributors.length === 1 ? 'Distributor' : `Distributors (${so.distributors.length})`}
+              value={so.distributors.map((d) => d.name).join(', ')}
+            />
+          )}
           <DescriptionList.Item label="Factory" value={so.factory.name} />
           <DescriptionList.Item label="Dispatch Order Date" value={formatDate(so.soDate)} />
           <DescriptionList.Item label="Financial Year" value={so.financialYear.code} />
@@ -203,16 +206,16 @@ export function SaleOrderDetailPage() {
         </div>
       </Panel>
 
-      <Panel title="Distributors">
+      <Panel title={so.distributorGroups.some((group) => group.distributor) ? 'Distributors' : 'Destinations'}>
         <div className="space-y-5">
           {so.distributorGroups.map((group) => {
             const groupTotal = group.lines.reduce((sum, line) => sum + line.quantity, 0);
             return (
               <div key={group.id} className="rounded border border-[var(--erp-border-default)] p-3">
                 <div className="mb-3 flex items-center justify-between">
-                  <div className="font-medium">{group.distributor.name}</div>
+                  <div className="font-medium">{group.distributor?.name ?? 'All destinations'}</div>
                   <div className="flex items-center gap-3 text-sm text-[var(--erp-text-muted)]">
-                    <span>Purchase Mode: {group.purchaseMode}</span>
+                    {group.purchaseMode && <span>Purchase Mode: {group.purchaseMode}</span>}
                     <span>Total: {groupTotal.toLocaleString()}</span>
                   </div>
                 </div>

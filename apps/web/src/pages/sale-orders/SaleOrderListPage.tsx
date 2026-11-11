@@ -184,15 +184,20 @@ export function SaleOrderListPage() {
               </Link>
             ),
           },
-          {
-            key: 'distributor',
-            header: 'Distributors',
-            render: (so) => {
-              const names = so.distributors.map((d) => d.name);
-              if (names.length <= 2) return names.join(', ');
-              return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
-            },
-          },
+          // ISS-075: a FACTORY_USER's rows carry no Distributors, so the column is dropped for them.
+          ...(orders.some((so) => so.distributors.length > 0)
+            ? [
+                {
+                  key: 'distributor',
+                  header: 'Distributors',
+                  render: (so: SaleOrder) => {
+                    const names = so.distributors.map((d) => d.name);
+                    if (names.length <= 2) return names.join(', ');
+                    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+                  },
+                },
+              ]
+            : []),
           { key: 'factory', header: 'Factory', render: (so) => so.factory.name },
           { key: 'soDate', header: 'Date', render: (so) => formatDate(so.soDate) },
           {

@@ -25,6 +25,7 @@ function makeViewModel(rows: PackingAuditListPdfRow[]): PackingAuditListPdfViewM
     generatedAt: '2026-09-15T10:00:00Z',
     generatedBy: 'Test QA User',
     totalCount: rows.length,
+    showDistributors: true,
     rows,
   };
 }

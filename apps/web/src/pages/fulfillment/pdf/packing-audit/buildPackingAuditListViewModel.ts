@@ -11,6 +11,7 @@ export interface PackingAuditListPdfRow {
   id: string;
   saleOrderNumber: string;
   factoryName: string;
+  /** ISS-075: empty when the API sent no Distributor (QA reader) — the column is then omitted. */
   distributorName: string;
   destinationLabel: string;
   cartonNumber: string;
@@ -24,6 +25,7 @@ export interface PackingAuditListPdfViewModel {
   generatedAt: string;
   generatedBy?: string | null;
   totalCount: number;
+  showDistributors: boolean;
   rows: PackingAuditListPdfRow[];
 }
 
@@ -45,7 +47,7 @@ export function buildPackingAuditListViewModel(
     id: item.id,
     saleOrderNumber: item.saleOrder.saleOrderNumber,
     factoryName: item.factory.name,
-    distributorName: item.destination.distributor.name,
+    distributorName: item.destination.distributor?.name ?? '',
     destinationLabel: packingAuditDestinationLabel(item.destination),
     cartonNumber: item.cartonNumber,
     totalQuantity: item.totalQuantity,
@@ -58,6 +60,7 @@ export function buildPackingAuditListViewModel(
     generatedAt: meta.generatedAt,
     generatedBy: meta.generatedBy,
     totalCount: rows.length,
+    showDistributors: items.some((item) => item.destination.distributor),
     rows,
   };
 }

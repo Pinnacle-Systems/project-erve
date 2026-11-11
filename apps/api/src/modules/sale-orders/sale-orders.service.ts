@@ -1,4 +1,10 @@
-import { canMutateDispatchOrders, canViewDispatchOrderAudit, canViewUnscopedDispatchOrders, createId } from '@erve/shared';
+import {
+  canMutateDispatchOrders,
+  canViewDispatchOrderAudit,
+  canViewDistributorIdentityInFactoryFlows,
+  canViewUnscopedDispatchOrders,
+  createId,
+} from '@erve/shared';
 import { createHash } from 'node:crypto';
 import { Prisma, prisma } from '../../db/prisma.js';
 import type { DistributorStatus, FactoryStatus, PurchaseMode } from '../../db/prisma.js';
@@ -10,7 +16,7 @@ import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { getAvailableQuantities, getEligibleQaReleaseLinesForPool, getPooledFactoryInventory } from '../job-orders/pooled-inventory.service.js';
-import { computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
+import { clampFulfillmentForReader, computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
 import { staffRefForReader } from '../fulfillment/staff-identity.js';
 import { buildPackingListProjection, hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
 import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
@@ -72,14 +78,17 @@ type SODestinationRecord = SOGroupRecord['destinations'][number];
 // snapshotted (live-joined via `distributor` instead), matching the only
 // other snapshot precedent in this codebase
 // (DistributorPurchaseOrder.purchaseMode).
-function toDestinationView(destination: SODestinationRecord, canMoveDistributor: boolean) {
+// ISS-075: `gstin` (its PAN segment names the legal entity) and `contactEmail` (its domain
+// usually names the company) are not needed to pack or dispatch, so readers that may not
+// identify the Distributor never receive them. See factory-flow-confidentiality.ts.
+function toDestinationView(destination: SODestinationRecord, canMoveDistributor: boolean, identified: boolean) {
   return {
     id: destination.id,
     retailStoreId: destination.retailStoreId,
     storeCode: destination.storeCode,
     label: destination.label,
     contactName: destination.contactName,
-    contactEmail: destination.contactEmail,
+    ...(identified ? { contactEmail: destination.contactEmail } : {}),
     contactPhone: destination.contactPhone,
     addressLine1: destination.addressLine1,
     addressLine2: destination.addressLine2,
@@ -87,7 +96,7 @@ function toDestinationView(destination: SODestinationRecord, canMoveDistributor:
     state: destination.state,
     country: destination.country,
     postalCode: destination.postalCode,
-    gstin: destination.gstin,
+    ...(identified ? { gstin: destination.gstin } : {}),
     canMoveDistributor,
   };
 }
@@ -145,12 +154,19 @@ async function computeCanMoveDistributor(
   return result;
 }
 
+// `internalReader` is the ISS-075 "may identify Distributors" decision (ADMIN / MERCHANDISER /
+// SENIOR_MANAGEMENT / ACCOUNTANT, canViewDistributorIdentityInFactoryFlows). A FACTORY_USER gets the same
+// quantities, Styles, Sizes and destinations, but no Distributor identity, Purchase Mode,
+// destination GSTIN/e-mail, staff e-mail, or downstream (Erve dispatch / delivery) progress.
 async function toSaleOrderView(order: SORecord, internalReader: boolean) {
   const isLocked = await isDispatchOrderLocked(prisma, order.id);
-  const fulfillment = await computeDispatchOrderFulfillment(
-    prisma,
-    order.id,
-    order.lines.map((line) => ({ quantity: line.quantity })),
+  const fulfillment = clampFulfillmentForReader(
+    await computeDispatchOrderFulfillment(
+      prisma,
+      order.id,
+      order.lines.map((line) => ({ quantity: line.quantity })),
+    ),
+    internalReader,
   );
 
   const allDestinationIds = order.distributorGroups.flatMap((g) => g.destinations.map((d) => d.id));
@@ -165,20 +181,36 @@ async function toSaleOrderView(order: SORecord, internalReader: boolean) {
     linesByDestinationId.set(line.destinationId, list);
   }
 
-  const distributorGroups = order.distributorGroups.map((group) => ({
-    id: group.id,
-    distributor: { id: group.distributor.id, code: group.distributor.code, name: group.distributor.name },
-    purchaseMode: group.purchaseMode,
-    destinations: group.destinations.map((d) => toDestinationView(d, canMove(d.id))),
-    lines: group.destinations.flatMap((d) => linesByDestinationId.get(d.id) ?? []),
-  }));
+  // Restricted readers get ONE neutral group holding every destination: grouping destinations by
+  // owner would itself disclose which stores belong to the same (unnamed) Distributor.
+  const distributorGroups = internalReader
+    ? order.distributorGroups.map((group) => ({
+        id: group.id,
+        distributor: { id: group.distributor.id, code: group.distributor.code, name: group.distributor.name },
+        purchaseMode: group.purchaseMode,
+        destinations: group.destinations.map((d) => toDestinationView(d, canMove(d.id), true)),
+        lines: group.destinations.flatMap((d) => linesByDestinationId.get(d.id) ?? []),
+      }))
+    : [
+        {
+          id: order.id,
+          distributor: null,
+          purchaseMode: null,
+          destinations: order.distributorGroups.flatMap((group) =>
+            group.destinations.map((d) => toDestinationView(d, canMove(d.id), false)),
+          ),
+          lines,
+        },
+      ];
 
-  const distributors = order.distributorGroups.map((g) => ({
-    id: g.distributor.id,
-    code: g.distributor.code,
-    name: g.distributor.name,
-    purchaseMode: g.purchaseMode,
-  }));
+  const distributors = internalReader
+    ? order.distributorGroups.map((g) => ({
+        id: g.distributor.id,
+        code: g.distributor.code,
+        name: g.distributor.name,
+        purchaseMode: g.purchaseMode,
+      }))
+    : [];
 
   return {
     id: order.id,
@@ -785,7 +817,7 @@ export async function getSaleOrderList(
   const hasMore = orders.length > filters.limit;
   const page = hasMore ? orders.slice(0, filters.limit) : orders;
   return {
-    items: await Promise.all(page.map((order) => toSaleOrderView(order, canViewAllDispatchOrders(user)))),
+    items: await Promise.all(page.map((order) => toSaleOrderView(order, canViewDistributorIdentityInFactoryFlows(user)))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }
@@ -834,7 +866,7 @@ export async function getSaleOrderDetail(user: CurrentUser, id: string) {
   const order = await prisma.saleOrder.findUnique({ where: { id }, include: soInclude });
   if (!order) throw HttpError.notFound('Dispatch order not found');
   assertDispatchOrderViewAccess(user, order);
-  return toSaleOrderView(order, canViewAllDispatchOrders(user));
+  return toSaleOrderView(order, canViewDistributorIdentityInFactoryFlows(user));
 }
 
 // Phase 4: the Factory Packing List is readable the moment a Dispatch Order
@@ -850,7 +882,7 @@ export async function getDispatchOrderPackingList(user: CurrentUser, id: string)
   const order = await prisma.saleOrder.findUnique({ where: { id }, select: { id: true, factoryId: true } });
   if (!order) throw HttpError.notFound('Dispatch order not found');
   assertDispatchOrderViewAccess(user, order);
-  return buildPackingListProjection(order);
+  return buildPackingListProjection(order, canViewDistributorIdentityInFactoryFlows(user));
 }
 
 const DISPATCH_ORDER_AUDIT_TITLES: Record<string, string> = {

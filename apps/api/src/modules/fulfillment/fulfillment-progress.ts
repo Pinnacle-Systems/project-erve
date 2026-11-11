@@ -98,3 +98,19 @@ export async function computeDispatchOrderFulfillment(
 
   return { stage, totalQuantity, totalFactoryPackedQuantity };
 }
+
+// ISS-075: the Factory's own operational stages end at FACTORY_DISPATCHED. ERVE_DISPATCHED and
+// DELIVERED describe what happened to the goods after they left the Factory (Erve's dispatch to,
+// and the Distributor's receipt of, the stock), which a Factory must not learn about. Readers that
+// may not identify Distributors (see canViewDistributorIdentityInFactoryFlows) therefore see those
+// two stages collapsed into FACTORY_DISPATCHED.
+export function clampFulfillmentForReader(
+  summary: DispatchOrderFulfillmentSummary,
+  internalReader: boolean,
+): DispatchOrderFulfillmentSummary {
+  if (internalReader) return summary;
+  if (summary.stage === 'ERVE_DISPATCHED' || summary.stage === 'DELIVERED') {
+    return { ...summary, stage: 'FACTORY_DISPATCHED' };
+  }
+  return summary;
+}

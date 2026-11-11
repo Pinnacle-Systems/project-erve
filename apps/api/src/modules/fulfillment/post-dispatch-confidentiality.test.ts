@@ -27,6 +27,7 @@ import {
   createFactoryUserToken,
   createRoleToken,
   createSingleFactoryApprovedSaleOrder,
+  ensureStyleFactoryRate,
   packAndFinalize,
 } from './fulfillment-test-helpers.js';
 
@@ -62,6 +63,15 @@ type Side = {
   factoryName: string;
   factoryCode: string;
   storeAddress: string;
+  // ISS-075: destination fields a Factory legitimately keeps (store label/code/contact) and the two
+  // that identify the counterparty indirectly and are withheld from it (GSTIN, contact e-mail).
+  destinationId: string;
+  storeLabel: string;
+  storeCode: string;
+  contactName: string;
+  contactPhone: string;
+  storeEmail: string;
+  storeGstin: string;
   returnId: string;
   salesReportId: string;
   handoffId: string;
@@ -103,13 +113,26 @@ async function buildSide(
     data: { name: factoryName, code: factoryCode },
   });
   const storeAddress = `ZZ-${tag}-SECRET-STREET`;
+  const storeEmail = `zz-${tag.toLowerCase()}-contact@zz${tag.toLowerCase()}-corp.example`;
+  const storeGstin = `ZZGST${tag}0001`;
+  const contactName = `ZZ ${tag} Store Manager`;
+  const contactPhone = `+91-ZZ-${tag}-0001`;
   await prisma.retailStore.updateMany({
     where: { distributorId },
     data: { addressLine1: storeAddress },
   });
   await prisma.saleOrderDestination.updateMany({
     where: { saleOrderDistributor: { distributorId } },
-    data: { addressLine1: storeAddress },
+    data: {
+      addressLine1: storeAddress,
+      contactEmail: storeEmail,
+      gstin: storeGstin,
+      contactName,
+      contactPhone,
+    },
+  });
+  const destination = await prisma.saleOrderDestination.findFirstOrThrow({
+    where: { saleOrderDistributor: { distributorId } },
   });
 
   const factoryToken = await createFactoryUserToken(factoryId);
@@ -255,6 +278,13 @@ async function buildSide(
     factoryName,
     factoryCode,
     storeAddress,
+    destinationId: destination.id,
+    storeLabel: destination.label!,
+    storeCode: destination.storeCode!,
+    contactName,
+    contactPhone,
+    storeEmail,
+    storeGstin,
     returnId: ret.body.data.id,
     salesReportId: sale.body.data.id,
     handoffId: handoff.id,
@@ -1104,5 +1134,557 @@ describe('Authorized internal roles keep their access (regression guard against 
       .set(auth(accountantToken))
       .send({ action: 'revoke', reason: 'x', expectedTokenId: 'x' });
     expect(res.status).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// ISS-075 correction — Factory-facing documents must not identify the Distributor (and the
+// Distributor-facing ones must not identify the Factory: asserted above), in BOTH directions.
+//
+// What a Factory legitimately keeps (needed to pack and dispatch): destination id, Store label,
+// Store code/id, address, contact name/phone, Styles, Sizes, quantities, cartons, Dispatch Order
+// and Factory Dispatch numbers. What it never receives: the Distributor's id/code/name, Purchase
+// Mode, destination GSTIN (its PAN segment names the legal entity), destination contact e-mail
+// (its domain names the company), Erve dispatch / delivery progress, or staff e-mail.
+// ---------------------------------------------------------------------------------------------
+
+// Keys whose presence (with a non-null value) in a restricted-reader response is itself a
+// disclosure, independent of whether the value happens to match a marker string. The neutral
+// Dispatch Order group deliberately carries `purchaseMode: null`, which discloses nothing.
+const DISTRIBUTOR_KEYS = [
+  'purchaseMode',
+  'distributorId',
+  'distributorCode',
+  'distributorName',
+  'gstin',
+  'contactEmail',
+];
+
+function structuralLeaks(value: unknown, path = '$'): string[] {
+  if (Array.isArray(value)) return value.flatMap((v, i) => structuralLeaks(v, `${path}[${i}]`));
+  if (value === null || typeof value !== 'object') return [];
+  const leaks: string[] = [];
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (DISTRIBUTOR_KEYS.includes(key) && child !== undefined && child !== null)
+      leaks.push(`${path}.${key}`);
+    if (key === 'distributor' && child !== null && child !== undefined) leaks.push(`${path}.${key}`);
+    if (key === 'distributors' && Array.isArray(child) && child.length > 0)
+      leaks.push(`${path}.${key}`);
+    leaks.push(...structuralLeaks(child, `${path}.${key}`));
+  }
+  return leaks;
+}
+
+// Everything that names a Distributor (or its legal entity) — deliberately excludes the Store
+// address, label, code and contact name/phone, which a Factory keeps.
+const distributorMarkers = (s: Side) => [
+  s.distributorName,
+  s.distributorCode,
+  s.distributorId,
+  s.storeEmail,
+  s.storeGstin,
+];
+
+type Snap = { surface: string; status: number; text: string; body: unknown };
+const snap = (surface: string, res: request.Response): Snap => ({
+  surface,
+  status: res.status,
+  text: JSON.stringify(res.body ?? null),
+  body: res.body,
+});
+
+function expectNoDistributorIdentity(snaps: Snap[], markers: string[], label: string) {
+  expectNoneOf(snaps, markers, label);
+  expect(
+    snaps.flatMap((r) => structuralLeaks(r.body).map((p) => `${label}: ${r.surface} ${p}`)),
+  ).toEqual([]);
+}
+
+// Surfaces a Factory (or a QA inspector) may legitimately read for one Dispatch Order.
+function factoryFlowPaths(saleOrderId: string, factoryDispatchId: string) {
+  return [
+    ['dispatch order list', '/sale-orders'],
+    ['dispatch order detail', `/sale-orders/${saleOrderId}`],
+    ['dispatch order packing list', `/sale-orders/${saleOrderId}/packing-list`],
+    ['factory dispatch list', '/factory-dispatches'],
+    ['factory dispatch detail', `/factory-dispatches/${factoryDispatchId}`],
+    ['packing queue', '/factory-dispatches/packing-queue'],
+  ] as const;
+}
+
+async function readAll(token: string, paths: ReadonlyArray<readonly [string, string]>) {
+  const out: Snap[] = [];
+  for (const [surface, path] of paths) out.push(snap(surface, await get(token, path)));
+  return out;
+}
+
+describe.each([
+  ['A', () => A],
+  ['B', () => B],
+] as const)('ISS-075 FACTORY_USER %s cannot identify either Distributor', (name, side) => {
+  it('receives no Distributor identity, Purchase Mode, GSTIN or contact e-mail from any Factory-facing read', async () => {
+    const own = side();
+    const foreign = other(own);
+    const flow = await readAll(
+      own.factoryToken,
+      factoryFlowPaths(own.saleOrderId, own.factoryDispatchId),
+    );
+    const responses = [
+      ...flow,
+      ...(await readAll(own.factoryToken, factoryFlowPaths(foreign.saleOrderId, foreign.factoryDispatchId))),
+      ...(await readAll(own.factoryToken, surfaces(own))),
+      ...(await readAll(own.factoryToken, surfaces(foreign))),
+    ];
+    // Not vacuous: the Factory's own Dispatch Order / packing list / Factory Dispatch are served.
+    for (const r of flow) expect(r.status, r.surface).toBe(200);
+    expectNoDistributorIdentity(
+      responses,
+      [...distributorMarkers(A), ...distributorMarkers(B)],
+      `FACTORY_USER ${name}`,
+    );
+  });
+
+  it('keeps every destination, Store and quantity detail needed to pack and dispatch', async () => {
+    const own = side();
+    const t = own.factoryToken;
+    const detail = (await get(t, `/sale-orders/${own.saleOrderId}`).expect(200)).body.data;
+    // One neutral group holding the destination; no per-Distributor grouping.
+    expect(detail.distributors).toEqual([]);
+    expect(detail.distributorGroups).toHaveLength(1);
+    expect(detail.distributorGroups[0].distributor).toBeNull();
+    expect(detail.distributorGroups[0].purchaseMode).toBeNull();
+    const dest = detail.distributorGroups[0].destinations[0];
+    expect(dest).toMatchObject({
+      id: own.destinationId,
+      label: own.storeLabel,
+      storeCode: own.storeCode,
+      retailStoreId: own.retailStoreId,
+      addressLine1: own.storeAddress,
+      contactName: own.contactName,
+      contactPhone: own.contactPhone,
+    });
+    expect(dest).not.toHaveProperty('gstin');
+    expect(dest).not.toHaveProperty('contactEmail');
+    expect(detail.distributorGroups[0].lines).toHaveLength(1);
+    expect(detail.distributorGroups[0].lines[0]).toMatchObject({
+      destinationId: own.destinationId,
+      quantity: 40,
+      styleId: own.styleId,
+      sizeId: own.sizeId,
+    });
+    expect(detail.totalQuantity).toBe(40);
+
+    const packing = (await get(t, `/sale-orders/${own.saleOrderId}/packing-list`).expect(200)).body
+      .data;
+    expect(packing.distributors).toEqual([]);
+    expect(packing.destinations[0]).toMatchObject({
+      id: own.destinationId,
+      label: own.storeLabel,
+      storeCode: own.storeCode,
+      addressLine1: own.storeAddress,
+      contactName: own.contactName,
+      contactPhone: own.contactPhone,
+    });
+    expect(packing.destinations[0]).not.toHaveProperty('distributor');
+    expect(packing.destinations[0].lines[0]).toMatchObject({
+      requiredQuantity: 40,
+      packedQuantity: 40,
+    });
+    const carton = packing.destinations[0].cartons[0];
+    expect(carton).toMatchObject({ id: own.cartonId, totalQuantity: 40, auditState: 'INSPECTED' });
+    // Erve's QA operator name stays visible on the carton audit history (it is not a counterparty).
+    expect(carton.auditHistory[0].inspectedByName).toBeTruthy();
+
+    const list = (await get(t, '/factory-dispatches').expect(200)).body.data.items;
+    expect(list).toHaveLength(1);
+    expect(list[0].saleOrder.distributors).toEqual([]);
+    expect(list[0].saleOrder.saleOrderNumber).toBe(own.saleOrderNumber);
+  });
+
+  it("shows only the Factory's own stages — never Erve dispatch or the Distributor's delivery", async () => {
+    const own = side();
+    // The Dispatch Order was dispatched by Erve and confirmed delivered to the Distributor.
+    const internal = await get(merchToken, `/sale-orders/${own.saleOrderId}`).expect(200);
+    expect(internal.body.data.fulfillment.stage).toBe('DELIVERED');
+    const detail = await get(own.factoryToken, `/sale-orders/${own.saleOrderId}`).expect(200);
+    expect(detail.body.data.fulfillment.stage).toBe('FACTORY_DISPATCHED');
+    expect(detail.body.data.fulfillment.totalFactoryPackedQuantity).toBe(40);
+    const list = await get(own.factoryToken, '/sale-orders').expect(200);
+    expect(
+      list.body.data.items.map((i: { fulfillment: { stage: string } }) => i.fulfillment.stage),
+    ).toEqual(['FACTORY_DISPATCHED']);
+    expect(bodyText(detail)).not.toMatch(/DELIVERED|ERVE_DISPATCHED/);
+  });
+
+  it('prepares a carton label source with the destination but without any Distributor identity', async () => {
+    const own = side();
+    const carton = await prisma.factoryPackingCarton.findUniqueOrThrow({
+      where: { id: own.cartonId },
+    });
+    const res = await request(app)
+      .post(`/carton-delivery/labels/${own.cartonId}/prepare`)
+      .set(auth(own.factoryToken))
+      .send({ expectedVersion: carton.version })
+      .expect(200);
+    const source = res.body.data.source;
+    expect(source.destination).toMatchObject({
+      id: own.destinationId,
+      label: own.storeLabel,
+      addressLine1: own.storeAddress,
+      contactName: own.contactName,
+      contactPhone: own.contactPhone,
+    });
+    expect(source.carton).toMatchObject({ id: own.cartonId, totalQuantity: 40 });
+    expectNoDistributorIdentity(
+      [snap('label source', res)],
+      [...distributorMarkers(A), ...distributorMarkers(B)],
+      `label ${name}`,
+    );
+  });
+});
+
+describe('ISS-075 authorized internal readers keep the full Distributor picture', () => {
+  it.each([
+    ['ADMIN', () => adminToken],
+    ['MERCHANDISER', () => merchToken],
+    ['SENIOR_MANAGEMENT', () => seniorToken],
+    ['ACCOUNTANT', () => accountantToken],
+  ] as const)(
+    '%s sees Distributor, Purchase Mode, GSTIN and contact e-mail on Dispatch Orders',
+    async (_role, token) => {
+      const detail = (await get(token(), `/sale-orders/${A.saleOrderId}`).expect(200)).body.data;
+      expect(detail.distributors).toEqual([
+        expect.objectContaining({
+          id: A.distributorId,
+          code: A.distributorCode,
+          name: A.distributorName,
+          purchaseMode: 'SALE_RETURN',
+        }),
+      ]);
+      expect(detail.distributorGroups[0]).toMatchObject({
+        distributor: { id: A.distributorId, code: A.distributorCode, name: A.distributorName },
+        purchaseMode: 'SALE_RETURN',
+      });
+      expect(detail.distributorGroups[0].destinations[0]).toMatchObject({
+        gstin: A.storeGstin,
+        contactEmail: A.storeEmail,
+      });
+      expect(detail.fulfillment.stage).toBe('DELIVERED');
+      const list = await get(token(), '/sale-orders').expect(200);
+      expect(bodyText(list)).toContain(A.distributorName);
+      expect(bodyText(list)).toContain(B.distributorName);
+    },
+  );
+
+  it.each([
+    ['ADMIN', () => adminToken],
+    ['MERCHANDISER', () => merchToken],
+    ['SENIOR_MANAGEMENT', () => seniorToken],
+  ] as const)(
+    '%s sees the Distributor on the packing list and Factory Dispatch list',
+    async (_role, token) => {
+      const packing = (await get(token(), `/sale-orders/${A.saleOrderId}/packing-list`).expect(200))
+        .body.data;
+      expect(packing.distributors).toEqual([
+        { id: A.distributorId, code: A.distributorCode, name: A.distributorName },
+      ]);
+      expect(packing.destinations[0].distributor.name).toBe(A.distributorName);
+      expect(packing.destinations[0]).toMatchObject({
+        gstin: A.storeGstin,
+        contactEmail: A.storeEmail,
+      });
+      const detail = await get(token(), `/factory-dispatches/${A.factoryDispatchId}`).expect(200);
+      expect(detail.body.data.destinations[0].distributor.code).toBe(A.distributorCode);
+      const dispatches = await get(token(), '/factory-dispatches').expect(200);
+      expect(bodyText(dispatches)).toContain(A.distributorName);
+    },
+  );
+});
+
+describe('ISS-075 Factory packing flow end to end, with a Factory that never learns the Distributor', () => {
+  type Flow = {
+    factoryId: string;
+    distributorId: string;
+    distributorName: string;
+    distributorCode: string;
+    storeEmail: string;
+    storeGstin: string;
+    saleOrderId: string;
+    saleOrderNumber: string;
+    saleOrderLineId: string;
+    styleId: string;
+    destinationId: string;
+    storeLabel: string;
+    storeCode: string;
+    storeAddress: string;
+    factoryToken: string;
+    factoryQaToken: string;
+    factoryDistributorToken: string;
+    qaToken: string;
+    cartonId?: string;
+    factoryDispatchId?: string;
+  };
+  let C: Flow;
+  const payloads: Record<string, unknown> = {};
+  const record = (name: string, res: request.Response) => {
+    payloads[name] = res.body;
+  };
+
+  beforeAll(async () => {
+    const fx = await createSingleFactoryApprovedSaleOrder(app, 30, 'SALE_RETURN');
+    const distributorId = fx.stock.distributorId;
+    const factoryId = fx.stock.factoryId;
+    const distributorName = 'ZZ-DIST-CHARLIE-NAME';
+    const distributorCode = 'ZZDISTCHARLIE';
+    await prisma.distributor.update({
+      where: { id: distributorId },
+      data: { name: distributorName, code: distributorCode },
+    });
+    await prisma.factory.update({
+      where: { id: factoryId },
+      data: { name: 'ZZ-FACTORY-CHARLIE-NAME', code: 'ZZFACCHARLIE' },
+    });
+    const storeAddress = 'ZZ-CHARLIE-SECRET-STREET';
+    const storeEmail = 'zz-charlie-contact@zzcharlie-corp.example';
+    const storeGstin = 'ZZGSTCHARLIE0001';
+    await prisma.saleOrderDestination.updateMany({
+      where: { saleOrderDistributor: { distributorId } },
+      data: {
+        addressLine1: storeAddress,
+        contactEmail: storeEmail,
+        gstin: storeGstin,
+        contactName: 'ZZ Charlie Store Manager',
+        contactPhone: '+91-ZZ-CHARLIE-0001',
+      },
+    });
+    const destination = await prisma.saleOrderDestination.findFirstOrThrow({
+      where: { saleOrderDistributor: { distributorId } },
+    });
+    const factoryToken = await createFactoryUserToken(factoryId);
+    const factoryQa = await createTestUserAndToken({
+      email: `factory-qa-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['FACTORY_USER', 'QA_USER'],
+    });
+    await prisma.userFactory.create({
+      data: { id: createId(), userId: factoryQa.userId, factoryId },
+    });
+    // The account that spans BOTH counterparties: mapped to this Factory and to this Distributor.
+    const both = await createTestUserAndToken({
+      email: `factory-dist-${createId()}@test.local`,
+      password: 'pass',
+      roles: ['FACTORY_USER', 'DISTRIBUTOR'],
+    });
+    await prisma.userFactory.create({ data: { id: createId(), userId: both.userId, factoryId } });
+    await prisma.userDistributor.create({
+      data: { id: createId(), userId: both.userId, distributorId },
+    });
+    const qa = await createRoleToken('QA_USER');
+    C = {
+      factoryId,
+      distributorId,
+      distributorName,
+      distributorCode,
+      storeEmail,
+      storeGstin,
+      saleOrderId: fx.saleOrder.id,
+      saleOrderNumber: fx.saleOrder.saleOrderNumber,
+      saleOrderLineId: fx.saleOrderLineId,
+      styleId: fx.stock.styleId,
+      destinationId: destination.id,
+      storeLabel: destination.label!,
+      storeCode: destination.storeCode!,
+      storeAddress,
+      factoryToken,
+      factoryQaToken: factoryQa.token,
+      factoryDistributorToken: both.token,
+      qaToken: qa.token,
+    };
+  }, 60_000);
+
+  const cMarkers = () => [
+    C.distributorName,
+    C.distributorCode,
+    C.distributorId,
+    C.storeEmail,
+    C.storeGstin,
+    ...distributorMarkers(A),
+    ...distributorMarkers(B),
+  ];
+
+  it('lists the packing queue by destination; internal readers also get the Distributor', async () => {
+    const res = await get(C.factoryToken, '/factory-dispatches/packing-queue').expect(200);
+    record('packing-queue.factory', res);
+    expect(res.body.data.items).toHaveLength(1);
+    const item = res.body.data.items[0];
+    expect(item).toMatchObject({
+      saleOrderId: C.saleOrderId,
+      remainingQuantity: 30,
+      destination: { id: C.destinationId, label: C.storeLabel, storeCode: C.storeCode },
+    });
+    expect(item.destination.city).toBeTruthy();
+    expect(item).not.toHaveProperty('distributor');
+    expectNoDistributorIdentity([snap('packing queue', res)], cMarkers(), 'C');
+
+    for (const token of [adminToken, merchToken, seniorToken]) {
+      const internal = await get(
+        token,
+        `/factory-dispatches/packing-queue?factoryId=${C.factoryId}`,
+      ).expect(200);
+      expect(internal.body.data.items[0].distributor).toEqual({
+        id: C.distributorId,
+        code: C.distributorCode,
+        name: C.distributorName,
+      });
+      expect(internal.body.data.items[0].destination.id).toBe(C.destinationId);
+    }
+  });
+
+  it('lets the Factory pack a carton using only identifiers from its own neutral responses', async () => {
+    const packing = await get(C.factoryToken, `/sale-orders/${C.saleOrderId}/packing-list`).expect(
+      200,
+    );
+    record('packing-list.factory.before', packing);
+    const dest = packing.body.data.destinations[0];
+    const created = await request(app)
+      .post(`/sale-orders/${C.saleOrderId}/packing-list/cartons`)
+      .set(auth(C.factoryToken))
+      .send({
+        cartonNumber: 'CC1',
+        destinationId: dest.id,
+        netWeight: 5,
+        grossWeight: 6,
+        dimensions: '40 x 30 x 20 cm',
+        lines: [{ saleOrderLineId: dest.lines[0].saleOrderLineId, quantity: 30 }],
+      })
+      .expect(200);
+    record('packing-list.factory.after-pack', created);
+    C.cartonId = created.body.data.destinations[0].cartons[0].id;
+    C.factoryDispatchId = created.body.data.factoryDispatch.id;
+    expect(created.body.data.destinations[0].cartons[0].totalQuantity).toBe(30);
+    expect(created.body.data.destinations[0].lines[0].packedQuantity).toBe(30);
+    expectNoDistributorIdentity(
+      [snap('packing list before', packing), snap('create carton', created)],
+      cMarkers(),
+      'C pack',
+    );
+    expect(
+      (await get(C.factoryToken, '/factory-dispatches/packing-queue').expect(200)).body.data.items,
+    ).toEqual([]);
+    const draft = await get(C.factoryToken, '/factory-dispatches').expect(200);
+    record('factory-dispatch-list.factory', draft);
+    expectNoDistributorIdentity([snap('draft list', draft)], cMarkers(), 'C');
+    record('dispatch-order.factory', await get(C.factoryToken, `/sale-orders/${C.saleOrderId}`));
+    record('dispatch-order-list.factory', await get(C.factoryToken, '/sale-orders'));
+  });
+
+  it('shows the QA inspector the carton and destination, never the Distributor — and still lets it audit', async () => {
+    const queue = await get(C.qaToken, '/packing-audit/queue').expect(200);
+    record('packing-audit-queue.qa', queue);
+    const item = queue.body.data.items.find((i: { id: string }) => i.id === C.cartonId);
+    expect(item).toBeTruthy();
+    expect(item.destination).toMatchObject({ id: C.destinationId, label: C.storeLabel });
+    expect(item.destination.city).toBeTruthy();
+    expect(item.destination).not.toHaveProperty('distributor');
+    const detail = await get(C.qaToken, `/packing-audit/cartons/${C.cartonId}`).expect(200);
+    record('packing-audit-carton.qa', detail);
+    expectNoDistributorIdentity(
+      [snap('audit queue', queue), snap('audit detail', detail)],
+      cMarkers(),
+      'QA',
+    );
+    // Internal oversight (ADMIN) keeps the Distributor on the same documents.
+    const adminQueue = await get(adminToken, '/packing-audit/queue').expect(200);
+    const adminItem = adminQueue.body.data.items.find((i: { id: string }) => i.id === C.cartonId);
+    expect(adminItem.destination.distributor).toEqual({
+      id: C.distributorId,
+      code: C.distributorCode,
+      name: C.distributorName,
+    });
+    const adminDetail = await get(adminToken, `/packing-audit/cartons/${C.cartonId}`).expect(200);
+    expect(adminDetail.body.data.destination.distributor.name).toBe(C.distributorName);
+
+    const confirmed = await request(app)
+      .post(`/factory-dispatches/${C.factoryDispatchId}/cartons/${C.cartonId}/audit`)
+      .set(auth(C.qaToken))
+      .send({})
+      .expect(200);
+    record('packing-audit-confirm.qa', confirmed);
+    expectNoDistributorIdentity([snap('audit confirm', confirmed)], cMarkers(), 'QA confirm');
+  });
+
+  it('does not let a mixed-role account bypass the restriction', async () => {
+    // FACTORY_USER + QA_USER: the cross-Factory audit surface must not become a Distributor lookup.
+    // FACTORY_USER + DISTRIBUTOR: its Factory-side reads stay neutral even though it is also mapped
+    // to this very Distributor, and its Distributor-side reads show no Factory identity.
+    for (const [label, token] of [
+      ['FACTORY_USER+QA_USER', C.factoryQaToken],
+      ['FACTORY_USER+DISTRIBUTOR', C.factoryDistributorToken],
+    ] as const) {
+      const responses = await readAll(token, [
+        ...factoryFlowPaths(C.saleOrderId, C.factoryDispatchId!),
+        ['packing audit queue', '/packing-audit/queue'],
+        ['packing audit carton', `/packing-audit/cartons/${C.cartonId}`],
+      ]);
+      expectNoDistributorIdentity(responses, cMarkers(), label);
+    }
+    const both = await get(C.factoryDistributorToken, '/erve-dispatches').expect(200);
+    expectNoneOf(
+      [snap('distributor side', both)],
+      [
+        ...factoryIdentities(A),
+        ...factoryIdentities(B),
+        'ZZ-FACTORY-CHARLIE-NAME',
+        'ZZFACCHARLIE',
+        C.factoryId,
+      ],
+      'FACTORY_USER+DISTRIBUTOR',
+    );
+  });
+
+  it('finalizes, prepares a label and exposes no Distributor identity or downstream state', async () => {
+    const fd = await prisma.factoryDispatch.findUniqueOrThrow({
+      where: { id: C.factoryDispatchId! },
+    });
+    await ensureStyleFactoryRate(C.styleId, C.factoryId);
+    const finalized = await request(app)
+      .post(`/factory-dispatches/${C.factoryDispatchId}/actions/finalize`)
+      .set(auth(C.factoryToken))
+      .send({ expectedVersion: fd.version })
+      .expect(200);
+    record('finalize.factory', finalized);
+    expectNoDistributorIdentity([snap('finalize', finalized)], cMarkers(), 'C');
+
+    const carton = await prisma.factoryPackingCarton.findUniqueOrThrow({
+      where: { id: C.cartonId! },
+    });
+    const label = await request(app)
+      .post(`/carton-delivery/labels/${C.cartonId}/prepare`)
+      .set(auth(C.factoryToken))
+      .send({ expectedVersion: carton.version })
+      .expect(200);
+    record('carton-label-source.factory', label);
+    expect(label.body.data.source.destination).toMatchObject({
+      id: C.destinationId,
+      label: C.storeLabel,
+      addressLine1: C.storeAddress,
+    });
+    expectNoDistributorIdentity([snap('label source', label)], cMarkers(), 'C');
+
+    const so = await get(C.factoryToken, `/sale-orders/${C.saleOrderId}`).expect(200);
+    expect(so.body.data.fulfillment.stage).toBe('FACTORY_DISPATCHED');
+    expect(so.body.data.isLocked).toBe(true);
+
+    const dir = process.env.ISS075_PAYLOAD_DIR;
+    if (dir) {
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      await mkdir(dir, { recursive: true });
+      // Internal views of the same records, for side-by-side rendered-PDF inspection.
+      record('packing-list.merchandiser', await get(merchToken, `/sale-orders/${C.saleOrderId}/packing-list`));
+      record('dispatch-order.merchandiser', await get(merchToken, `/sale-orders/${C.saleOrderId}`));
+      record('dispatch-order-list.merchandiser', await get(merchToken, '/sale-orders'));
+      record('packing-audit-carton.admin', await get(adminToken, `/packing-audit/cartons/${C.cartonId}`));
+      await writeFile(`${dir}/payloads.json`, JSON.stringify(payloads, null, 2));
+    }
   });
 });

@@ -285,6 +285,26 @@ export function canViewUnscopedDispatchOrders(user: RoleHolder): boolean {
   return hasAnyRole(user, DISPATCH_ORDER_UNSCOPED_VIEW_ROLES);
 }
 
+/**
+ * ISS-075: which readers of Factory-side documents (Dispatch Order, Factory
+ * Packing List, Factory Dispatch, Packing Queue, Packing Audit, carton label
+ * source) may learn WHICH Distributor a destination belongs to and its
+ * Purchase Mode. Everyone else — FACTORY_USER, and QA_USER on the Packing
+ * Audit surface — gets neutral, destination-scoped data: a Factory must not
+ * be able to identify the Distributor it is packing for.
+ *
+ * This is an allow-list of internal commercial roles, not a "not a Factory
+ * user" test, so a role added later (or an account holding FACTORY_USER plus
+ * a non-commercial role such as QA_USER) defaults to the restricted view.
+ * Accounts that also hold one of these internal roles keep the union of their
+ * permissions, exactly as for every other RBAC decision in this codebase.
+ */
+export const DISTRIBUTOR_IDENTITY_FACTORY_FLOW_ROLES = DISPATCH_ORDER_UNSCOPED_VIEW_ROLES;
+
+export function canViewDistributorIdentityInFactoryFlows(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISTRIBUTOR_IDENTITY_FACTORY_FLOW_ROLES);
+}
+
 export const DISPATCH_ORDER_AUDIT_VIEW_ROLES = [
   'ADMIN',
   'MERCHANDISER',
