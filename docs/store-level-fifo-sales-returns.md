@@ -44,7 +44,7 @@ For a Distributor, Sale-or-Return Style cards of **mapped** Stores get an "Actio
 
 ## Verification
 
-- API (disposable PostgreSQL): `retail-store-fifo.test.ts` (15 scenarios), `retail-store-fifo-allocation.unit.test.ts`; regression: Sales Report, Return, A6 inventory, Sale-or-Return position, A4 receipt and delivery tests.
+- API (disposable PostgreSQL): `retail-store-fifo.test.ts` (15 scenarios), `retail-store-fifo-allocation.unit.test.ts`. `distributor-sales-report.test.ts` also passes locally; the other existing post-dispatch suites (Return, A6 inventory, Sale-or-Return position, A4 receipt, delivery) are left to the PR's CI run.
 - Web: `StoreFifoActions.test.tsx`, `DistributorSalesReportDetailPage.test.tsx`, `RetailStoreInventory.test.tsx`.
 - Browser (`tools/store-level-fifo/browser.mjs`, guarded to a local `fifo_browser_test` database): Distributor sale + return flows and Sales Report detail at 1440px and 375px, no page overflow; Admin sees no actions.
 
