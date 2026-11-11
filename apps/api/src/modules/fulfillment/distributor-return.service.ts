@@ -13,6 +13,7 @@ import {
 import { ensureFinancialYear } from '../master-data/financial-year.service.js';
 import { allocateDocumentSerial } from '../master-data/document-sequence.service.js';
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
+import { staffRefForReader } from './staff-identity.js';
 import { computeAvailability, getSaleOrReturnPairQuantities, saleOrReturnPositionLockKey } from './sale-or-return-quantities.js';
 
 type Tx = Prisma.TransactionClient;
@@ -74,7 +75,7 @@ function returnInclude(canReadImages: boolean) {
 
 type ReturnRecord = Prisma.DistributorReturnGetPayload<{ include: ReturnType<typeof returnInclude> }>;
 
-function toReturnView(record: ReturnRecord, canReadImages: boolean) {
+function toReturnView(record: ReturnRecord, canReadImages: boolean, internalReader: boolean) {
   return {
     id: record.id,
     returnNumber: record.returnNumber,
@@ -83,18 +84,18 @@ function toReturnView(record: ReturnRecord, canReadImages: boolean) {
     status: record.status,
     returnReason: record.returnReason,
     remarks: record.remarks,
-    submittedBy: record.submittedBy,
+    submittedBy: staffRefForReader(record.submittedBy, internalReader),
     submittedAt: record.submittedAt.toISOString(),
-    approvedBy: record.approvedBy,
+    approvedBy: staffRefForReader(record.approvedBy, internalReader),
     approvedAt: record.approvedAt?.toISOString() ?? null,
     approvalRemarks: record.approvalRemarks,
     rejectionReason: record.rejectionReason,
-    receivedBy: record.receivedBy,
+    receivedBy: staffRefForReader(record.receivedBy, internalReader),
     receivedAt: record.receivedAt?.toISOString() ?? null,
     creditNoteReference: record.creditNoteReference,
     creditNoteDate: record.creditNoteDate?.toISOString() ?? null,
-    creditNoteRecordedBy: record.creditNoteRecordedBy,
-    cancelledBy: record.cancelledBy,
+    creditNoteRecordedBy: staffRefForReader(record.creditNoteRecordedBy, internalReader),
+    cancelledBy: staffRefForReader(record.cancelledBy, internalReader),
     cancelledAt: record.cancelledAt?.toISOString() ?? null,
     version: record.version,
     updatedAt: record.updatedAt.toISOString(),
@@ -133,7 +134,7 @@ export async function getDistributorReturnDetail(actor: CurrentUser, id: string)
   const canReadImages = canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
   const record = await loadReturn(id, canReadImages);
   assertViewAccess(actor, record.distributorId);
-  return toReturnView(record, canReadImages);
+  return toReturnView(record, canReadImages, isBroadViewer(actor));
 }
 
 export async function listDistributorReturns(
@@ -156,7 +157,7 @@ export async function listDistributorReturns(
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   return {
-    items: page.map((record) => toReturnView(record, false)),
+    items: page.map((record) => toReturnView(record, false, isBroadViewer(actor))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }

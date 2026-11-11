@@ -296,7 +296,7 @@ export interface SaleOrderSummary extends VersionedResource {
 }
 
 export interface SaleOrderDetail extends SaleOrderSummary {
-  creator: { id: string; name: string; email: string };
+  creator: { id: string; name: string; email?: string };
   remarks: string | null;
   /** Distributor -> destination -> line hierarchy (Correction 8 — replaces the old flat `destinations`/`lines`). */
   distributorGroups: SaleOrderDistributorGroupView[];
@@ -518,9 +518,9 @@ export interface FactoryInvoiceView extends VersionedResource {
   factoryDispatch: { id: string; factoryDispatchNumber: string };
   saleOrder: { id: string; saleOrderNumber: string };
   generatedAt: string;
-  factoryConfirmedBy: { id: string; name: string; email: string } | null;
+  factoryConfirmedBy: { id: string; name: string; email?: string } | null;
   factoryConfirmedAt: string | null;
-  finalizedBy: { id: string; name: string; email: string } | null;
+  finalizedBy: { id: string; name: string; email?: string } | null;
   finalizedAt: string | null;
   subtotal: number;
   gstAmount: number;
@@ -810,11 +810,11 @@ export interface ErveDispatchView extends VersionedResource {
   vehicleNumber: string | null;
   lrNumber: string | null;
   remarks: string | null;
-  dispatchedBy: { id: string; name: string; email: string };
+  dispatchedBy: { id: string; name: string; email?: string };
   dispatchedAt: string;
-  lrUpdatedBy: { id: string; name: string; email: string } | null;
+  lrUpdatedBy: { id: string; name: string; email?: string } | null;
   lrUpdatedAt: string | null;
-  deliveredBy: { id: string; name: string; email: string } | null;
+  deliveredBy: { id: string; name: string; email?: string } | null;
   deliveredAt: string | null;
   deliveryRemarks: string | null;
   deliveryConfirmationSource: DeliveryConfirmationSource | null;
@@ -945,18 +945,18 @@ export interface DistributorReturnView extends VersionedResource {
   status: DistributorReturnStatus;
   returnReason: string;
   remarks: string | null;
-  submittedBy: { id: string; name: string; email: string };
+  submittedBy: { id: string; name: string; email?: string };
   submittedAt: string;
-  approvedBy: { id: string; name: string; email: string } | null;
+  approvedBy: { id: string; name: string; email?: string } | null;
   approvedAt: string | null;
   approvalRemarks: string | null;
   rejectionReason: string | null;
-  receivedBy: { id: string; name: string; email: string } | null;
+  receivedBy: { id: string; name: string; email?: string } | null;
   receivedAt: string | null;
   creditNoteReference: string | null;
   creditNoteDate: string | null;
-  creditNoteRecordedBy: { id: string; name: string; email: string } | null;
-  cancelledBy: { id: string; name: string; email: string } | null;
+  creditNoteRecordedBy: { id: string; name: string; email?: string } | null;
+  cancelledBy: { id: string; name: string; email?: string } | null;
   cancelledAt: string | null;
   lines: DistributorReturnLineView[];
 }
@@ -984,7 +984,7 @@ export interface DistributorSalesReportView {
   distributor: { id: string; code: string; name: string };
   reportDate: string;
   remarks: string | null;
-  submittedBy: { id: string; name: string; email: string };
+  submittedBy: { id: string; name: string; email?: string };
   submittedAt: string;
   lines: DistributorSalesReportLineView[];
 }

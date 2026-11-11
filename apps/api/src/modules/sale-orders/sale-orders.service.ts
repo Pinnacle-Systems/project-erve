@@ -11,6 +11,7 @@ import { allocateDocumentSerial } from '../master-data/document-sequence.service
 import { DOCUMENT_PREFIXES, formatDocumentNumber } from '../master-data/document-number.util.js';
 import { getAvailableQuantities, getEligibleQaReleaseLinesForPool, getPooledFactoryInventory } from '../job-orders/pooled-inventory.service.js';
 import { computeDispatchOrderFulfillment } from '../fulfillment/fulfillment-progress.js';
+import { staffRefForReader } from '../fulfillment/staff-identity.js';
 import { buildPackingListProjection, hardDeleteFactoryDispatches } from '../fulfillment/factory-dispatch.service.js';
 import { getPhysicalPackedQuantitiesForLines } from '../fulfillment/packing-reconciliation.js';
 import { resolveRetailStoreSnapshots } from './retail-store-snapshot.js';
@@ -144,7 +145,7 @@ async function computeCanMoveDistributor(
   return result;
 }
 
-async function toSaleOrderView(order: SORecord) {
+async function toSaleOrderView(order: SORecord, internalReader: boolean) {
   const isLocked = await isDispatchOrderLocked(prisma, order.id);
   const fulfillment = await computeDispatchOrderFulfillment(
     prisma,
@@ -191,7 +192,7 @@ async function toSaleOrderView(order: SORecord) {
     totalQuantity: lines.reduce((sum, line) => sum + line.quantity, 0),
     createdAt: order.createdAt.toISOString(),
     isLocked,
-    creator: order.creator,
+    creator: staffRefForReader(order.creator, internalReader),
     remarks: order.remarks,
     distributorGroups,
     lines,
@@ -784,7 +785,7 @@ export async function getSaleOrderList(
   const hasMore = orders.length > filters.limit;
   const page = hasMore ? orders.slice(0, filters.limit) : orders;
   return {
-    items: await Promise.all(page.map((order) => toSaleOrderView(order))),
+    items: await Promise.all(page.map((order) => toSaleOrderView(order, canViewAllDispatchOrders(user)))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }
@@ -833,7 +834,7 @@ export async function getSaleOrderDetail(user: CurrentUser, id: string) {
   const order = await prisma.saleOrder.findUnique({ where: { id }, include: soInclude });
   if (!order) throw HttpError.notFound('Dispatch order not found');
   assertDispatchOrderViewAccess(user, order);
-  return toSaleOrderView(order);
+  return toSaleOrderView(order, canViewAllDispatchOrders(user));
 }
 
 // Phase 4: the Factory Packing List is readable the moment a Dispatch Order

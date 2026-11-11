@@ -29,6 +29,7 @@ import {
   type SaleOrReturnPositionRow as SaleOrReturnPositionQueryRow,
 } from './sale-or-return-position-query.service.js';
 import type { SaleOrReturnPositionRow as SaleOrReturnPositionView } from '@erve/types';
+import { staffRefForReader } from './staff-identity.js';
 
 /** The query row plus its presentation identity (real Style/Size ids, Size order, primary image). */
 export type SaleOrReturnPositionRow = SaleOrReturnPositionView;
@@ -166,13 +167,13 @@ type DistributorSalesReportRecord = Prisma.DistributorSalesReportGetPayload<{
   include: ReturnType<typeof reportInclude>;
 }>;
 
-function toReportView(record: DistributorSalesReportRecord, canReadImages: boolean) {
+function toReportView(record: DistributorSalesReportRecord, canReadImages: boolean, internalReader: boolean) {
   return {
     id: record.id,
     distributor: record.distributor,
     reportDate: record.reportDate.toISOString().slice(0, 10),
     remarks: record.remarks,
-    submittedBy: record.submittedBy,
+    submittedBy: staffRefForReader(record.submittedBy, internalReader),
     // ISS-092: the documented view contract (DistributorSalesReportView.submittedAt) and the
     // semantically correct column; the Distributor Return view already uses the same name.
     submittedAt: record.submittedAt.toISOString(),
@@ -219,7 +220,7 @@ export async function getDistributorSalesReportDetail(actor: CurrentUser, id: st
   });
   if (!record) throw HttpError.notFound('Distributor Sales Report not found');
   assertReportViewAccess(actor, record.distributorId);
-  return toReportView(record, canReadImages);
+  return toReportView(record, canReadImages, isBroadViewer(actor));
 }
 
 export async function listDistributorSalesReports(
@@ -242,7 +243,7 @@ export async function listDistributorSalesReports(
   const hasMore = records.length > filters.limit;
   const page = hasMore ? records.slice(0, filters.limit) : records;
   return {
-    items: page.map((record) => toReportView(record, false)),
+    items: page.map((record) => toReportView(record, false, isBroadViewer(actor))),
     pageInfo: { limit: filters.limit, hasMore, nextCursor: hasMore ? page.at(-1)!.id : null },
   };
 }
