@@ -120,7 +120,7 @@ try {
   });
 
   const results = [];
-  for (const role of ['distributor', 'admin']) {
+  for (const role of ['distributor', 'accountant', 'admin']) {
     await browser.command('Network.clearBrowserCookies');
     await browser.viewport(1440, 1000);
     await browser.navigateTo('/login');
@@ -144,18 +144,33 @@ try {
         'document.querySelectorAll("section[aria-label^=\\"Retail Store\\"] h3 button[aria-expanded=\\"false\\"]").length === 0',
       );
       await browser.stabilize();
-      if (role === 'admin') {
-        // Thumbnails load lazily (near-viewport only) through the authenticated image endpoint.
+      // Thumbnails load lazily (near-viewport only) through the authenticated image endpoint.
+      await browser.evaluate(
+        `document.querySelector('section[aria-label="TEE-2027 Sale-or-Return"]')?.scrollIntoView({ block: 'center' })`,
+      );
+      await browser
+        .waitFor(
+          `[...document.querySelectorAll('section[aria-label$="Sale-or-Return"] img')].some(i => i.complete && i.naturalWidth > 0)`,
+          15000,
+        )
+        .catch(() => {});
+      // Scroll every Style card into view (one after another) so each lazy thumbnail has loaded or
+      // been proven absent: the Tee cards must load, the Jeans cards (no image) must stay placeholders.
+      const cardCount = await browser.evaluate(
+        `document.querySelectorAll('section[aria-label^="TEE-2027"], section[aria-label^="JEAN-2027"]').length`,
+      );
+      for (let index = 0; index < cardCount; index++) {
         await browser.evaluate(
-          `document.querySelector('section[aria-label="TEE-2027 Sale-or-Return"]')?.scrollIntoView({ block: 'center' })`,
+          `document.querySelectorAll('section[aria-label^="TEE-2027"], section[aria-label^="JEAN-2027"]')[${index}].scrollIntoView({ block: 'center' })`,
         );
-        await browser
-          .waitFor(
-            `[...document.querySelectorAll('section[aria-label$="Sale-or-Return"] img')].some(i => i.complete && i.naturalWidth > 0)`,
-            15000,
-          )
-          .catch(() => {});
+        await delay(700);
       }
+      await browser
+        .waitFor(
+          `[...document.querySelectorAll('section[aria-label^="TEE-2027"]')].every(c => [...c.querySelectorAll('header img')].every(i => i.complete && i.naturalWidth > 0))`,
+          15000,
+        )
+        .catch(() => {});
       const result = await browser.evaluate(`(() => {
         const text = document.body.textContent;
         const tables = [...document.querySelectorAll('table[aria-label$="quantities by size"]')];
@@ -170,6 +185,10 @@ try {
           tablesScrollInternally: tables.every(t => t.parentElement.scrollWidth >= t.parentElement.clientWidth),
           pageOverflowFromTables: tables.some(t => t.parentElement.getBoundingClientRect().right > innerWidth + 1),
           loadedThumbnails: thumbs.filter(i => i.complete && i.naturalWidth > 0).length,
+          teeCardImages: [...document.querySelectorAll('section[aria-label^="TEE-2027"]')].map(c => c.querySelectorAll('header img').length),
+          jeansCardImages: [...document.querySelectorAll('section[aria-label^="JEAN-2027"]')].map(c => c.querySelectorAll('header img').length),
+          jeansPlaceholders: [...document.querySelectorAll('section[aria-label^="JEAN-2027"]')].map(c => c.querySelectorAll('header svg[aria-hidden="true"]').length),
+          jeansViewerButtons: document.querySelectorAll('section[aria-label^="JEAN-2027"] button[aria-label="View style image"]').length,
           hasUnmapped: text.includes('Unmapped historical destination'),
           hasAwaiting: text.includes('awaiting Distributor confirmation'),
           hasShortage: text.includes('Shortage 10 pcs'),
@@ -222,14 +241,25 @@ try {
         JSON.stringify(result),
       );
       assert.equal(result.reportButtons, false);
-      if (role === 'admin')
-        assert.ok(result.loadedThumbnails >= 1, 'Admin should see Style thumbnails');
-      else
-        assert.equal(
-          result.loadedThumbnails,
-          0,
-          'Distributor must not receive protected Style images',
-        );
+      // IMG-25: every inventory viewer sees the Tee's image; the Jeans (no image) show the placeholder only.
+      assert.ok(result.loadedThumbnails >= 1, `${role} should see Style thumbnails`);
+      assert.ok(
+        result.teeCardImages.length >= 1 && result.teeCardImages.every((n) => n === 1),
+        `${role}: every Tee card should show its image ${JSON.stringify(result.teeCardImages)}`,
+      );
+      assert.ok(
+        result.jeansCardImages.length >= 1 && result.jeansCardImages.every((n) => n === 0),
+        `${role}: Jeans must not render an image ${JSON.stringify(result.jeansCardImages)}`,
+      );
+      assert.ok(
+        result.jeansPlaceholders.every((n) => n >= 1),
+        `${role}: Jeans placeholder missing`,
+      );
+      assert.equal(
+        result.jeansViewerButtons,
+        0,
+        `${role}: a Style without an image must not open a viewer`,
+      );
       results.push(result);
       await browser.captureEvidence({
         caseId: `a6-${role}-list-${width}`,
@@ -238,6 +268,34 @@ try {
         observed: JSON.stringify(result),
         fullPage: true,
       });
+
+      // The thumbnail opens the shared full-resolution viewer (gallery list + authenticated bytes).
+      await browser.evaluate(
+        `(() => { const b = document.querySelector('section[aria-label^="TEE-2027"] button[aria-label="View style image"]'); b.scrollIntoView({ block: 'center' }); b.click(); })()`,
+      );
+      await browser.waitFor(
+        '[...document.querySelectorAll("[role=dialog] img")].some(i => i.complete && i.naturalWidth > 0)',
+        15000,
+      );
+      await browser.stabilize();
+      const viewer = await browser.evaluate(`(() => {
+        const d = document.querySelector('[role=dialog]');
+        const r = d.getBoundingClientRect();
+        return { title: d.textContent.includes('TEE-2027'), fits: r.left >= -1 && r.right <= innerWidth + 1,
+          pageOverflow: document.documentElement.scrollWidth > innerWidth + 1 };
+      })()`);
+      assert.ok(viewer.fits && !viewer.pageOverflow, `${role}: image viewer overflows at ${width}`);
+      await browser.captureEvidence({
+        caseId: `img25-${role}-viewer-${width}`,
+        step: 'review',
+        expected: 'Thumbnail opens the existing image viewer with the Style image loaded',
+        observed: JSON.stringify(viewer),
+        fullPage: false,
+      });
+      await browser.evaluate(
+        `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+      );
+      await browser.waitFor('!document.querySelector("[role=dialog]")', 5000);
 
       // Drilldown from a real cell.
       await browser.evaluate(
@@ -272,6 +330,36 @@ try {
       await delay(300);
     }
   }
+  // Unauthorized image requests are denied over real HTTP: the review Distributor asking for the image
+  // of a Style that is on none of its records (gallery list and bytes), and an anonymous caller.
+  const login = async (email) => {
+    const res = await fetch(`${apiUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: email, password: fixture.password }),
+    });
+    assert.equal(res.status, 200);
+    return (await res.json()).data.accessToken;
+  };
+  const distributorToken = await login(fixture.emails.distributor);
+  const accountantToken = await login(fixture.emails.accountant);
+  const get = (path, token) =>
+    fetch(`${apiUrl}${path}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const { styleId, imageId } = fixture.foreign;
+  const denials = [];
+  for (const path of [
+    `/styles/${styleId}/images`,
+    `/styles/${styleId}/images/${imageId}/content`,
+  ]) {
+    const denied = await get(path, distributorToken);
+    denials.push({ role: 'distributor', path, status: denied.status });
+    assert.equal(denied.status, 403, `distributor must be denied ${path}`);
+    assert.ok(!/image\//.test(denied.headers.get('content-type') ?? ''));
+    assert.equal((await get(path, null)).status, 401, `anonymous must be denied ${path}`);
+    // The Accountant, by approved policy, may read any Style image.
+    assert.equal((await get(path, accountantToken)).status, 200);
+  }
+  results.push({ unauthorizedImageDenials: denials });
   await writeFile(join(output, 'results.json'), JSON.stringify(results, null, 2));
   console.log(JSON.stringify({ output, results }));
 } finally {

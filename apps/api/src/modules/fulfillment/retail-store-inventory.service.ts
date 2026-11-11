@@ -13,7 +13,11 @@ import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { HttpError } from '../../errors/http-error.js';
-import { stylePrimaryImageInclude, toPrimaryImageView } from '../master-data/style-images.service.js';
+import {
+  canReadAnyStyleImage,
+  stylePrimaryImageIncludeFor,
+  toPrimaryImageView,
+} from '../master-data/style-images.service.js';
 import {
   cellsQuery,
   distinctCountsQuery,
@@ -79,11 +83,17 @@ function resolveScope(actor: CurrentUser, requestedDistributorId?: string): stri
   return requestedDistributorId ?? null;
 }
 
-/** Style images are protected media: same audience as the Dispatch detail view and the Style image endpoint. */
-function canReadStyleImages(actor: CurrentUser): boolean {
-  return actor.roles.some(
-    (role) => role === 'ADMIN' || role === 'MERCHANDISER' || role === 'SENIOR_MANAGEMENT',
-  );
+/**
+ * Whether this viewer's inventory carries Style primary-image metadata. Same policy as the Style
+ * image endpoints (`canReadAnyStyleImage`: ADMIN / MERCHANDISER / SENIOR_MANAGEMENT / ACCOUNTANT),
+ * plus DISTRIBUTOR. A Distributor is pinned by `resolveScope` to its own mapped Distributor and the
+ * inventory is built only from that Distributor's own dispatched cartons, so every Style it sees is
+ * one `distributorHasStyleAssociation` accepts on the image endpoints; the metadata therefore never
+ * reveals a Style outside the caller's own records. Roles outside the inventory audience never get
+ * here (`resolveScope` rejects them first).
+ */
+function canReadInventoryStyleImages(actor: CurrentUser): boolean {
+  return canReadAnyStyleImage(actor) || actor.roles.includes('DISTRIBUTOR');
 }
 
 function encodeCursor(value: object): string {
@@ -151,7 +161,7 @@ export async function listRetailStoreInventory(
               id: true,
               styleNumber: true,
               styleName: true,
-              images: { ...stylePrimaryImageInclude, take: canReadStyleImages(actor) ? 1 : 0 },
+              images: stylePrimaryImageIncludeFor(canReadInventoryStyleImages(actor)),
             },
           }),
           // The Style's own active Size set drives its native columns.

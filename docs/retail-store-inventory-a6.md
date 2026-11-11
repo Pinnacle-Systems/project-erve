@@ -48,7 +48,7 @@ Scale: filtering, grouping and totals happen in PostgreSQL. Stores are keyset-pa
 
 Row level: a user holding DISTRIBUTOR is pinned to the single Distributor they are mapped to (another `distributorId` → 403; an unmapped or multi-mapped user fails closed). Distributor scope is applied inside the SQL of both endpoints, so guessing another Distributor's store key returns nothing. Internal roles may pick a Distributor or leave it open (grouped by Distributor).
 
-**Style images** keep the existing protected-media policy: only ADMIN / MERCHANDISER / SENIOR_MANAGEMENT receive `primaryImage` (the same rule the Dispatch detail uses) and the thumbnails go through the existing authenticated `StyleThumbnailCell`. A Distributor sees the placeholder. Showing Distributors the images of Styles shipped to them would be a change to that tested policy (`style-images.test.ts`) and is **not** made here; it needs a product/security decision.
+**Style images** follow the shared Style image policy of `style-images.service.ts` (PR #214, IMG-25): ADMIN / MERCHANDISER / SENIOR_MANAGEMENT / ACCOUNTANT receive `primaryImage` for any inventory they may view, and a DISTRIBUTOR receives it for its own inventory. A Distributor is pinned to its own Distributor in SQL and the inventory is built only from that Distributor's dispatched cartons, so every Style it sees is one `distributorHasStyleAssociation` accepts on `GET /styles/:id/images` and `/images/:imageId/content`: the thumbnail, the viewer's gallery list and the bytes are authorized by the same rule. Image metadata rides on the Style lookup that is already made (one query per page, not per Style or Store), and nothing about Style Master browsing or image management is widened. A Style without an image keeps the placeholder. Thumbnails use the existing authenticated `StyleThumbnailCell` and image viewer.
 
 ## A6 / A7 separation
 
@@ -60,11 +60,11 @@ A6 adds no store-level Report Sold or Request Return, no mutation of any kind, a
 
 - A Store's Style cards are returned together (pagination is per Store). The UI mounts a Store's grids only while it is expanded.
 - Historical destinations with no Retail Store link stay as separate groups by design; there is no automatic mapping.
-- Distributors do not see Style thumbnails (see above).
+- Style thumbnails follow the shared image policy (see above); a Style with no image shows the placeholder and opens no viewer.
 - `awaiting confirmation` includes Dispatches that already have an Admin/legacy ledger but no Distributor receipt; the ledger is shown beside it, not as Distributor verification.
 
 ## Verification
 
 - API integration (disposable PostgreSQL): `retail-store-inventory.test.ts` (17 scenarios), `retail-store-inventory.performance.test.ts` (flat query count), `retail-store-inventory-measures.unit.test.ts`.
 - Web: `RetailStoreInventory.test.tsx`.
-- Browser (`tools/retail-store-inventory/browser.mjs`, guarded to a local `a6_browser_test` database): Distributor and Admin at 1440px and 375px, no page overflow, grids scroll internally, drilldown fits, thumbnails visible to Admin and absent for the Distributor.
+- Browser (`tools/retail-store-inventory/browser.mjs`, guarded to a local `a6_browser_test` database): Distributor, Accountant and Admin at 1440px and 375px, no page overflow, grids scroll internally, drilldown fits, Style thumbnails visible to all three with the placeholder for a Style without an image, the thumbnail opens the image viewer, and a Distributor/anonymous request for a Style outside its records is denied (403/401).

@@ -3,7 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { createId } from '@erve/shared';
 import { PrismaClient, Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../db/prisma.js';
-import { createTestRetailStore, resetDatabase } from '../../test/helpers.js';
+import { createTestRetailStore, createTestUserAndToken, resetDatabase } from '../../test/helpers.js';
 import { createApp } from '../../app.js';
 import { currentUserSelect, toCurrentUser } from '../../auth/current-user.js';
 import { listRetailStoreInventory, listRetailStoreInventorySources } from './retail-store-inventory.service.js';
@@ -40,6 +40,12 @@ it('keeps SQL volume flat from 1 Store / 1 cell to 15 Stores / 127 Style x Size 
   const baseSize = await prisma.size.findUniqueOrThrow({ where: { id: baseLine.sizeId } });
   const admin = await helpers.createRoleToken('ADMIN');
   const actor = toCurrentUser(await prisma.user.findUniqueOrThrow({ where: { id: admin.userId }, select: currentUserSelect }));
+  // IMG-25: the Accountant and the owning Distributor now load Style primary images too; their SQL volume must equal the Admin's.
+  const accountantUser = await helpers.createRoleToken('ACCOUNTANT');
+  const accountant = toCurrentUser(await prisma.user.findUniqueOrThrow({ where: { id: accountantUser.userId }, select: currentUserSelect }));
+  const distributorUser = await createTestUserAndToken({ email: `perf-dist-${createId()}@test.local`, password: 'pass', roles: ['DISTRIBUTOR'] });
+  await prisma.userDistributor.create({ data: { id: createId(), userId: distributorUser.userId, distributorId: record.distributorId } });
+  const distributor = toCurrentUser(await prisma.user.findUniqueOrThrow({ where: { id: distributorUser.userId }, select: currentUserSelect }));
   await prisma.saleOrderLine.update({ where: { id: baseLine.id }, data: { quantity: 1000 } });
 
   const sizes = [baseSize.id];
@@ -53,6 +59,13 @@ it('keeps SQL volume flat from 1 Store / 1 cell to 15 Stores / 127 Style x Size 
     const id = createId();
     await prisma.style.create({ data: { ...baseStyle, id, styleNumber: `PERF-${i}-${createId().slice(-4)}` } });
     styles.push(id);
+  }
+  // Every Style carries a primary image so the image projection is part of what is counted.
+  for (const styleId of styles) {
+    const file = await prisma.file.create({
+      data: { id: createId(), fileName: 'p.png', mimeType: 'image/png', sizeBytes: 10, storageKey: `perf/${createId()}`, checksumSha256: createId() },
+    });
+    await prisma.styleImage.create({ data: { id: createId(), styleId, fileId: file.id, isPrimary: true } });
   }
 
   // Grows by whole Stores: each extra Store gets its own destination and 9 Style x Size lines.
@@ -94,6 +107,13 @@ it('keeps SQL volume flat from 1 Store / 1 cell to 15 Stores / 127 Style x Size 
       result.items.reduce((sum, s) => sum + s.styles.reduce((n, c) => n + Object.keys(c.cells).length, 0), 0),
     ).toBe(cells);
     const first = result.items[0]!;
+    expect(result.items.every((store) => store.styles.every((card) => card.primaryImage !== null))).toBe(true);
+    for (const viewer of [accountant, distributor]) {
+      queries.length = 0;
+      const viewed = await listRetailStoreInventory(viewer, { distributorId: record.distributorId, limit: 50 });
+      expect(queries.length).toBe(listCount);
+      expect(viewed.items.every((store) => store.styles.every((card) => card.primaryImage !== null))).toBe(true);
+    }
     queries.length = 0;
     await listRetailStoreInventorySources(actor, {
       distributorId: record.distributorId,
