@@ -57,6 +57,20 @@ export function canViewRetailStoreInventory(user: RoleHolder): boolean {
   );
 }
 
+/**
+ * ISS-089: Store-level FIFO "Report Sold" / "Request Return". Deliberately the Distributor only
+ * (not ADMIN): the allocation is always made against the authenticated Distributor's own Retail
+ * Stores, and the service pins it to that Distributor. Internal roles keep the Dispatch-linked
+ * Sales Report / Return flows.
+ */
+export const RETAIL_STORE_FIFO_ACTION_ROLES = ['DISTRIBUTOR'] as const satisfies readonly Role[];
+export function canSubmitRetailStoreFifoAction(user: RoleHolder): boolean {
+  return (
+    !user.roles.some((r) => r === 'FACTORY_USER' || r === 'TRANSPORTER') &&
+    hasAnyRole(user, RETAIL_STORE_FIFO_ACTION_ROLES)
+  );
+}
+
 export function isValidTransporterRoleCombination(roles: readonly Role[]): boolean {
   return !roles.includes('TRANSPORTER') || roles.every((role) => role === 'TRANSPORTER');
 }

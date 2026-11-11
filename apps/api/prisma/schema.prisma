@@ -2935,11 +2935,16 @@ model DistributorSalesReport {
   submittedById String   @map("submitted_by_id")
   submittedAt   DateTime @default(now()) @map("submitted_at")
   createdAt     DateTime @default(now()) @map("created_at")
+  // ISS-089: set only by the Store-level (FIFO) submission, which must be retry-safe.
+  // Null for every Dispatch-linked report, so the unique index below ignores them.
+  idempotencyKey String? @map("idempotency_key")
+  requestDigest  String? @map("request_digest")
 
   distributor Distributor                  @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   submittedBy User                         @relation("DistributorSalesReportSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
   lines       DistributorSalesReportLine[]
 
+  @@unique([distributorId, idempotencyKey])
   @@index([distributorId])
   @@map("distributor_sales_reports")
 }
@@ -3025,6 +3030,9 @@ model DistributorReturn {
   updatedAt              DateTime                @updatedAt @map("updated_at")
   financialYearId        String                  @map("financial_year_id")
   returnSerial           Int                     @map("return_serial")
+  // ISS-089: set only by the Store-level (FIFO) submission, which must be retry-safe.
+  idempotencyKey         String?                 @map("idempotency_key")
+  requestDigest          String?                 @map("request_digest")
 
   distributor          Distributor             @relation(fields: [distributorId], references: [id], onDelete: Restrict)
   submittedBy          User                    @relation("DistributorReturnSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
@@ -3036,6 +3044,7 @@ model DistributorReturn {
   lines                DistributorReturnLine[]
 
   @@unique([financialYearId, returnSerial])
+  @@unique([distributorId, idempotencyKey])
   @@index([distributorId])
   @@index([status])
   @@map("distributor_returns")

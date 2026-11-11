@@ -11,13 +11,18 @@ import { Panel } from '@erve/layout';
 import { SelectField, SelectItem, TextField } from '@erve/primitives';
 import { ErrorState, LoadingState } from '@erve/data-display';
 import { useAuth } from '../../auth/AuthContext.js';
-import { canPickRetailStoreInventoryDistributor, canViewRetailStoreInventory } from '../../auth/permissions.js';
+import {
+  canPickRetailStoreInventoryDistributor,
+  canSubmitRetailStoreFifoAction,
+  canViewRetailStoreInventory,
+} from '../../auth/permissions.js';
 import { apiClient } from '../../lib/api-client.js';
 import { getApiErrorMessage } from '../../lib/api-errors.js';
 import { LoadMoreFooter } from '../../lib/cursor-list.js';
 import { useDebouncedValue } from '../../lib/use-debounced-value.js';
 import { DistributorLookupField, type DistributorLookupValue } from '../master-data/DistributorLookupField.js';
 import { SourcesDialog } from './retail-store-inventory/SourcesDialog.js';
+import { StoreFifoActionDialog, type StoreFifoTarget } from './retail-store-inventory/StoreFifoActionDialog.js';
 import { StoreSection } from './retail-store-inventory/StoreSection.js';
 import { ModeTotals } from './retail-store-inventory/StoreSection.js';
 import type { DrillTarget } from './retail-store-inventory/StyleInventoryCard.js';
@@ -31,14 +36,15 @@ type ModeFilter = 'ALL' | RetailStoreInventoryPurchaseMode;
  * what was physically shipped to each Retail Store across all Erve Dispatches,
  * with Distributor receipt evidence and (Sale-or-Return only) the consignment
  * position. Distributor -> Retail Store -> Style -> the Style's own Size columns.
- * It has no Report Sold / Request Return action: store-level actions need the
- * source-allocation engine planned for A7; existing dispatch-linked workflows
- * stay where they are.
+ * The grid is derived and read-only. ISS-089 adds, for a Distributor only, Report sold /
+ * Request return actions on Sale-or-Return Size cells of mapped Stores; the server allocates the
+ * quantity FIFO across the original Dispatches. Dispatch-linked workflows stay where they are.
  */
 export function RetailStoreInventoryPage() {
   const { user } = useAuth();
   const allowed = canViewRetailStoreInventory(user);
   const canPick = canPickRetailStoreInventoryDistributor(user);
+  const canFifo = canSubmitRetailStoreFifoAction(user);
 
   const [distributor, setDistributor] = useState<DistributorLookupValue | null>(null);
   const [mode, setMode] = useState<ModeFilter>('ALL');
@@ -48,6 +54,7 @@ export function RetailStoreInventoryPage() {
   const style = useDebouncedValue(styleText.trim(), FILTER_DEBOUNCE_MS);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   const [drill, setDrill] = useState<DrillTarget | null>(null);
+  const [fifo, setFifo] = useState<StoreFifoTarget | null>(null);
 
   const params = useMemo(
     () => ({
@@ -143,7 +150,9 @@ export function RetailStoreInventoryPage() {
               </div>
               {summary.totalsByMode.OUTRIGHT && <p className="mt-1 text-xs text-muted-foreground">{OUTRIGHT_NOTE}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
-                To report sales or request returns, use{' '}
+                {canFifo
+                  ? 'Use Sold or Return under a Sale-or-Return size to report sales or request returns for that Store; Erve allocates them to the original Dispatches, oldest received first. To work Dispatch by Dispatch, use '
+                  : 'To report sales or request returns, use '}
                 <Link className="underline" to="/fulfillment/sale-or-return">
                   Sale-or-Return stock
                 </Link>
@@ -171,6 +180,12 @@ export function RetailStoreInventoryPage() {
                     expanded={isExpanded(group.storeKey)}
                     onToggle={() => setOverrides((prev) => ({ ...prev, [group.storeKey]: !isExpanded(group.storeKey) }))}
                     onDrill={setDrill}
+                    onFifoAction={
+                      canFifo
+                        ? (action, t) =>
+                            setFifo({ action, storeKey: t.store.storeKey, storeName: t.store.name, card: t.card, size: t.size })
+                        : undefined
+                    }
                   />
                 </Fragment>
               ))}
@@ -189,6 +204,7 @@ export function RetailStoreInventoryPage() {
       )}
 
       <SourcesDialog target={drill} onClose={() => setDrill(null)} />
+      <StoreFifoActionDialog target={fifo} onClose={() => setFifo(null)} />
     </div>
   );
 }

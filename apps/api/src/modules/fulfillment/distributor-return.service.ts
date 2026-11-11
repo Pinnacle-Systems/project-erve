@@ -165,7 +165,7 @@ export async function listDistributorReturns(
 // Document numbering
 // ---------------------------------------------------------------------------
 
-async function generateReturnNumber(client: Tx, financialYear: { id: string; code: string }) {
+export async function generateReturnNumber(client: Tx, financialYear: { id: string; code: string }) {
   const serial = await allocateDocumentSerial(client, 'DISTRIBUTOR_RETURN', financialYear.id);
   return { returnNumber: formatDocumentNumber(DOCUMENT_PREFIXES.DISTRIBUTOR_RETURN, financialYear.code, serial), returnSerial: serial };
 }

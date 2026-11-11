@@ -27,6 +27,7 @@ import {
   canManageFactoryInvoiceFinancials,
   canViewSaleOrReturnPosition,
   canViewRetailStoreInventory as canViewRetailStoreInventoryShared,
+  canSubmitRetailStoreFifoAction as canSubmitRetailStoreFifoActionShared,
   canViewDistributorSalesReport,
   canSubmitDistributorSalesReport,
   canSubmitDistributorReturn,
@@ -416,6 +417,10 @@ export const needsSaleOrReturnPositionDistributorSelector = (user: AuthUser | nu
 // RETAIL_STORE_VIEW_ROLES, which opens the Retail Store master).
 export const canViewRetailStoreInventory = (user: AuthUser | null | undefined) =>
   Boolean(user && canViewRetailStoreInventoryShared(user));
+
+// ISS-089: Store-level Report Sold / Request Return (Distributor only; the API pins the Distributor).
+export const canSubmitRetailStoreFifoAction = (user: AuthUser | null | undefined) =>
+  Boolean(user && canSubmitRetailStoreFifoActionShared(user));
 
 // Roles that may narrow the screen to one Distributor: the same audience as the
 // Distributor lookup endpoint (GET /distributors/options). DISTRIBUTOR is pinned

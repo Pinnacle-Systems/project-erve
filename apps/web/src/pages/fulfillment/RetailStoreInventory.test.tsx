@@ -277,8 +277,8 @@ describe('Retail Store Inventory page', () => {
     expect(rowText(tops, 'Remaining with Distributor').querySelector('td:last-child')!.textContent).toBe('7');
     expect([...jeans.querySelectorAll('tbody th')].map((th) => th.textContent)).not.toContain('Remaining with Distributor');
     expect(document.body.textContent).toContain('Retailer sell-through and live store on-hand are not available for Outright shipments');
-    // No store-level mutation affordance exists (A7 owns that).
-    expect(document.body.textContent).not.toMatch(/Report Sold|Request Return/);
+    // The derived grid has no mutation of its own; store-level actions (ISS-089) are covered in StoreFifoActions.test.tsx.
+    expect(document.body.querySelectorAll('[data-testid="store-fifo-actions"]').length).toBeLessThanOrEqual(1);
   });
 
   it('marks unmapped historical destinations and keeps them as their own group', async () => {

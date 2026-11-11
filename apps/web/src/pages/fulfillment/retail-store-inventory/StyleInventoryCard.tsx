@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
-import type { RetailStoreInventoryMeasures, RetailStoreInventoryStyleCard } from '@erve/types';
-import { Badge, cn } from '@erve/primitives';
+import type { RetailStoreInventoryMeasures, RetailStoreInventoryStyleCard, StoreFifoAction } from '@erve/types';
+import { Badge, Button, cn } from '@erve/primitives';
 import { StyleThumbnailCell } from '../../../components/style/StyleThumbnailCell.js';
 import {
   OUTRIGHT_NOTE,
@@ -27,6 +27,11 @@ interface Props {
   distributorId: string;
   card: RetailStoreInventoryStyleCard;
   onDrill: (target: DrillTarget) => void;
+  /**
+   * ISS-089: present only for a Distributor looking at a mapped Store's Sale-or-Return card.
+   * Adds the Report sold / Request return actions to every Size column that has stock.
+   */
+  onFifoAction?: (action: StoreFifoAction, size: { sizeId: string; sizeCode: string }) => void;
 }
 
 function ValueButton({
@@ -63,7 +68,7 @@ function ValueButton({
  * columns with the measures as rows. Never a universal Size table and never one
  * Size per row. Horizontal overflow stays inside this table's own scroller.
  */
-export function StyleInventoryCard({ storeKey, storeName, distributorId, card, onDrill }: Props) {
+export function StyleInventoryCard({ storeKey, storeName, distributorId, card, onDrill, onFifoAction }: Props) {
   const rows = card.purchaseMode === 'SALE_RETURN' ? [...SHIPMENT_ROWS, ...SALE_RETURN_ROWS] : [...SHIPMENT_ROWS];
   const flags = evidenceFlags(card.total);
   const drill = (size: { sizeId: string; sizeCode: string } | null) =>
@@ -181,6 +186,57 @@ export function StyleInventoryCard({ storeKey, storeName, distributorId, card, o
                 </tr>
               </Fragment>
             ))}
+            {onFifoAction && card.purchaseMode === 'SALE_RETURN' && (
+              <tr data-testid="store-fifo-actions">
+                <th
+                  scope="row"
+                  className="sticky left-0 z-10 whitespace-nowrap bg-surface px-2 py-1.5 text-left font-medium text-foreground"
+                >
+                  Actions
+                </th>
+                {card.sizes.map((size) => {
+                  const position = card.cells[size.sizeId]?.saleReturn ?? null;
+                  const target = { sizeId: size.sizeId, sizeCode: size.sizeCode };
+                  const canSell = (position?.availableForActualSale ?? 0) > 0;
+                  const canReturn = (position?.availableForNewReturn ?? 0) > 0;
+                  return (
+                    <td key={size.sizeId} className="px-1 py-1 text-right align-top">
+                      {position ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            density="compact"
+                            disabled={!canSell}
+                            title={canSell ? undefined : 'No stock available to report as sold'}
+                            aria-label={`Report sold, size ${size.sizeCode}`}
+                            onClick={() => onFifoAction('SALE', target)}
+                          >
+                            Sold
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            density="compact"
+                            disabled={!canReturn}
+                            title={canReturn ? undefined : 'No stock available to return'}
+                            aria-label={`Request return, size ${size.sizeCode}`}
+                            onClick={() => onFifoAction('RETURN', target)}
+                          >
+                            Return
+                          </Button>
+                        </div>
+                      ) : (
+                        <span aria-hidden="true" className="text-muted-foreground">
+                          —
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-1" />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

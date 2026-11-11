@@ -25,6 +25,12 @@ function groupByContext(lines: DistributorSalesReportLineView[]) {
   return [...contexts.values()];
 }
 
+/** ISS-092: never renders "Invalid Date": a missing/unparseable timestamp shows an em dash. */
+export function formatSubmittedAt(value: string | null | undefined): string {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : '—';
+}
+
 export function DistributorSalesReportDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,7 +65,7 @@ export function DistributorSalesReportDetailPage() {
         <DescriptionList columns={4}>
           <DescriptionList.Item label="Distributor" value={report.distributor.name} />
           <DescriptionList.Item label="Submitted By" value={report.submittedBy.name} />
-          <DescriptionList.Item label="Submitted At" value={new Date(report.submittedAt).toLocaleString()} />
+          <DescriptionList.Item label="Submitted At" value={formatSubmittedAt(report.submittedAt)} />
           {report.remarks && <DescriptionList.Item label="Remarks" value={report.remarks} span={2} />}
         </DescriptionList>
       </Panel>

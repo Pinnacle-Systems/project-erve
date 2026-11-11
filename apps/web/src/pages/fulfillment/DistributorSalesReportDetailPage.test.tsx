@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '../../lib/api-client.js';
-import { DistributorSalesReportDetailPage } from './DistributorSalesReportDetailPage.js';
+import { DistributorSalesReportDetailPage, formatSubmittedAt } from './DistributorSalesReportDetailPage.js';
 import type { DistributorSalesReportLineView, DistributorSalesReportView } from './types.js';
 
 let container: HTMLDivElement;
@@ -161,5 +161,25 @@ describe('DistributorSalesReportDetailPage grouped Style x Size lines (ISS-023 /
     await renderLines([]);
     expect(content()).toContain('No lines');
     expect(sections()).toHaveLength(0);
+  });
+});
+
+describe('DistributorSalesReportDetailPage submission date (ISS-092)', () => {
+  it('shows the submission timestamp the API returns, never "Invalid Date"', async () => {
+    const report = buildReport({ submittedAt: '2026-11-04T09:30:00.000Z' });
+    await renderPage(async () => ({ data: { data: report } }));
+
+    const expected = new Date('2026-11-04T09:30:00.000Z').toLocaleString();
+    expect(content()).toContain(`Submitted At${expected}`);
+    expect(content()).not.toContain('Invalid Date');
+  });
+
+  it('falls back to a dash when the timestamp is missing or unparseable', async () => {
+    expect(formatSubmittedAt(undefined)).toBe('—');
+    expect(formatSubmittedAt(null)).toBe('—');
+    expect(formatSubmittedAt('not a date')).toBe('—');
+    await renderPage(async () => ({ data: { data: { ...buildReport(), submittedAt: undefined } } }));
+    expect(content()).toContain('Submitted At—');
+    expect(content()).not.toContain('Invalid Date');
   });
 });
