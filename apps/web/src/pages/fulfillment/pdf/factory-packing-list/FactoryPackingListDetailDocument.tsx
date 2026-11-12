@@ -8,6 +8,7 @@ import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.
 import { PdfTable, type PdfTableColumn } from '../../../../lib/pdf/core/PdfTable.js';
 import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
 import { formatPdfDateTime } from '../../../../lib/pdf/format.js';
+import { wordPreservingHyphenation } from '../../../../lib/pdf/core/pdfTextWrapping.js';
 import type {
   FactoryPackingListCartonRow,
   FactoryPackingListPdfViewModel,
@@ -78,10 +79,10 @@ export function FactoryPackingListDetailDocument({ viewModel }: FactoryPackingLi
       <PdfSection title="Destinations" wrap>
         {viewModel.destinations.map((destination) => (
           <View key={destination.id} style={styles.destinationBlock}>
-            <Text style={styles.destinationHeading}>
+            <Text style={styles.destinationHeading} hyphenationCallback={wordPreservingHyphenation}>
               {destination.distributorName ? `${destination.label} — ${destination.distributorName}` : destination.label}
             </Text>
-            <Text style={styles.note}>
+            <Text style={styles.note} hyphenationCallback={wordPreservingHyphenation}>
               {[destination.addressLine, destination.contactName].filter(Boolean).join(' · ')}
             </Text>
             <Text style={styles.summaryLabel}>Required</Text>

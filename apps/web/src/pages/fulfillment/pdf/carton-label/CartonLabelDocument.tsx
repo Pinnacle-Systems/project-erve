@@ -6,6 +6,7 @@ import { PdfMetaSection } from '../../../../lib/pdf/core/PdfMetaSection.js';
 import { PdfSection } from '../../../../lib/pdf/core/PdfSection.js';
 import { PdfKeyValueSection } from '../../../../lib/pdf/core/PdfKeyValueSection.js';
 import { PdfStyleSizeMatrix } from '../../../../lib/pdf/core/PdfStyleSizeMatrix.js';
+import { wordPreservingHyphenation } from '../../../../lib/pdf/core/pdfTextWrapping.js';
 import type { CartonLabelPdfViewModel } from './buildCartonLabelViewModel.js';
 
 const styles = StyleSheet.create({
@@ -41,7 +42,9 @@ export function CartonLabelDocument({ viewModel }: CartonLabelDocumentProps) {
       >
         <View style={viewModel.deliveryQr ? styles.identityText : undefined}>
           <Text style={styles.cartonNumber}>Carton {viewModel.cartonNumber}</Text>
-          <Text style={styles.destinationName}>{viewModel.destinationName}</Text>
+          <Text style={styles.destinationName} hyphenationCallback={wordPreservingHyphenation}>
+            {viewModel.destinationName}
+          </Text>
         </View>
         {viewModel.deliveryQr && (
           <View style={styles.qrBlock}>

@@ -62,6 +62,20 @@ function makePackingList(overrides: Partial<PackingListView> = {}): PackingListV
 }
 
 describe('buildFactoryPackingListViewModel', () => {
+  it('D1: includes the Store postal (PIN) code in the destination address, in the same order as the other documents', () => {
+    const base = makePackingList();
+    const packingList = makePackingList({
+      destinations: [{ ...base.destinations[0]!, addressLine2: 'Sardarpura Extension', city: 'Jodhpur', state: 'Rajasthan', postalCode: '342001' }],
+    });
+    const vm = buildFactoryPackingListViewModel(packingList, { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.destinations[0]!.addressLine).toBe('123 Test Street, Sardarpura Extension, Jodhpur, Rajasthan, 342001, India');
+  });
+
+  it('D1: omits an absent postal code without leaving a blank segment', () => {
+    const vm = buildFactoryPackingListViewModel(makePackingList(), { generatedAt: '2026-09-15T10:00:00Z' });
+    expect(vm.destinations[0]!.addressLine).toBe('123 Test Street, Chennai, TN, India');
+  });
+
   it('maps identity fields and "Not started" when no Factory Dispatch has begun', () => {
     const vm = buildFactoryPackingListViewModel(makePackingList({ factoryDispatch: null }), { generatedAt: '2026-09-15T10:00:00Z' });
     expect(vm.factoryDispatchNumber).toBe('Not started');
