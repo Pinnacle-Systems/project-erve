@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from '@react-pdf/renderer';
 import { formatPdfValue } from '../format.js';
+import { wordPreservingHyphenation } from './pdfTextWrapping.js';
 
 const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
@@ -26,7 +27,9 @@ export function PdfKeyValueSection({ items, columns = 3 }: PdfKeyValueSectionPro
       {items.map((item) => (
         <View key={item.label} style={[styles.item, { width }]}>
           <Text style={styles.label}>{item.label}</Text>
-          <Text style={styles.value}>{formatPdfValue(item.value)}</Text>
+          <Text style={styles.value} hyphenationCallback={wordPreservingHyphenation}>
+            {formatPdfValue(item.value)}
+          </Text>
         </View>
       ))}
     </View>

@@ -157,7 +157,14 @@ export function buildFactoryPackingListViewModel(
     // Without a Distributor to tell destinations apart, the Store code is appended to the label.
     label: destination.distributor ? destinationBaseName(destination) : destinationDisplayName(destination),
     distributorName: destination.distributor?.name ?? null,
-    addressLine: [destination.addressLine1, destination.addressLine2, destination.city, destination.state, destination.country]
+    addressLine: [
+      destination.addressLine1,
+      destination.addressLine2,
+      destination.city,
+      destination.state,
+      destination.postalCode,
+      destination.country,
+    ]
       .filter(Boolean)
       .join(', '),
     contactName: destination.contactName,
