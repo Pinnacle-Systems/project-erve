@@ -79,6 +79,8 @@ import { FactoryInvoiceDetailPage } from '../pages/fulfillment/FactoryInvoiceDet
 import { TaxInvoiceListPage } from '../pages/fulfillment/TaxInvoiceListPage.js';
 import { TaxInvoiceDetailPage } from '../pages/fulfillment/TaxInvoiceDetailPage.js';
 import { SaleOrReturnPositionListPage } from '../pages/fulfillment/SaleOrReturnPositionListPage.js';
+import { SaleOrReturnStockPage } from '../pages/fulfillment/sale-or-return-stock/SaleOrReturnStockPage.js';
+import { SaleOrReturnStyleDetailPage } from '../pages/fulfillment/sale-or-return-stock/SaleOrReturnStyleDetailPage.js';
 import { RetailStoreInventoryPage } from '../pages/fulfillment/RetailStoreInventoryPage.js';
 import { DistributorSalesReportListPage } from '../pages/fulfillment/DistributorSalesReportListPage.js';
 import { DistributorSalesReportDetailPage } from '../pages/fulfillment/DistributorSalesReportDetailPage.js';
@@ -783,7 +785,10 @@ export function AppRoutes() {
           </RoleRoute>
         }
       >
-        <Route index element={<SaleOrReturnPositionListPage />} />
+        <Route index element={<SaleOrReturnStockPage />} />
+        <Route path="styles/:styleId" element={<SaleOrReturnStyleDetailPage />} />
+        {/* The original Dispatch-by-Dispatch position list, kept for Report Sold / Request Return. */}
+        <Route path="by-dispatch" element={<SaleOrReturnPositionListPage />} />
       </Route>
       <Route
         path="/fulfillment/retail-store-inventory"

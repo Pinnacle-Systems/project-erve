@@ -153,7 +153,7 @@ export function SaleOrReturnPositionListPage() {
     { key: 'received', label: 'Received', value: (r) => r.receivedQuantity },
     { key: 'sold', label: 'Actual Sold', value: (r) => r.actualSoldQuantity },
     { key: 'returned', label: 'Returned', value: (r) => r.returnedQuantity },
-    { key: 'awaiting', label: 'Awaiting Receipt', value: (r) => r.approvedAwaitingReceiptQuantity },
+    { key: 'awaiting', label: 'Approved Returns Awaiting Receipt', value: (r) => r.approvedAwaitingReceiptQuantity },
     { key: 'pending', label: 'Pending Request', value: (r) => r.pendingRequestedQuantity },
     { key: 'remaining', label: 'Remaining', value: (r) => r.remainingWithDistributor },
     { key: 'returnable', label: 'Returnable', value: (r) => r.returnableQuantity },
@@ -281,14 +281,25 @@ export function SaleOrReturnPositionListPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Sale-or-Return Stock"
+        wrapActions
+        title="Sale-or-Return Stock by Dispatch"
         subtitle={
           needsSelector
-            ? 'Dispatched consignment stock for the selected Distributor, quantity reported sold, returned, and remaining'
-            : 'Dispatched consignment stock, quantity reported sold, returned, and remaining'
+            ? 'Dispatch-by-Dispatch consignment positions for the selected Distributor. Use this screen to report sold quantity or request a return against a specific Dispatch.'
+            : 'Dispatch-by-Dispatch consignment positions. Use this screen to report sold quantity or request a return against a specific Dispatch.'
         }
         secondaryActions={
           <>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                navigate(
+                  `/fulfillment/sale-or-return${selectedDistributorId ? `?distributorId=${encodeURIComponent(selectedDistributorId)}` : ''}`,
+                )
+              }
+            >
+              Consolidated by Style
+            </Button>
             {canReport && (
               <Button variant="secondary" onClick={() => navigate('/fulfillment/distributor-sales-reports')}>
                 Report History

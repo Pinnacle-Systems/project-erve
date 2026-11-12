@@ -292,7 +292,7 @@ export async function listRetailStoreInventory(
   }, readOptions);
 }
 
-type SourceRow = Record<string, string | number | bigint | Date | null> & {
+export type SourceRow = Record<string, string | number | bigint | Date | null> & {
   dispatch_id: string;
   dispatch_number: string;
   dispatch_date: Date;
@@ -306,6 +306,72 @@ type SourceRow = Record<string, string | number | bigint | Date | null> & {
   ledger_qty: number | null;
   ledger_source: 'DISTRIBUTOR_CONFIRMED' | 'USER_CONFIRMED' | 'LEGACY_ASSUMED_FULL_RECEIPT' | null;
 };
+
+const num = (v: unknown) => Number(v ?? 0);
+const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
+
+export function toInventorySource(row: SourceRow): RetailStoreInventorySource {
+  const shipped = num(row.shipped);
+  const attested = row.attestation_line_id !== null ? num(row.attested_qty) : null;
+  const ledger = row.ledger_qty === null ? null : num(row.ledger_qty);
+  const mode = row.purchase_mode;
+  const raw: RawInventoryComponents = {
+    ...EMPTY_COMPONENTS,
+    shipped,
+    ledger: ledger ?? 0,
+    ledgerCount: ledger === null ? 0 : 1,
+    sold: num(row.sold_qty),
+    returned: num(row.returned_qty),
+    approved: num(row.approved_qty),
+    pending: num(row.pending_qty),
+  };
+  return {
+    erveDispatchId: row.dispatch_id,
+    erveDispatchNumber: row.dispatch_number,
+    dispatchDate: row.dispatch_date.toISOString(),
+    ervePackingListNumber: String(row.erve_packing_list_number),
+    saleOrderId: String(row.sale_order_id),
+    saleOrderNumber: String(row.sale_order_number),
+    saleOrderLineId: row.sol_id,
+    purchaseMode: mode,
+    styleId: String(row.style_id),
+    styleNumber: String(row.style_number),
+    styleName: String(row.style_name),
+    sizeId: String(row.size_id),
+    sizeCode: String(row.size_code),
+    sizeLabel: String(row.size_label),
+    dispatchDestination: {
+      label: str(row.pl_label),
+      storeCode: str(row.pl_store_code),
+      addressLine1: str(row.pl_address1),
+      city: str(row.pl_city),
+      state: str(row.pl_state),
+      postalCode: str(row.pl_postal_code),
+    },
+    orderDestination: {
+      destinationId: String(row.destination_id),
+      retailStoreId: str(row.retail_store_id),
+      label: str(row.sod_label),
+      storeCode: str(row.sod_store_code),
+      addressLine1: str(row.sod_address1),
+      city: str(row.sod_city),
+      state: str(row.sod_state),
+      postalCode: str(row.sod_postal_code),
+    },
+    shippedQuantity: shipped,
+    receipt: {
+      status: attested === null ? 'AWAITING' : 'ATTESTED',
+      receivedQuantity: attested,
+      receivedAt: attested === null ? null : (row.receipt_received_at?.toISOString() ?? null),
+      ledgerDisposition: attested === null ? null : row.receipt_disposition,
+    },
+    ledger: { quantity: ledger, source: ledger === null ? null : row.ledger_source },
+    shortageQuantity: attested === null ? null : Math.max(0, shipped - attested),
+    discrepancy: attested !== null && ledger !== null && attested !== ledger,
+    qr: { cartonCount: num(row.carton_count), confirmedCartonCount: num(row.confirmed_count) },
+    saleReturn: toMeasures(raw, mode).saleReturn,
+  };
+}
 
 export async function listRetailStoreInventorySources(
   actor: CurrentUser,
@@ -328,70 +394,7 @@ export async function listRetailStoreInventorySources(
   const hasMore = fetched.length > query.limit;
   const rows = hasMore ? fetched.slice(0, query.limit) : fetched;
 
-  const num = (v: unknown) => Number(v ?? 0);
-  const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
-  const items: RetailStoreInventorySource[] = rows.map((row) => {
-    const shipped = num(row.shipped);
-    const attested = row.attestation_line_id !== null ? num(row.attested_qty) : null;
-    const ledger = row.ledger_qty === null ? null : num(row.ledger_qty);
-    const mode = row.purchase_mode;
-    const raw: RawInventoryComponents = {
-      ...EMPTY_COMPONENTS,
-      shipped,
-      ledger: ledger ?? 0,
-      ledgerCount: ledger === null ? 0 : 1,
-      sold: num(row.sold_qty),
-      returned: num(row.returned_qty),
-      approved: num(row.approved_qty),
-      pending: num(row.pending_qty),
-    };
-    return {
-      erveDispatchId: row.dispatch_id,
-      erveDispatchNumber: row.dispatch_number,
-      dispatchDate: row.dispatch_date.toISOString(),
-      ervePackingListNumber: String(row.erve_packing_list_number),
-      saleOrderId: String(row.sale_order_id),
-      saleOrderNumber: String(row.sale_order_number),
-      saleOrderLineId: row.sol_id,
-      purchaseMode: mode,
-      styleId: String(row.style_id),
-      styleNumber: String(row.style_number),
-      styleName: String(row.style_name),
-      sizeId: String(row.size_id),
-      sizeCode: String(row.size_code),
-      sizeLabel: String(row.size_label),
-      dispatchDestination: {
-        label: str(row.pl_label),
-        storeCode: str(row.pl_store_code),
-        addressLine1: str(row.pl_address1),
-        city: str(row.pl_city),
-        state: str(row.pl_state),
-        postalCode: str(row.pl_postal_code),
-      },
-      orderDestination: {
-        destinationId: String(row.destination_id),
-        retailStoreId: str(row.retail_store_id),
-        label: str(row.sod_label),
-        storeCode: str(row.sod_store_code),
-        addressLine1: str(row.sod_address1),
-        city: str(row.sod_city),
-        state: str(row.sod_state),
-        postalCode: str(row.sod_postal_code),
-      },
-      shippedQuantity: shipped,
-      receipt: {
-        status: attested === null ? 'AWAITING' : 'ATTESTED',
-        receivedQuantity: attested,
-        receivedAt: attested === null ? null : (row.receipt_received_at?.toISOString() ?? null),
-        ledgerDisposition: attested === null ? null : row.receipt_disposition,
-      },
-      ledger: { quantity: ledger, source: ledger === null ? null : row.ledger_source },
-      shortageQuantity: attested === null ? null : Math.max(0, shipped - attested),
-      discrepancy: attested !== null && ledger !== null && attested !== ledger,
-      qr: { cartonCount: num(row.carton_count), confirmedCartonCount: num(row.confirmed_count) },
-      saleReturn: toMeasures(raw, mode).saleReturn,
-    };
-  });
+  const items = rows.map(toInventorySource);
 
   const last = rows.at(-1);
   return {
