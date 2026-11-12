@@ -593,17 +593,51 @@ export function canSubmitDistributorReturn(user: RoleHolder): boolean {
 }
 
 /**
- * Roles that may approve/reject a Distributor Return and record its credit
- * note reference — the BRD's "Finance team approval" (10.13), which maps to
- * Accountant in this role set, exactly like INVOICE_HANDOFF_MUTATION_ROLES.
- * Also gates cancelling a return once it is APPROVED (before receipt, and
- * only while no credit note has been recorded — see
- * distributor-return.service.ts).
+ * Roles that may approve or reject a SUBMITTED Distributor Return request.
+ * Confirmed business rule (Nov 2026): the Merchandiser approves/rejects, the
+ * Distributor only submits, and Accountant is deliberately NOT an approver
+ * (Accountant owns the Credit Note — see DISTRIBUTOR_RETURN_CREDIT_NOTE_ROLES).
+ * ADMIN is the administrative override.
+ *
+ * This list gates approve/reject ONLY. It no longer gates cancellation or the
+ * credit note: those have their own permissions below so that changing who
+ * approves can never silently change who may cancel or bill.
  */
-export const DISTRIBUTOR_RETURN_APPROVE_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+export const DISTRIBUTOR_RETURN_APPROVE_ROLES = ['ADMIN', 'MERCHANDISER'] as const satisfies readonly Role[];
 
 export function canApproveDistributorReturn(user: RoleHolder): boolean {
   return hasAnyRole(user, DISTRIBUTOR_RETURN_APPROVE_ROLES);
+}
+
+/**
+ * Roles that may record (or update) a Distributor Return's Credit Note
+ * reference and date once the return is APPROVED or RECEIVED. Financial
+ * documentation is an Accountant responsibility; ADMIN is the override.
+ * Merchandiser is deliberately excluded.
+ */
+export const DISTRIBUTOR_RETURN_CREDIT_NOTE_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canRecordDistributorReturnCreditNote(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISTRIBUTOR_RETURN_CREDIT_NOTE_ROLES);
+}
+
+/**
+ * Roles that may cancel a Distributor Return on the "operations" side: a
+ * SUBMITTED request, or an APPROVED one before any Credit Note has been
+ * recorded. The submitting Distributor's own cancel of a SUBMITTED request
+ * is governed separately by DISTRIBUTOR_RETURN_SUBMIT_ROLES + own-distributor
+ * scoping (service-enforced).
+ *
+ * PRESERVED, NOT RE-DECIDED: before the approval correction this was the same
+ * list as the approvers (ADMIN, ACCOUNTANT). It is frozen here at exactly that
+ * membership so the correction does not change cancellation behavior.
+ * Whether Merchandiser (the new approver) should also be able to cancel is an
+ * open business decision — see docs/implementation/distributor-return-approval-roles.md.
+ */
+export const DISTRIBUTOR_RETURN_CANCEL_ROLES = ['ADMIN', 'ACCOUNTANT'] as const satisfies readonly Role[];
+
+export function canCancelDistributorReturnAsOperations(user: RoleHolder): boolean {
+  return hasAnyRole(user, DISTRIBUTOR_RETURN_CANCEL_ROLES);
 }
 
 /**

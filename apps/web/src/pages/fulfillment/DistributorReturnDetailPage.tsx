@@ -13,7 +13,9 @@ import { SourceQuantityInputs } from '../../components/style-size-grid/SourceQua
 import { groupSourceLinesByStyle, type StyleSizeMatrixRowModel } from './style-size-grouping.js';
 import {
   canApproveDistributorReturns,
+  canCancelDistributorReturnsAsOperations,
   canReceiveDistributorReturns,
+  canRecordDistributorReturnCreditNotes,
   canSubmitDistributorReturns,
 } from '../../auth/permissions.js';
 import { useAuth } from '../../auth/AuthContext.js';
@@ -60,6 +62,8 @@ export function DistributorReturnDetailPage() {
   const { user } = useAuth();
   const isDistributor = Boolean(user?.roles.includes('DISTRIBUTOR'));
   const canApprove = canApproveDistributorReturns(user);
+  const canRecordCreditNote = canRecordDistributorReturnCreditNotes(user);
+  const canCancelAsOperations = canCancelDistributorReturnsAsOperations(user);
   const canReceive = canReceiveDistributorReturns(user);
   const canSubmitOwn = canSubmitDistributorReturns(user) && isDistributor;
 
@@ -172,7 +176,7 @@ export function DistributorReturnDetailPage() {
   const hasCreditNote = Boolean(record.creditNoteReference);
   const canCancel =
     (canSubmitOwn && record.status === 'SUBMITTED') ||
-    (canApprove && (record.status === 'SUBMITTED' || (record.status === 'APPROVED' && !hasCreditNote)));
+    (canCancelAsOperations && (record.status === 'SUBMITTED' || (record.status === 'APPROVED' && !hasCreditNote)));
 
   return (
     <div className="space-y-6">
@@ -243,10 +247,10 @@ export function DistributorReturnDetailPage() {
       </Panel>
 
       {canApprove && record.status === 'SUBMITTED' && (
-        <Panel title="Finance Review">
+        <Panel title="Return Approval">
           <div className="space-y-3">
             <StyleSizeMetricMatrix
-              label="Finance review by Style and Size"
+              label="Return approval by Style and Size"
               columns={matrix.columns}
               rows={matrix.rows}
               context={(row) => <ReturnLineContext row={row} />}
@@ -319,7 +323,7 @@ export function DistributorReturnDetailPage() {
         </Panel>
       )}
 
-      {canApprove && (record.status === 'APPROVED' || record.status === 'RECEIVED') && (
+      {canRecordCreditNote && (record.status === 'APPROVED' || record.status === 'RECEIVED') && (
         <Panel title={hasCreditNote ? 'Credit Note' : 'Record Credit Note'}>
           <div className="flex flex-wrap items-end gap-3" onKeyDown={createEnterToNextHandler()}>
             <TextField

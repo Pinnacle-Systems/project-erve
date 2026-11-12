@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import {
   DISTRIBUTOR_RETURN_APPROVE_ROLES,
+  DISTRIBUTOR_RETURN_CANCEL_ROLES,
+  DISTRIBUTOR_RETURN_CREDIT_NOTE_ROLES,
   DISTRIBUTOR_RETURN_RECEIVE_ROLES,
   DISTRIBUTOR_RETURN_SUBMIT_ROLES,
   SALE_OR_RETURN_POSITION_VIEW_ROLES,
@@ -26,12 +28,14 @@ distributorReturnsRouter.use(requireAuth);
 const canView = requireRoles(...SALE_OR_RETURN_POSITION_VIEW_ROLES);
 const canSubmit = requireRoles(...DISTRIBUTOR_RETURN_SUBMIT_ROLES);
 const canApprove = requireRoles(...DISTRIBUTOR_RETURN_APPROVE_ROLES);
+const canRecordCreditNote = requireRoles(...DISTRIBUTOR_RETURN_CREDIT_NOTE_ROLES);
 const canReceive = requireRoles(...DISTRIBUTOR_RETURN_RECEIVE_ROLES);
-// Cancel is allowed for either the submitting Distributor or Finance/Admin,
-// depending on the return's current status — the service enforces the
-// precise rule, this route just requires the caller be one of the two
+// Cancel is allowed for either the submitting Distributor or the operations
+// cancel roles (Accountant/Admin — unchanged by the Merchandiser-approval
+// correction), depending on the return's current status — the service enforces
+// the precise rule, this route just requires the caller be one of the two
 // candidate actor sets at all.
-const canAttemptCancel = requireRoles(...DISTRIBUTOR_RETURN_SUBMIT_ROLES, ...DISTRIBUTOR_RETURN_APPROVE_ROLES);
+const canAttemptCancel = requireRoles(...DISTRIBUTOR_RETURN_SUBMIT_ROLES, ...DISTRIBUTOR_RETURN_CANCEL_ROLES);
 
 distributorReturnsRouter.get(
   '/',
@@ -84,7 +88,7 @@ distributorReturnsRouter.post(
 
 distributorReturnsRouter.post(
   '/:id/credit-note',
-  canApprove,
+  canRecordCreditNote,
   asyncHandler(async (req, res) => {
     const input = recordDistributorReturnCreditNoteSchema.parse(req.body);
     const record = await distributorReturnService.recordDistributorReturnCreditNote(req.user!, req.params.id! as string, input);
