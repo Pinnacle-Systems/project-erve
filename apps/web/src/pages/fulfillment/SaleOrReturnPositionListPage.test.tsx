@@ -560,7 +560,7 @@ describe('SaleOrReturnPositionListPage — grouped Style x Size matrix (ISS-023 
     expect(cells(blocks()[0]!, 'Received')).toEqual(['Received', '8', '30', '38']);
     expect(cells(blocks()[0]!, 'Actual Sold')).toEqual(['Actual Sold', '2', '5', '7']);
     expect(cells(blocks()[0]!, 'Returned')).toEqual(['Returned', '1', '0', '1']);
-    expect(cells(blocks()[0]!, 'Awaiting Receipt')).toEqual(['Awaiting Receipt', '1', '0', '1']);
+    expect(cells(blocks()[0]!, 'Approved Returns Awaiting Receipt')).toEqual(['Approved Returns Awaiting Receipt', '1', '0', '1']);
     expect(cells(blocks()[0]!, 'Pending Request')).toEqual(['Pending Request', '0', '5', '5']);
     expect(cells(blocks()[0]!, 'Remaining')).toEqual(['Remaining', '5', '25', '30']);
     expect(cells(blocks()[0]!, 'Returnable')).toEqual(['Returnable', '4', '20', '24']);

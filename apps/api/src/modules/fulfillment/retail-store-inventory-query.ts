@@ -98,7 +98,7 @@ function pairsCte(f: InventoryScopeFilters): Prisma.Sql {
  * Dispatches already selected (never a whole-table scan), then LEFT JOINed —
  * one pass, no per-row follow-up queries.
  */
-function pairComponentsCte(f: InventoryScopeFilters): Prisma.Sql {
+export function pairComponentsCte(f: InventoryScopeFilters): Prisma.Sql {
   return Prisma.sql`
     ${pairsCte(f)},
     pair_components AS (
@@ -149,7 +149,7 @@ function pairComponentsCte(f: InventoryScopeFilters): Prisma.Sql {
  * ledger row is NULL (never zero) so counts can tell "none" from "0".
  * Sales/Returns are only meaningful for SALE_RETURN sources.
  */
-const SUMS_SQL = Prisma.sql`
+export const SUMS_SQL = Prisma.sql`
   COUNT(*)::int AS source_count,
   COALESCE(SUM(shipped), 0)::bigint AS shipped,
   COALESCE(SUM(CASE WHEN attestation_line_id IS NULL THEN shipped ELSE 0 END), 0)::bigint AS awaiting,
@@ -297,6 +297,7 @@ export function sourcesQuery(f: InventoryScopeFilters, cursor: SourceCursor | nu
       sod.label AS sod_label, sod.store_code AS sod_store_code, sod.address_line1 AS sod_address1,
       sod.city AS sod_city, sod.state AS sod_state, sod.postal_code AS sod_postal_code,
       st.style_number, st.style_name, sz.code AS size_code, sz.label AS size_label,
+      dist.code AS distributor_code, dist.name AS distributor_name,
       qr.carton_count, qr.confirmed_count
     FROM page pg
     INNER JOIN sale_orders so ON so.id = pg.sale_order_id
@@ -304,6 +305,7 @@ export function sourcesQuery(f: InventoryScopeFilters, cursor: SourceCursor | nu
     INNER JOIN sale_order_destinations sod ON sod.id = pg.destination_id
     INNER JOIN styles st ON st.id = pg.style_id
     INNER JOIN sizes sz ON sz.id = pg.size_id
+    INNER JOIN distributors dist ON dist.id = pg.distributor_id
     LEFT JOIN LATERAL (
       SELECT COUNT(DISTINCT c.id)::int AS carton_count, COUNT(DISTINCT dc.id)::int AS confirmed_count
       FROM factory_packing_carton_lines l

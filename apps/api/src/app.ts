@@ -53,6 +53,7 @@ import { packingAuditRouter } from './modules/fulfillment/packing-audit.routes.j
 import { ervePackingListsRouter, erveDispatchesRouter } from './modules/fulfillment/erve-dispatch.routes.js';
 import { reconciliationQueueRouter, dispatchReconciliationRouter } from './modules/fulfillment/post-dispatch-reconciliation.routes.js';
 import { retailStoreInventoryRouter } from './modules/fulfillment/retail-store-inventory.routes.js';
+import { saleOrReturnStockRouter } from './modules/fulfillment/sale-or-return-stock.routes.js';
 import { invoiceHandoffsRouter } from './modules/fulfillment/invoice-handoff.routes.js';
 import { saleOrReturnPositionsRouter, distributorSalesReportsRouter } from './modules/fulfillment/distributor-sales-report.routes.js';
 import { distributorReturnsRouter } from './modules/fulfillment/distributor-return.routes.js';
@@ -207,6 +208,7 @@ export function createApp(
   app.use('/erve-dispatches/:id/reconciliation', dispatchReconciliationRouter);
   app.use('/invoice-handoffs', invoiceHandoffsRouter);
   app.use('/sale-or-return-positions', saleOrReturnPositionsRouter);
+  app.use('/sale-or-return-stock', saleOrReturnStockRouter);
   app.use('/retail-store-inventory', retailStoreInventoryRouter);
   app.use('/distributor-sales-reports', distributorSalesReportsRouter);
   app.use('/distributor-returns', distributorReturnsRouter);
