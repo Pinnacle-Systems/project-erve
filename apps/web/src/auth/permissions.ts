@@ -32,6 +32,8 @@ import {
   canSubmitDistributorSalesReport,
   canSubmitDistributorReturn,
   canApproveDistributorReturn,
+  canCancelDistributorReturnAsOperations,
+  canRecordDistributorReturnCreditNote,
   canReceiveDistributorReturn,
   canReadFactoryDispatchBroadly,
   canPerformQaOperation,
@@ -446,8 +448,18 @@ export const canSubmitDistributorSalesReports = (user: AuthUser | null | undefin
 export const canSubmitDistributorReturns = (user: AuthUser | null | undefined) =>
   Boolean(user && canSubmitDistributorReturn(user));
 
+// Approve / Reject a SUBMITTED return: Merchandiser (+ Admin override). Not Accountant.
 export const canApproveDistributorReturns = (user: AuthUser | null | undefined) =>
   Boolean(user && canApproveDistributorReturn(user));
+
+// Record / update the Credit Note reference + date: Accountant (+ Admin override). Not Merchandiser.
+export const canRecordDistributorReturnCreditNotes = (user: AuthUser | null | undefined) =>
+  Boolean(user && canRecordDistributorReturnCreditNote(user));
+
+// Operations-side Cancel Return (Accountant/Admin) — deliberately independent of approval;
+// the Distributor's own cancel of a SUBMITTED request is canSubmitDistributorReturns + isDistributor.
+export const canCancelDistributorReturnsAsOperations = (user: AuthUser | null | undefined) =>
+  Boolean(user && canCancelDistributorReturnAsOperations(user));
 
 export const canReceiveDistributorReturns = (user: AuthUser | null | undefined) =>
   Boolean(user && canReceiveDistributorReturn(user));

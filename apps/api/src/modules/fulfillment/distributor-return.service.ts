@@ -1,5 +1,12 @@
 import { createId } from '@erve/shared';
-import { canApproveDistributorReturn, canReceiveDistributorReturn, canSubmitDistributorReturn, canViewSaleOrReturnPosition } from '@erve/shared';
+import {
+  canApproveDistributorReturn,
+  canCancelDistributorReturnAsOperations,
+  canReceiveDistributorReturn,
+  canRecordDistributorReturnCreditNote,
+  canSubmitDistributorReturn,
+  canViewSaleOrReturnPosition,
+} from '@erve/shared';
 import { Prisma, prisma } from '../../db/prisma.js';
 import { getSoleDistributorId } from '../../auth/access.js';
 import type { CurrentUser } from '../../auth/current-user.js';
@@ -292,7 +299,7 @@ export async function submitDistributorReturn(actor: CurrentUser, input: SubmitD
 }
 
 // ---------------------------------------------------------------------------
-// Approve / Reject — Accountant/Admin finance review. Approving reserves
+// Approve / Reject — Merchandiser/Admin approval (Accountant is not an approver). Approving reserves
 // approvedQuantity against Actual Sale reporting too (availableForActualSale);
 // rejecting releases the request entirely.
 // ---------------------------------------------------------------------------
@@ -448,7 +455,7 @@ export interface RecordDistributorReturnCreditNoteInput {
 }
 
 export async function recordDistributorReturnCreditNote(actor: CurrentUser, id: string, input: RecordDistributorReturnCreditNoteInput) {
-  if (!canApproveDistributorReturn(actor)) {
+  if (!canRecordDistributorReturnCreditNote(actor)) {
     throw HttpError.forbidden('You do not have permission to record a credit note for a Distributor Return');
   }
 
@@ -585,7 +592,7 @@ export async function receiveDistributorReturn(actor: CurrentUser, id: string, i
 
 // ---------------------------------------------------------------------------
 // Cancel — Distributor may cancel their own request while SUBMITTED;
-// Accountant/Admin may cancel while SUBMITTED or APPROVED, but never once a
+// Accountant/Admin (DISTRIBUTOR_RETURN_CANCEL_ROLES) may cancel while SUBMITTED or APPROVED, but never once a
 // credit note has been recorded (a financial document must not survive a
 // cancelled business event — see the schema module doc).
 // ---------------------------------------------------------------------------
@@ -603,7 +610,7 @@ export async function cancelDistributorReturn(actor: CurrentUser, id: string, in
     if (existing.version !== input.expectedVersion) throw HttpError.staleVersion(existing.version);
 
     const isOwnDistributor = canSubmitDistributorReturn(actor) && isOwnDistributorActor(actor, existing.distributorId);
-    const isOps = canApproveDistributorReturn(actor);
+    const isOps = canCancelDistributorReturnAsOperations(actor);
 
     if (existing.status === 'SUBMITTED') {
       if (!isOwnDistributor && !isOps) {
@@ -611,7 +618,7 @@ export async function cancelDistributorReturn(actor: CurrentUser, id: string, in
       }
     } else if (existing.status === 'APPROVED') {
       if (!isOps) {
-        throw HttpError.forbidden('Only Finance/Admin may cancel an approved Distributor Return');
+        throw HttpError.forbidden('Only Accountant/Admin may cancel an approved Distributor Return');
       }
       if (existing.creditNoteReference != null) {
         throw HttpError.conflict('A credit note has already been recorded for this return — it can no longer be cancelled');

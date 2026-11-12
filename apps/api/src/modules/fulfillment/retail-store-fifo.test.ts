@@ -375,7 +375,7 @@ describe('ISS-089 Store-level FIFO — Request Return', { timeout: 90000 }, () =
     const approved = first.body.data.distributorReturn;
     await request(app)
       .post(`/distributor-returns/${approved.id}/approve`)
-      .set('Authorization', `Bearer ${w.accountantToken}`)
+      .set('Authorization', `Bearer ${w.merchToken}`)
       .send({ expectedVersion: approved.version, lines: approved.lines.map((l: { id: string; requestedQuantity: number }) => ({ id: l.id, approvedQuantity: l.requestedQuantity })) })
       .expect(200);
 

@@ -366,18 +366,17 @@ describe('A6 Retail Store Inventory — SALE_RETURN position', () => {
     const store = await createTestRetailStore(w.distributor.id);
     const f = await ship(w, { retailStoreId: store.id, styleId: style.id, sizeId: m!.id, quantity: 100 });
     await confirmErveDispatchDelivery(app, f.merchToken, f.dispatch!.id, f.dispatch!.version, [{ saleOrderLineId: f.saleOrderLineId, receivedQuantity: 100 }]);
-    const accountant = (await createRoleToken('ACCOUNTANT')).token;
     const lineBody = (quantity: number) => ({ distributorId: w.distributor.id, returnDate: '2026-09-01', returnReason: 'Unsold', lines: [{ erveDispatchId: f.dispatch!.id, saleOrderLineId: f.saleOrderLineId, requestedQuantity: quantity }] });
     const post = (path: string, token: string, body: object) => request(app).post(path).set('Authorization', `Bearer ${token}`).send(body);
 
     await post('/distributor-sales-reports', w.distributorToken, { distributorId: w.distributor.id, reportDate: '2026-08-01', lines: [{ erveDispatchId: f.dispatch!.id, saleOrderLineId: f.saleOrderLineId, quantitySold: 25 }] }).expect(201);
     // 30 physically returned
     const r1 = (await post('/distributor-returns', w.distributorToken, lineBody(30)).expect(201)).body.data;
-    const a1 = (await post(`/distributor-returns/${r1.id}/approve`, accountant, { expectedVersion: r1.version, lines: [{ id: r1.lines[0].id, approvedQuantity: 30 }] }).expect(200)).body.data;
+    const a1 = (await post(`/distributor-returns/${r1.id}/approve`, f.merchToken, { expectedVersion: r1.version, lines: [{ id: r1.lines[0].id, approvedQuantity: 30 }] }).expect(200)).body.data;
     await post(`/distributor-returns/${a1.id}/receive`, f.merchToken, { expectedVersion: a1.version, lines: [{ id: r1.lines[0].id, receivedQuantity: 30 }] }).expect(200);
     // 10 approved, awaiting physical receipt
     const r2 = (await post('/distributor-returns', w.distributorToken, lineBody(10)).expect(201)).body.data;
-    await post(`/distributor-returns/${r2.id}/approve`, accountant, { expectedVersion: r2.version, lines: [{ id: r2.lines[0].id, approvedQuantity: 10 }] }).expect(200);
+    await post(`/distributor-returns/${r2.id}/approve`, f.merchToken, { expectedVersion: r2.version, lines: [{ id: r2.lines[0].id, approvedQuantity: 10 }] }).expect(200);
     // 5 pending request
     await post('/distributor-returns', w.distributorToken, lineBody(5)).expect(201);
 

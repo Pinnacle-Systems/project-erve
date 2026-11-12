@@ -2980,7 +2980,7 @@ model DistributorSalesReportLine {
 // ReturnedStockLot, created only once physical receipt is confirmed.
 //
 // Lifecycle: SUBMITTED (Distributor request, reserves only against other
-// return requests) -> APPROVED (Accountant/Admin finance approval, sets
+// return requests) -> APPROVED (Merchandiser/Admin approval, sets
 // approvedQuantity, reserves against Actual Sale reporting too) -> RECEIVED
 // (Merchandiser/Admin physical receipt, sets receivedQuantity, creates
 // ReturnedStockLot) — or SUBMITTED -> REJECTED / (SUBMITTED|APPROVED) ->

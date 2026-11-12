@@ -182,7 +182,7 @@ describe('DistributorReturnDetailPage grouped Style x Size (ISS-023 / DEMO-003)'
     expect(tableOf('Return lines by Style and Size').querySelectorAll('tbody')).toHaveLength(2);
   });
 
-  it('Finance review: one approved input per original line id, ceilings from the request, and the unchanged approve payload', async () => {
+  it('Return approval (Merchandiser): one approved input per original line id, ceilings from the request, and the unchanged approve payload', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: buildReturn() } });
     await renderPage(async () => ({
       data: {
@@ -194,9 +194,9 @@ describe('DistributorReturnDetailPage grouped Style x Size (ISS-023 / DEMO-003)'
           ],
         }),
       },
-    }), 'ACCOUNTANT');
+    }), 'MERCHANDISER');
 
-    const table = tableOf('Finance review by Style and Size');
+    const table = tableOf('Return approval by Style and Size');
     const inputs = Array.from(table.querySelectorAll<HTMLInputElement>('input[type="number"]'));
     expect(inputs).toHaveLength(3);
     expect(inputs.map((input) => input.value)).toEqual(['3', '6', '8']);
@@ -251,5 +251,87 @@ describe('DistributorReturnDetailPage grouped Style x Size (ISS-023 / DEMO-003)'
     await renderPage(async () => ({ data: { data: buildReturn({ lines: sizes }) } }), 'SENIOR_MANAGEMENT');
     expect(container.querySelector('input[type="number"]')).toBeNull();
     expect(tableOf('Return lines by Style and Size')).not.toBeNull();
+  });
+});
+
+describe('DistributorReturnDetailPage role matrix (Merchandiser approval correction)', () => {
+  const buttonLabels = () => Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+  const approvable = () => buildReturn({ status: 'SUBMITTED', lines: [returnLine({ approvedQuantity: null })] });
+  const approvedRecord = (overrides: Partial<DistributorReturnView> = {}) =>
+    buildReturn({ status: 'APPROVED', lines: [returnLine({ approvedQuantity: 5 })], ...overrides });
+  const renderAs = (role: Role, record: DistributorReturnView) => renderPage(async () => ({ data: { data: record } }), role);
+
+  it.each(['MERCHANDISER', 'ADMIN'] as const)('%s sees the Return Approval panel with Approve and Reject on a SUBMITTED request', async (role) => {
+    await renderAs(role, approvable());
+    expect(content()).toContain('Return Approval');
+    expect(content()).not.toContain('Finance Review');
+    expect(buttonLabels()).toEqual(expect.arrayContaining(['Approve', 'Reject']));
+  });
+
+  it.each(['ACCOUNTANT', 'DISTRIBUTOR', 'SENIOR_MANAGEMENT'] as const)('%s sees no Return Approval panel, Approve or Reject', async (role) => {
+    await renderAs(role, approvable());
+    expect(content()).not.toContain('Return Approval');
+    expect(buttonLabels()).not.toContain('Approve');
+    expect(buttonLabels()).not.toContain('Reject');
+  });
+
+  it.each(['ACCOUNTANT', 'ADMIN'] as const)('%s sees the Credit Note panel on an APPROVED return and may record it', async (role) => {
+    await renderAs(role, approvedRecord());
+    expect(content()).toContain('Record Credit Note');
+    expect(buttonLabels()).toContain('Record');
+  });
+
+  it('ACCOUNTANT may update an existing Credit Note on a RECEIVED return', async () => {
+    await renderAs('ACCOUNTANT', approvedRecord({ status: 'RECEIVED', creditNoteReference: 'CN-1', creditNoteDate: '2026-09-02T00:00:00.000Z' }));
+    expect(buttonLabels()).toContain('Update');
+  });
+
+  it.each(['MERCHANDISER', 'DISTRIBUTOR', 'SENIOR_MANAGEMENT'] as const)('%s has no Credit Note entry panel', async (role) => {
+    await renderAs(role, approvedRecord());
+    expect(content()).not.toContain('Record Credit Note');
+    expect(buttonLabels()).not.toContain('Record');
+  });
+
+  it('physical receipt stays Merchandiser/Admin and is not offered to Accountant', async () => {
+    await renderAs('MERCHANDISER', approvedRecord());
+    expect(content()).toContain('Record Physical Receipt');
+    act(() => root.unmount());
+    root = createRoot(container);
+    await renderAs('ACCOUNTANT', approvedRecord());
+    expect(content()).not.toContain('Record Physical Receipt');
+  });
+
+  describe('Cancel Return keeps its pre-correction audience (Accountant/Admin ops cancel; Distributor own SUBMITTED)', () => {
+    it('Accountant and Admin can cancel a SUBMITTED request and an APPROVED request with no Credit Note', async () => {
+      for (const role of ['ACCOUNTANT', 'ADMIN'] as const) {
+        await renderAs(role, approvable());
+        expect(buttonLabels()).toContain('Cancel Return');
+        act(() => root.unmount());
+        root = createRoot(container);
+        await renderAs(role, approvedRecord());
+        expect(buttonLabels()).toContain('Cancel Return');
+        act(() => root.unmount());
+        root = createRoot(container);
+      }
+    });
+
+    it('nobody can cancel an APPROVED return once a Credit Note exists', async () => {
+      await renderAs('ACCOUNTANT', approvedRecord({ creditNoteReference: 'CN-1', creditNoteDate: '2026-09-02T00:00:00.000Z' }));
+      expect(buttonLabels()).not.toContain('Cancel Return');
+    });
+
+    it('the submitting Distributor can cancel its own SUBMITTED request but not an APPROVED one', async () => {
+      await renderAs('DISTRIBUTOR', approvable());
+      expect(buttonLabels()).toContain('Cancel Return');
+      act(() => root.unmount());
+      root = createRoot(container);
+      await renderAs('DISTRIBUTOR', approvedRecord());
+      expect(buttonLabels()).not.toContain('Cancel Return');
+    });
+
+    it('Merchandiser is NOT newly given Cancel Return by gaining approval', async () => {
+      await renderAs('MERCHANDISER', approvable());
+      expect(buttonLabels()).not.toContain('Cancel Return');
+    });
   });
 });

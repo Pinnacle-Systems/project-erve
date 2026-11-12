@@ -77,10 +77,9 @@ describe('Distributor Return — acceptance scenario', () => {
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
 
-    const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
     expect(approved.body.data.status).toBe('APPROVED');
@@ -124,7 +123,7 @@ describe('Distributor Return — preferred partial-return ordering vs credit-not
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
 
@@ -157,7 +156,7 @@ describe('Distributor Return — preferred partial-return ordering vs credit-not
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
 
@@ -281,10 +280,9 @@ describe('Distributor Return — approval and rejection', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(100);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 10 }] })
       .expect(200);
 
@@ -295,10 +293,9 @@ describe('Distributor Return — approval and rejection', () => {
   it('rejecting releases the full reservation', async () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(50);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 50).expect(201);
-    const finToken = await accountantToken();
     await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/reject`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, rejectionReason: 'Return window has closed' })
       .expect(200);
 
@@ -309,10 +306,9 @@ describe('Distributor Return — approval and rejection', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 0 }] })
       .expect(400);
   });
@@ -336,10 +332,9 @@ describe('Distributor Return — approval and rejection', () => {
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30, 'End of season unsold stock').expect(201);
     expect(submitted.body.data.returnReason).toBe('End of season unsold stock');
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }], approvalRemarks: 'Approved against settlement dated 2026-09-01' })
       .expect(200);
     expect(approved.body.data.returnReason).toBe('End of season unsold stock');
@@ -352,10 +347,9 @@ describe('Distributor Return — receiving', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
     await request(app)
@@ -369,10 +363,9 @@ describe('Distributor Return — receiving', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 20 }] })
       .expect(200);
     await request(app)
@@ -402,7 +395,7 @@ describe('Distributor Return — cancellation', () => {
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 50 }] })
       .expect(200);
     await request(app)
@@ -420,7 +413,7 @@ describe('Distributor Return — cancellation', () => {
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
     const withCreditNote = await request(app)
@@ -436,14 +429,13 @@ describe('Distributor Return — cancellation', () => {
       .expect(409);
   });
 
-  it('Distributor cannot cancel once APPROVED (only Finance/Admin may)', async () => {
+  it('Distributor cannot cancel once APPROVED (only Accountant/Admin may)', async () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
     await request(app)
@@ -462,7 +454,7 @@ describe('Distributor Return — immutability of terminal states', () => {
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
     const received = await request(app)
@@ -473,12 +465,12 @@ describe('Distributor Return — immutability of terminal states', () => {
 
     await request(app)
       .post(`/distributor-returns/${received.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: received.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(409);
     await request(app)
       .post(`/distributor-returns/${received.body.data.id}/reject`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: received.body.data.version, rejectionReason: 'too late' })
       .expect(409);
     await request(app)
@@ -497,15 +489,14 @@ describe('Distributor Return — immutability of terminal states', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
     const rejected = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/reject`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, rejectionReason: 'not eligible' })
       .expect(200);
     await request(app)
       .post(`/distributor-returns/${rejected.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: rejected.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(409);
   });
@@ -516,13 +507,12 @@ describe('Distributor Return — concurrency', () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(20);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 20).expect(201);
     const lineId = submitted.body.data.lines[0].id;
-    const finToken = await accountantToken();
 
     const results = await Promise.allSettled([
       reportActualSale(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 20),
       request(app)
         .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-        .set('Authorization', `Bearer ${finToken}`)
+        .set('Authorization', `Bearer ${fixture.merchToken}`)
         .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 20 }] }),
     ]);
     const statuses = results.map((r) => (r.status === 'fulfilled' ? r.value.status : -1));
@@ -542,18 +532,167 @@ describe('Distributor Return — concurrency', () => {
 });
 
 describe('Distributor Return — authorization', () => {
-  it('forbids Merchandiser and Distributor from approving/rejecting/recording credit notes', async () => {
+  const post = (token: string, path: string, body: object) =>
+    request(app).post(path).set('Authorization', `Bearer ${token}`).send(body);
+
+  it('Merchandiser can approve a SUBMITTED return; Accountant and the submitting Distributor cannot', async () => {
     const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
     const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
     const lineId = submitted.body.data.lines[0].id;
+    const id = submitted.body.data.id;
+    const body = { expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] };
 
-    for (const token of [fixture.merchToken, distributorToken]) {
-      await request(app)
-        .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-        .set('Authorization', `Bearer ${token}`)
-        .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
-        .expect(403);
+    await post(await accountantToken(), `/distributor-returns/${id}/approve`, body).expect(403);
+    await post(distributorToken, `/distributor-returns/${id}/approve`, body).expect(403);
+    // Rejected attempts left the return untouched.
+    expect((await prisma.distributorReturn.findUniqueOrThrow({ where: { id } })).status).toBe('SUBMITTED');
+
+    const approved = await post(fixture.merchToken, `/distributor-returns/${id}/approve`, body).expect(200);
+    expect(approved.body.data.status).toBe('APPROVED');
+    await prisma.auditLog.findFirstOrThrow({ where: { action: 'DISTRIBUTOR_RETURN_APPROVED', entityId: id } });
+  });
+
+  it('Merchandiser can reject a SUBMITTED return; Accountant and the submitting Distributor cannot', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
+    const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const id = submitted.body.data.id;
+    const body = { expectedVersion: submitted.body.data.version, rejectionReason: 'not eligible' };
+
+    await post(await accountantToken(), `/distributor-returns/${id}/reject`, body).expect(403);
+    await post(distributorToken, `/distributor-returns/${id}/reject`, body).expect(403);
+    expect((await prisma.distributorReturn.findUniqueOrThrow({ where: { id } })).status).toBe('SUBMITTED');
+
+    const rejected = await post(fixture.merchToken, `/distributor-returns/${id}/reject`, body).expect(200);
+    expect(rejected.body.data.status).toBe('REJECTED');
+    await prisma.auditLog.findFirstOrThrow({ where: { action: 'DISTRIBUTOR_RETURN_REJECTED', entityId: id } });
+  });
+
+  it('ADMIN retains override access to approve, reject, credit note, receive and cancel', async () => {
+    const { token: adminToken } = await createRoleToken('ADMIN');
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(90);
+
+    // approve -> credit note -> receive
+    const s1 = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const lineId = s1.body.data.lines[0].id;
+    const approved = await post(adminToken, `/distributor-returns/${s1.body.data.id}/approve`, {
+      expectedVersion: s1.body.data.version,
+      lines: [{ id: lineId, approvedQuantity: 30 }],
+    }).expect(200);
+    const withCreditNote = await post(adminToken, `/distributor-returns/${approved.body.data.id}/credit-note`, {
+      expectedVersion: approved.body.data.version,
+      creditNoteReference: 'CN-ADMIN',
+      creditNoteDate: '2026-09-05',
+    }).expect(200);
+    await post(adminToken, `/distributor-returns/${withCreditNote.body.data.id}/receive`, {
+      expectedVersion: withCreditNote.body.data.version,
+      lines: [{ id: lineId, receivedQuantity: 30 }],
+    }).expect(200);
+
+    // reject, then cancel, on two further requests
+    const s2 = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    await post(adminToken, `/distributor-returns/${s2.body.data.id}/reject`, {
+      expectedVersion: s2.body.data.version,
+      rejectionReason: 'admin override',
+    }).expect(200);
+    const s3 = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    await post(adminToken, `/distributor-returns/${s3.body.data.id}/cancel`, { expectedVersion: s3.body.data.version }).expect(200);
+  });
+
+  it('Accountant can record and later update a Credit Note on APPROVED and RECEIVED returns', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
+    const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const lineId = submitted.body.data.lines[0].id;
+    const finToken = await accountantToken();
+    const approved = await post(fixture.merchToken, `/distributor-returns/${submitted.body.data.id}/approve`, {
+      expectedVersion: submitted.body.data.version,
+      lines: [{ id: lineId, approvedQuantity: 30 }],
+    }).expect(200);
+
+    const recorded = await post(finToken, `/distributor-returns/${approved.body.data.id}/credit-note`, {
+      expectedVersion: approved.body.data.version,
+      creditNoteReference: 'CN-1',
+      creditNoteDate: '2026-09-05',
+    }).expect(200);
+    expect(recorded.body.data.creditNoteReference).toBe('CN-1');
+
+    const received = await post(fixture.merchToken, `/distributor-returns/${recorded.body.data.id}/receive`, {
+      expectedVersion: recorded.body.data.version,
+      lines: [{ id: lineId, receivedQuantity: 30 }],
+    }).expect(200);
+    expect(received.body.data.status).toBe('RECEIVED');
+
+    const updated = await post(finToken, `/distributor-returns/${received.body.data.id}/credit-note`, {
+      expectedVersion: received.body.data.version,
+      creditNoteReference: 'CN-1-REV',
+      creditNoteDate: '2026-09-06',
+    }).expect(200);
+    expect(updated.body.data.creditNoteReference).toBe('CN-1-REV');
+    await prisma.auditLog.findFirstOrThrow({ where: { action: 'DISTRIBUTOR_RETURN_CREDIT_NOTE_RECORDED', entityId: updated.body.data.id } });
+  });
+
+  it('Merchandiser, Distributor and Senior Management cannot record a Credit Note (even though Merchandiser approved it)', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
+    const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const lineId = submitted.body.data.lines[0].id;
+    const approved = await post(fixture.merchToken, `/distributor-returns/${submitted.body.data.id}/approve`, {
+      expectedVersion: submitted.body.data.version,
+      lines: [{ id: lineId, approvedQuantity: 30 }],
+    }).expect(200);
+    const { token: smToken } = await createRoleToken('SENIOR_MANAGEMENT');
+
+    for (const token of [fixture.merchToken, distributorToken, smToken]) {
+      await post(token, `/distributor-returns/${approved.body.data.id}/credit-note`, {
+        expectedVersion: approved.body.data.version,
+        creditNoteReference: 'CN-NO',
+        creditNoteDate: '2026-09-05',
+      }).expect(403);
     }
+    const row = await prisma.distributorReturn.findUniqueOrThrow({ where: { id: approved.body.data.id } });
+    expect(row.creditNoteReference).toBeNull();
+    expect(row.version).toBe(approved.body.data.version);
+  });
+
+  it('Senior Management has no Distributor Return mutation permission', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
+    const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const lineId = submitted.body.data.lines[0].id;
+    const { token: smToken } = await createRoleToken('SENIOR_MANAGEMENT');
+    const id = submitted.body.data.id;
+    await post(smToken, `/distributor-returns/${id}/approve`, { expectedVersion: 1, lines: [{ id: lineId, approvedQuantity: 30 }] }).expect(403);
+    await post(smToken, `/distributor-returns/${id}/reject`, { expectedVersion: 1, rejectionReason: 'x' }).expect(403);
+    await post(smToken, `/distributor-returns/${id}/cancel`, { expectedVersion: 1 }).expect(403);
+  });
+
+  it('cancellation audience is unchanged by the approval correction: Merchandiser still cannot cancel; Accountant still can', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(60);
+    const finToken = await accountantToken();
+
+    // SUBMITTED: Merchandiser denied, Accountant allowed.
+    const s1 = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    await post(fixture.merchToken, `/distributor-returns/${s1.body.data.id}/cancel`, { expectedVersion: s1.body.data.version }).expect(403);
+    await post(finToken, `/distributor-returns/${s1.body.data.id}/cancel`, { expectedVersion: s1.body.data.version }).expect(200);
+
+    // APPROVED (by the Merchandiser): Merchandiser denied, Distributor denied, Accountant allowed.
+    const s2 = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    const approved = await post(fixture.merchToken, `/distributor-returns/${s2.body.data.id}/approve`, {
+      expectedVersion: s2.body.data.version,
+      lines: [{ id: s2.body.data.lines[0].id, approvedQuantity: 30 }],
+    }).expect(200);
+    const cancelBody = { expectedVersion: approved.body.data.version };
+    await post(fixture.merchToken, `/distributor-returns/${approved.body.data.id}/cancel`, cancelBody).expect(403);
+    await post(distributorToken, `/distributor-returns/${approved.body.data.id}/cancel`, cancelBody).expect(403);
+    const cancelled = await post(finToken, `/distributor-returns/${approved.body.data.id}/cancel`, cancelBody).expect(200);
+    expect(cancelled.body.data.status).toBe('CANCELLED');
+    await prisma.auditLog.findFirstOrThrow({ where: { action: 'DISTRIBUTOR_RETURN_CANCELLED', entityId: approved.body.data.id } });
+  });
+
+  it('a stale expectedVersion on approve is still rejected for the Merchandiser (optimistic concurrency preserved)', async () => {
+    const { fixture, dispatch, distributorToken } = await deliveredSaleReturnFixture(30);
+    const submitted = await submitReturn(distributorToken, fixture.stock.distributorId, dispatch.id, fixture.saleOrderLineId, 30).expect(201);
+    await post(fixture.merchToken, `/distributor-returns/${submitted.body.data.id}/approve`, {
+      expectedVersion: submitted.body.data.version + 5,
+      lines: [{ id: submitted.body.data.lines[0].id, approvedQuantity: 30 }],
+    }).expect(409);
   });
 
   it('forbids Accountant and Distributor from recording physical receipt', async () => {
@@ -563,7 +702,7 @@ describe('Distributor Return — authorization', () => {
     const finToken = await accountantToken();
     const approved = await request(app)
       .post(`/distributor-returns/${submitted.body.data.id}/approve`)
-      .set('Authorization', `Bearer ${finToken}`)
+      .set('Authorization', `Bearer ${fixture.merchToken}`)
       .send({ expectedVersion: submitted.body.data.version, lines: [{ id: lineId, approvedQuantity: 30 }] })
       .expect(200);
 

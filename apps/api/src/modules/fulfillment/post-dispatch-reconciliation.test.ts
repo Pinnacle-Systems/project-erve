@@ -271,10 +271,9 @@ describe('A5 post-dispatch reconciliation', () => {
       lines: [{ difference: -50 }],
     });
     const pending = await prisma.distributorReturn.findFirstOrThrow({ include: { lines: true } });
-    const finance = await createRoleToken('ACCOUNTANT');
     const approved = await request(app)
       .post(`/distributor-returns/${pending.id}/approve`)
-      .set('Authorization', `Bearer ${finance.token}`)
+      .set('Authorization', `Bearer ${f.merchToken}`)
       .send({
         expectedVersion: pending.version,
         lines: [{ id: pending.lines[0]!.id, approvedQuantity: 5 }],

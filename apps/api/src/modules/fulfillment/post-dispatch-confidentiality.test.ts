@@ -190,7 +190,7 @@ async function buildSide(
   const returnLine = ret.body.data.lines[0] as { id: string };
   const approved = await request(app)
     .post(`/distributor-returns/${ret.body.data.id}/approve`)
-    .set('Authorization', `Bearer ${accountant}`)
+    .set('Authorization', `Bearer ${merch}`)
     .send({
       expectedVersion: ret.body.data.version,
       lines: [{ id: returnLine.id, approvedQuantity: 3 }],
