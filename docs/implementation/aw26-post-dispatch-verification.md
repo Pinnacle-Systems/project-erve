@@ -37,19 +37,36 @@ Base: `origin/main` at `77111c4` (PR #217). Date: 2026-11-12. Engineering compan
 
 Independent database comparison against the sources: 112 of 112 checks pass (Season, Style MRP, size sets, factory price, images byte-equal to the Dashboard, structured addresses, Store GSTIN kept, no non-breaking spaces).
 
+## Quantity views (Style B)
+
+The run keeps three different quantity views apart. They overlap and must not be added together.
+
+| Dispatch     | Shipped | Distributor-attested | Ledger in use | Note                                                                                                 |
+| ------------ | ------: | -------------------: | ------------: | ---------------------------------------------------------------------------------------------------- |
+| 1 (Store V1) |      12 |                   11 |            11 | Size 9: 1 of 2 received, remark recorded                                                             |
+| 4 (Store G1) |      18 |                   17 |            18 | Merchandiser confirmed 18 first; the later receipt of 17 is evidence only (`EVIDENCE_ONLY_EXISTING`) |
+| 5 (Store G2) |      12 |         Not recorded |     No ledger | QR evidence only; 12 awaiting receipt evidence                                                       |
+| **Total**    |  **42** |               **28** |        **29** | Ledger total counts Dispatch 5 as 0 contribution                                                     |
+
+- 42 shipped = 28 attested + 2 short + 12 awaiting. 29 ledger = 11 + 18.
+- The 1-piece difference (28 vs 29) is the Dispatch 4 discrepancy: the earlier ledger is preserved and the difference is recorded, not silently changed.
+- Missing evidence (null in the API, "Not recorded" / "n/r" on screen) is distinct from a recorded zero receipt, which this run did not include.
+- Style A: 42 produced, shipped, attested and in the ledger.
+- The earlier matrix scenario text CONS-2 describes 29 as "ledger received ... 42 - 1 short - 12 awaiting"; the table above is the correct description (the check itself, ledger sum 29, is unchanged).
+
 ## Verification matrix
 
-108 pass, 2 fail, 2 blocked (browser and API combined). Failures are the two PDF defects below. Blocked: Tax Invoice finalization (no HSN) and the draft PDF.
+108 pass, 2 fail, 2 blocked (browser and API combined). The failures are the two PDF defects D1 and D2 below. The two blocked rows are Tax Invoice finalization (no HSN, D3) and the Tax Invoice draft PDF, which was not verified.
 
 ## Defects and observations
 
-| ID  | Severity   | Finding                                                                                                                                    |
-| --- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| D1  | Low        | Factory Packing List PDF prints the Store address without the postal code; the other documents include it.                                 |
-| D2  | Low        | Long address words are hyphenated mid-word on the carton label and Erve Dispatch PDF ("Ra-jasthan").                                       |
-| D3  | Data       | Tax Invoice finalization is refused (`HSN_NOT_ASSIGNED`): only one importable AW26 Style has an evidenced HSN. Not a code defect.          |
-| D4  | Decision   | The system generates Season 3+ barcodes (`3 <LMIX><2-digit size>`); the legacy workbook has the older concatenated form.                   |
-| D5  | Limitation | The importer cannot see semantic problems (city spelled two ways); the two queued Stores preflight as CREATE. Human review is the control. |
+| ID  | Severity   | Finding                                                                                                                                                                                             |
+| --- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Low        | Factory Packing List PDF prints the Store address without the postal code; the other documents include it.                                                                                          |
+| D2  | Low        | Long address words are hyphenated mid-word on the carton label and Erve Dispatch PDF ("Ra-jasthan").                                                                                                |
+| D3  | Data       | Tax Invoice finalization is refused (`HSN_NOT_ASSIGNED`): only one importable AW26 Style has an evidenced HSN. Master-data dependency, not a confirmed code defect. The draft PDF was not verified. |
+| D4  | Decision   | The system generates Season 3+ barcodes (`3 <LMIX><2-digit size>`); the legacy workbook has the older concatenated form.                                                                            |
+| D5  | Limitation | The importer cannot see semantic problems (city spelled two ways); the two queued Stores preflight as CREATE. Human review is the control.                                                          |
 
 Authorization and confidentiality checks (Factory and QA see no Distributor; Distributor sees no Factory; cross-Distributor, cross-Factory, Transporter, Senior Management, Style image access, QR public data) all passed.
 
@@ -63,3 +80,14 @@ Authorization and confidentiality checks (Factory and QA see no Distributor; Dis
 ## Reproduce
 
 See `tools/aw26-post-dispatch-verification/README.md`.
+
+## Open findings (none resolved by this PR)
+
+- **D1:** Factory Packing List PDF omits the Store postal code.
+- **D2:** Carton Label and Erve Dispatch PDFs split some address words mid-word.
+- **D3:** Tax Invoice finalization blocked by missing Style HSN evidence (master-data dependency, not a confirmed code defect). The Tax Invoice draft PDF was not verified.
+- **D4:** Legacy AW26 barcodes differ from the current generation format.
+- Four Styles held back (conflicting MRP evidence).
+- Two Retail Stores held back pending address/city clarification.
+- Purchase Modes and prices used in the operational scenarios are TEST ONLY.
+- Store masters for ten Distributors are not in the supplied sources.

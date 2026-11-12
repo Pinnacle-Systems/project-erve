@@ -52,7 +52,30 @@ Each Dispatch Order splits a Style equally across its sizes.
 | 5        | Distributor G, Store G2         | Style B 12              | Not entered (QR only)                                  |
 | 6        | Distributor V, Store V1 (later) | Style A 6               | 6 (full)                                               |
 
-Style A: 42 made, 42 shipped, 42 received. Style B: 42 made, 42 shipped, 29 recorded as received (1 short, 12 still awaiting GS).
+The system keeps two different received figures. Do not add them together.
+
+- **Distributor-attested received**: what the Distributor entered on **Distributor Receipt**.
+- **Received ledger in use**: the quantity Sales and Returns work from. It is normally the receipt, but an earlier confirmation by the Merchandiser is kept and a different receipt is only recorded beside it as a discrepancy.
+
+| Quantity                           | Style A | Style B |
+| ---------------------------------- | ------: | ------: |
+| Produced and shipped               |      42 |      42 |
+| Distributor-attested received      |      42 |  **28** |
+| Received ledger in use             |      42 |  **29** |
+| Shipped, awaiting receipt evidence |       0 |      12 |
+
+Style B by dispatch:
+
+| Dispatch     | Distributor-attested | Ledger in use                     | Why                                                            |
+| ------------ | -------------------: | --------------------------------- | -------------------------------------------------------------- |
+| 1 (Store V1) |                   11 | 11                                | Size 9 received 1 of 2                                         |
+| 4 (Store G1) |                   17 | 18                                | Merchandiser confirmed 18 first; Distributor G then entered 17 |
+| 5 (Store G2) |         Not recorded | No ledger (counts as 0 in the 29) | No receipt entered                                             |
+| **Total**    |               **28** | **29**                            |                                                                |
+
+- 42 shipped = 28 attested + 2 short (one at Dispatch 1, one at Dispatch 4) + 12 awaiting (Dispatch 5).
+- The 1-piece difference between 29 and 28 is the Dispatch 4 discrepancy. The system keeps the earlier ledger of 18 and shows the difference; it does not change the quantity.
+- **Not recorded** (nothing entered) is not the same as a receipt of **0** (the Distributor says nothing arrived). Screens show Not recorded for Dispatch 5. This run has no zero receipt.
 
 ## 5. Walk-through
 
@@ -116,7 +139,12 @@ Screenshot 32.
 2. A shortage needs a remark. More than shipped is refused.
 3. After submitting, the receipt is final.
 
-Expect: Dispatch 1 shows a shortage of 1. Another Distributor cannot submit for it.
+Expect:
+
+- Dispatch 1: Style B size 9 shows 1 received of 2, with the remark. Total 11 for Style B.
+- Dispatch 4 (as Distributor G): the receipt shows 17 and is final. The earlier confirmation of 18 is not overwritten.
+- Dispatch 5: no receipt yet, so the entry form is still open. This is not a zero receipt.
+- Another Distributor cannot submit for Dispatch 1.
 
 Screenshots 33, 55, 56.
 
@@ -126,9 +154,9 @@ Open **Post-Dispatch Reconciliation**.
 
 Expect:
 
-- Dispatch 1: shortage 1.
-- Dispatch 4: receipt 17 differs from the earlier ledger 18.
-- Dispatch 5: awaiting receipt, quantities shown as **Not recorded** (not zero).
+- Dispatch 1: Distributor received 11, shortage 1, ledger in use 11.
+- Dispatch 4: Distributor received 17, ledger in use 18 (confirmed earlier by the Merchandiser), difference of 1 on size 9, follow-up required. The ledger is not changed.
+- Dispatch 5: awaiting receipt. Received and ledger show **Not recorded**, not 0. The 12 pieces count as awaiting.
 - Merchandiser can record **Operational follow-up**; Accountant can record **Finance review**. Neither changes any quantity.
 
 Screenshots 34, 40, 41.
@@ -137,7 +165,14 @@ Screenshots 34, 40, 41.
 
 Distributor opens **Retail Store Inventory**; Admin opens the same page.
 
-Expect: a Distributor sees only its own Stores. Distributor B (Outright) shows shipment and receipt only, with no sale position.
+Expect:
+
+- A Distributor sees only its own Stores.
+- Store V1, Style B: shipped 12, Distributor received 11, shortage 1, ledger in use 11.
+- Store G1, Style B: shipped 18, Distributor received 17, shortage 1, ledger in use 18, one source flagged as a discrepancy.
+- Store G2, Style B: shipped 12, **awaiting confirmation 12**, received and ledger **Not recorded**. Nothing is available to sell yet.
+- Style B totals across Distributor G and Distributor V: attested 28, ledger 29. Style A: 42 and 42.
+- Distributor B (Outright) shows shipment and receipt only, with no sale position.
 
 Screenshots 50, 51, 57. If a Style image is blank, scroll it into view.
 
@@ -184,19 +219,23 @@ Download from the screens above and check:
 - **Dispatch Order, Erve Packing List, Erve Dispatch**: addresses with PIN; sizes in columns.
 - **Factory Packing List**: no Distributor.
 
-Known issues (section 8): the Factory Packing List leaves out the PIN, and long address words may split across lines.
+Known issues D1 and D2 (section 8) are still open: the Factory Packing List leaves out the PIN, and long address words may split across lines. The Tax Invoice draft PDF was not verified.
 
 ## 8. Known limits and decisions needed
 
-| Item                                                               | What is needed                                                                |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Four Styles not loaded (MRP differs between Dashboard and invoice) | Business confirms the MRP                                                     |
-| Purchase Mode, prices                                              | Real values; test values are TEST ONLY                                        |
-| HSN for AW26 Styles                                                | Supply HSN codes and GST rules; until then invoices cannot be finalized       |
-| Retail Stores for ten Distributors                                 | Store names and addresses; only Distributor V and Distributor G have lists    |
-| Barcode format                                                     | Existing AW26 barcodes use the older format; the system generates the new one |
-| PIN missing on Factory Packing List PDF; split address words       | Fix requested                                                                 |
-| Two Stores held back                                               | Spelling of the city needs checking before import                             |
+Open items. None of these was fixed or hidden by this run.
+
+| Item                                                                                 | Status / what is needed                                                            |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Four Styles not loaded (MRP differs between Dashboard and invoice)                   | Business confirms the MRP                                                          |
+| Two Retail Stores not loaded                                                         | City spelling needs checking before import                                         |
+| Retail Stores for ten Distributors                                                   | Not in the supplied sources; only Distributor V and Distributor G have Store lists |
+| Purchase Mode and prices used in the scenarios                                       | **TEST ONLY**; real values needed                                                  |
+| **D3** Tax Invoice cannot be finalized: AW26 Styles have no HSN                      | Master-data dependency (HSN codes and GST rules), not a confirmed code defect      |
+| Tax Invoice draft PDF                                                                | **Not verified**                                                                   |
+| **D1** Factory Packing List PDF leaves out the Store postal code                     | Open, not fixed                                                                    |
+| **D2** Carton Label and Erve Dispatch PDFs split some address words mid-word         | Open, not fixed                                                                    |
+| **D4** Existing AW26 barcodes use the older format; the system generates the new one | Business decision                                                                  |
 
 ## 9. Reporting a problem
 
