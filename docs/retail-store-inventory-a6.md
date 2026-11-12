@@ -68,3 +68,9 @@ A6 adds no store-level Report Sold or Request Return, no mutation of any kind, a
 - API integration (disposable PostgreSQL): `retail-store-inventory.test.ts` (17 scenarios), `retail-store-inventory.performance.test.ts` (flat query count), `retail-store-inventory-measures.unit.test.ts`.
 - Web: `RetailStoreInventory.test.tsx`.
 - Browser (`tools/retail-store-inventory/browser.mjs`, guarded to a local `a6_browser_test` database): Distributor, Accountant and Admin at 1440px and 375px, no page overflow, grids scroll internally, drilldown fits, Style thumbnails visible to all three with the placeholder for a Style without an image, the thumbnail opens the image viewer, and a Distributor/anonymous request for a Style outside its records is denied (403/401).
+
+## Observed in the AW26 run (2026-11-12)
+
+- Distributor: only own Stores; another `distributorId` returns 403. Factory, QA and Transporter return 403. A Distributor with no dispatches gets an empty list.
+- Outright stock shows shipment and receipt only.
+- Style thumbnails load lazily; scroll a card into view before a screenshot. At 375px the page does not overflow.

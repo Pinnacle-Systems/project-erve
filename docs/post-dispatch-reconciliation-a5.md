@@ -69,3 +69,10 @@ Browser evidence: `C:/Users/kalay/AppData/Local/Temp/erve-a5-browser-QGY0CU`. It
 - This handoff and the implementation plan: scope, verification and decision record.
 
 The worktree is retained for review. Handoff stops after PR creation: no CI inspection, merge, deployment, tracker changes or A6/A7 work.
+
+## Observed in the AW26 run (2026-11-12)
+
+- Queue rows show Distributor, dispatch date, dispatched / received / shortage / ledger quantities, QR cartons (confirmed / total) and indicators. Quantities with no evidence are null and display **Not recorded**.
+- Shortage dispatch: shortage 1, follow-up required. Receipt differing from an earlier Admin ledger: `ledgerDisposition = EVIDENCE_ONLY_EXISTING`, `receiptDiffers = true`.
+- A review sent with the previous snapshot or review reference returns 409; a Senior Management or Accountant operational review returns 403.
+- Filters with no match return an empty queue (200).

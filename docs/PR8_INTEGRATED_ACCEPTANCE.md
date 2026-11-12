@@ -68,3 +68,7 @@ node tools/pr8/package-evidence.mjs $pr8Run
 Each packaging run creates a fresh `$pr8Run/evidence-<timestamp>` directory, identified by `$pr8Run/evidence-latest.json`. The enclosing runtime workspace is not a distributable evidence package. An explicit allowlist excludes password files, private user credentials, browser profiles/cookies and other runtime support files. The package contains Markdown, JSON results, CSV acceptance matrix, actual screenshots and sidecars, downloaded/combined exception workbooks, defect/reconciliation reports and a SHA-256 manifest. Preserve failed attempts with their actual statuses.
 
 PR8's final engineering acceptance requires all seven scenarios, the PR7 dependency merged into main, passing CI on the submitted PR8 commit and no blocking defects. Commercial-data readiness and production-cutover authorization remain separate gates. Passing engineering acceptance never authorizes production deployment or invoice issuance.
+
+## Later change (2026-11-12)
+
+The master-import templates changed after PR8 (Instructions worksheet, `Country`, `Royalty %`, Seasons without Financial Year, Season/Size/HSN business imports). For AW26 data preparation against the current templates use [AW26 post-dispatch verification](implementation/aw26-post-dispatch-verification.md); the PR8 procedure above remains valid for its own scenarios.
