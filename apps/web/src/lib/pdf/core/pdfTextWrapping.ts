@@ -1,7 +1,10 @@
 /**
- * Longest word kept whole. Real place names, street words and codes are well below this (the
- * longest Indian place names are ~20 characters; a GSTIN is 15). Sized so a worst-case run of
- * wide capitals at body size still fits the narrowest key/value column (4-up landscape).
+ * Words up to 24 characters are normally preserved without splitting.
+ * This threshold accommodates common place names and identifiers.
+ *
+ * Character count does not guarantee that a word fits its container.
+ * Unusually wide character sequences may still overflow narrow columns.
+ * A separate width-aware solution is required for those cases.
  */
 export const MAX_WHOLE_WORD_LENGTH = 24;
 
