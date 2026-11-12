@@ -36,3 +36,7 @@ Local verification uses named database-free API tests, named React tests, affect
 ## Merge-order dependency
 
 [E-Way Bill B2B PR #204](https://github.com/Pinnacle-Systems/project-erve/pull/204) must merge first. A2 remains based on merged main and contains no B2B code. After #204 merges, synchronize A2 with latest main, preserve both User inverse relations, and verify CI again on that latest A2 head before authorizing merge. B2B owns `20261105090000_eway_bill_b2b`; A2 reserves `20261105120000_add_transporter_role` then `20261105120100_add_dispatch_transporter_assignment`. The SQL affects only RoleName and the Erve Dispatch association, never E-Way Bill objects.
+
+## Observed in the AW26 run (2026-11-12)
+
+The Transporter saw 5 assigned dispatches, recorded vehicle and LR, was refused the full dispatch (403) and received a transport view with no Distributor or financial data.

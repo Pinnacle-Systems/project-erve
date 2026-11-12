@@ -75,3 +75,7 @@ Options if the business wants them closed: (a) a Factory-facing destination alia
 - QA_USER now loses the Distributor on the Packing Audit surface. QA is cross-Factory, so an account holding both QA_USER and FACTORY_USER could otherwise have used `/packing-audit` as a Distributor lookup. Add QA_USER back to the allow-list if QA needs it.
 - Quality form `CUSTOMER_NAME` (`quality-executions.service.ts`, `derivedSystemContext`) is filled from the source Order Sheets' Distributor name and `MERCHANDISER_NAME` from the Merchandiser. It was found while sweeping and is outside the surfaces listed for this correction; whether a Factory account can read an execution detail carrying it was not verified live.
 - By code reading (`getPackingAuditQueue` applies no Factory scope, and the new test only exercises one Factory's open carton), a QA_USER + FACTORY_USER account can list other Factories' open cartons and Factory names through `/packing-audit`. Existing RBAC; a general RBAC change is out of scope.
+
+## Observed in the AW26 run (2026-11-12)
+
+Factory and QA responses (Factory Packing List, Dispatch Order, packing queue, audit queue, Factory Invoice) carried no Distributor name, GSTIN or Purchase Mode value; the carton label printed no Distributor. A Distributor's dispatch did not name the Factory. Store name, address and PIN remain visible by design (physical shipping).

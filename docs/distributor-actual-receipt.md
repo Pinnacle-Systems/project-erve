@@ -56,3 +56,7 @@ distributor only) — body `SubmitDistributorReceiptRequest` in `@erve/types`.
 
 Admin reopen/reconciliation of a final receipt or of a discrepancy (A5), and
 any A6/A7 inventory behaviour.
+
+## Observed in the AW26 run (2026-11-12)
+
+Shortage without remarks, more than dispatched and another Distributor all returned errors (400, 400, 403). Receiving after an Admin confirmation gave `EVIDENCE_ONLY_EXISTING`; the Admin fallback after a receipt returned 409.

@@ -147,3 +147,7 @@ under `.artifacts/carton-qr/` in the implementation worktree (gitignored).
   Existing projection callers keep their default client and calculation behavior.
 - Deferred minor: credential administration does not display the current expiry;
   the server rejects extensions that do not exceed the current deadline.
+
+## Observed in the AW26 run (2026-11-12)
+
+`deliveredAt` must be local time with an offset that matches `offsetMinutes` and `timezone` (for IST `2026-11-12T05:30:00+05:30`, 330). The public resolve response holds only carton number, label reference and state. A second different confirmation returned 409; an unknown token returned 404.

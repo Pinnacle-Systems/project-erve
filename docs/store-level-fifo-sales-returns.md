@@ -54,3 +54,9 @@ For a Distributor, Sale-or-Return Style cards of **mapped** Stores get an "Actio
 - Legacy-assumed receipts stay ineligible until they receive verified evidence; there is no stock-adjustment path (out of scope).
 - Pending returns do not reserve against *Actual Sale* until approved (pre-existing rule); a racing sale + return mix can therefore both succeed up to current rules.
 - Availability shown in the grid cell (A6) includes legacy-receipt stock; the dialog's number is the eligible figure and explains the difference.
+
+## Observed in the AW26 run (2026-11-12)
+
+- Dates are India time. A receipt made at 05:20 IST on the 12th (still the 11th in UTC) is refused for a sale dated the 11th ("no stock received on or before").
+- With 2 pieces from an older dispatch and 1 from a later one, selling 2 drew only on the older; selling 2 more was refused (1 left); the last 1 drew on the later dispatch.
+- Same Idempotency-Key and payload replays (200); same key with another payload returns 409; a future date, Outright stock, Admin and another Distributor's Store are all refused.
