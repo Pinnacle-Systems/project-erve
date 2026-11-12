@@ -28,6 +28,12 @@ const styles = StyleSheet.create({
 export interface PdfHeaderProps {
   title: string;
   subtitle?: string;
+  /**
+   * Opt-in cap on the subtitle's line count (the cut line ends in an ellipsis). The header is absolutely
+   * positioned inside a fixed 72pt top reservation, so a subtitle that wraps to 3+ lines grows past that
+   * band and prints over the document body. Leave unset (the default) to keep the subtitle unconstrained.
+   */
+  subtitleMaxLines?: number;
 }
 
 /**
@@ -35,14 +41,18 @@ export interface PdfHeaderProps {
  * PDFs remain self-contained and work offline. This fixed header has the same
  * 72pt top-page reservation in both portrait and landscape PdfDocument shells.
  */
-export function PdfHeader({ title, subtitle }: PdfHeaderProps) {
+export function PdfHeader({ title, subtitle, subtitleMaxLines }: PdfHeaderProps) {
   return (
     <View style={styles.header} fixed>
       <View style={styles.content}>
         <Image src={erveLogo} style={styles.logo} />
         <View style={styles.heading}>
           <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          {subtitle ? (
+            <Text style={subtitleMaxLines ? [styles.subtitle, { maxLines: subtitleMaxLines, textOverflow: 'ellipsis' }] : styles.subtitle}>
+              {subtitle}
+            </Text>
+          ) : null}
         </View>
       </View>
     </View>
