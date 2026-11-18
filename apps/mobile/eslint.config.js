@@ -24,6 +24,10 @@ export default [
       globals: {
         console: 'readonly',
         process: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        structuredClone: 'readonly',
+        fetch: 'readonly',
       },
     },
   },
