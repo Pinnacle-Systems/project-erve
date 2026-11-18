@@ -367,7 +367,35 @@ GET /api/health                         -> API health JSON
 GET /api/ready                          -> API readiness JSON
 GET /api/nonexistent                    -> API 404 JSON (NOT index.html)
 GET /mobile-updates/bundles/missing.zip -> 404 (NOT index.html)
+GET /mobile-updates/bundles/production/manifest.json -> signed OTA manifest once a release has been promoted (Cache-Control: no-cache)
 ```
+
+### Mobile OTA releases
+
+`shared/mobile-updates/bundles/` is the static root for Android over-the-air web
+updates. It holds a signed release tree with two isolated channels, `testing` and
+`production` (`<channel>/manifest.json`, `<channel>/history.json`, immutable
+`<channel>/<native-fingerprint>/<n>.bundle`). The server runs no OTA code and
+never holds the signing key.
+
+- Releases are produced and signed on a release workstation
+  (`pnpm --filter @erve/mobile ota:publish | ota:promote | ota:rollback`) and
+  pushed with `ota:sync` (bundles first, manifest last, refused if the server is
+  newer). **Production is only ever updated by an explicit promotion; pushing to
+  `main` or running a deployment never publishes anything.**
+- `deploy-release.sh` only creates the empty directory on first deploy; app
+  deployments never modify its contents (guarded by
+  `apps/mobile/scripts/ota/release-policy.test.ts`).
+- The vhost needs the two OTA `location` blocks in
+  `deployment/nginx/erve.vhost.example.conf` §3: `no-cache` for the manifest and
+  history, `immutable` for bundle files. Check the live server after any vhost
+  change with
+  `pnpm --filter @erve/mobile ota:verify -- --url https://<DOMAIN_NAME>/mobile-updates/bundles --channel production`.
+
+Key setup, promotion, rollback and prerequisites:
+[`apps/mobile/OTA_RELEASE_RUNBOOK.md`](apps/mobile/OTA_RELEASE_RUNBOOK.md).
+Architecture and the native-compatibility rules:
+[`apps/mobile/OTA_UPDATES.md`](apps/mobile/OTA_UPDATES.md).
 
 ---
 
