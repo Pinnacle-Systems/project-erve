@@ -18,7 +18,15 @@
     "cap:run:android:live": "node scripts/run-android-live.mjs",
     "test": "vitest run",
     "ota:keygen": "node scripts/ota-keygen.mjs",
-    "ota:fingerprint": "node scripts/ota-fingerprint.mjs"
+    "ota:fingerprint": "node scripts/ota-fingerprint.mjs",
+    "ota:publish": "node scripts/ota-release.mjs publish",
+    "ota:promote": "node scripts/ota-release.mjs promote",
+    "ota:rollback": "node scripts/ota-release.mjs rollback",
+    "ota:retire": "node scripts/ota-release.mjs retire",
+    "ota:status": "node scripts/ota-release.mjs status",
+    "ota:history": "node scripts/ota-release.mjs history",
+    "ota:verify": "node scripts/ota-release.mjs verify",
+    "ota:sync": "node scripts/ota-release.mjs sync"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.1",
