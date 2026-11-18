@@ -11,6 +11,7 @@ import {
 import { useAuth } from '../auth/AuthContext.js';
 import { ThemeModeSelector } from '../theme/ThemeModeSelector.js';
 import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
+import { OtaStatusSection } from '../ota/OtaStatusSection.js';
 
 function PersonIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -95,6 +96,8 @@ export function AccountMenu() {
           </div>
           <ThemeModeSelector />
         </div>
+
+        <OtaStatusSection />
 
         <div className="mt-5 border-t border-border pt-4">
           <Button
