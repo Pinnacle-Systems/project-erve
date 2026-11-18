@@ -17,6 +17,8 @@
     "cap:run:android": "cap run android",
     "cap:run:android:live": "node scripts/run-android-live.mjs",
     "test": "vitest run",
+    "apk:cert": "node scripts/apk-check.mjs cert",
+    "apk:check": "node scripts/apk-check.mjs check",
     "ota:keygen": "node scripts/ota-keygen.mjs",
     "ota:fingerprint": "node scripts/ota-fingerprint.mjs",
     "ota:publish": "node scripts/ota-release.mjs publish",
