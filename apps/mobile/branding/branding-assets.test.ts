@@ -166,7 +166,18 @@ describe('configure-android-theme.mjs copies every branding resource', () => {
 
 describe('@erve/ui retirement', () => {
   const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.json', '.md']);
-  const IGNORED_DIR_NAMES = new Set(['node_modules', 'dist', 'android', '.git', 'branding']);
+  // Generated output is skipped as well: apps/api/src/generated alone is ~20 MB of Prisma client
+  // code, 3/4 of everything this test reads, and generated code cannot reference @erve/ui.
+  const IGNORED_DIR_NAMES = new Set([
+    'node_modules',
+    'dist',
+    'android',
+    '.git',
+    'branding',
+    'generated',
+    'coverage',
+    '.data',
+  ]);
 
   function walk(dir: string, files: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {

@@ -156,6 +156,24 @@ function detail(
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
+let currentQueryClient: QueryClient | null = null;
+
+/**
+ * Waits until the page's QueryClient has nothing in flight, instead of sleeping a
+ * fixed 20-50 ms and hoping React Query finished (which is a race on a loaded
+ * machine: the assertion that follows then sees a half-rendered page). It never
+ * returns early on a real hang — it gives up after ~5 s and lets the assertion fail.
+ */
+async function settle() {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    if (attempt >= 1 && currentQueryClient!.isFetching() === 0 && currentQueryClient!.isMutating() === 0) {
+      return;
+    }
+  }
+}
 async function renderPage(data = detail(), roles: Role[] = ['QA_USER']) {
   latest = clone(data);
   vi.mocked(useAuth).mockReturnValue({
@@ -169,6 +187,7 @@ async function renderPage(data = detail(), roles: Role[] = ['QA_USER']) {
     data: { success: true, data: latest },
   }));
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  currentQueryClient = qc;
   act(() =>
     root.render(
       createElement(
@@ -186,9 +205,7 @@ async function renderPage(data = detail(), roles: Role[] = ['QA_USER']) {
       ),
     ),
   );
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  });
+  await settle();
 }
 function button(text: string) {
   const found = [...container.querySelectorAll('button')].find((item) =>
@@ -538,8 +555,8 @@ describe('rendered mobile QA form workflow', () => {
     });
     await act(async () => {
       upload.dispatchEvent(new Event('change', { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
     });
+    await settle();
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith(
       '/qa/inspections/session-1/evidence',
       expect.any(FormData),
@@ -649,9 +666,7 @@ describe('rendered mobile QA form workflow', () => {
     expect(vi.mocked(apiClient.request)).toHaveBeenCalledTimes(1);
     latest.sessions[0].forms[1]!.version = 5;
     await click('Reload latest size inspection');
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    await settle();
     expect(container.textContent).toContain('M · DRAFT');
     expect(vi.mocked(apiClient.request)).toHaveBeenCalledTimes(1);
   });
