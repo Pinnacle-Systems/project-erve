@@ -25,3 +25,9 @@ HTTP only while the API is explicitly in development mode.
 Verification requires a packaged APK: sign in, force-stop the app, relaunch,
 observe refresh followed by `/auth/me`, then repeat for revoked/inactive,
 offline, and transient-5xx cases. Browser-only results are insufficient.
+
+Over-the-air web updates (see [OTA_UPDATES.md](./OTA_UPDATES.md)) do not affect
+the session: a bundle switch keeps the `https://localhost` origin, so
+`sessionStorage` and `localStorage` are retained, and the refresh credential in
+the Keystore-backed bridge is never touched. Updates are never applied while a
+save, an unsaved form or an open QA/production screen is present.

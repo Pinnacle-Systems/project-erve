@@ -6,6 +6,7 @@ import { queryClient } from './lib/query-client.js';
 import { AppRoutes } from './routes/AppRoutes.js';
 import { ThemeDocumentMeta } from './theme/ThemeDocumentMeta.js';
 import { NativeThemeSurfaces } from './theme/NativeThemeSurfaces.js';
+import { OtaProvider } from './ota/OtaProvider.js';
 
 export function App() {
   return (
@@ -21,7 +22,9 @@ export function App() {
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
             <BrowserRouter>
-              <AppRoutes />
+              <OtaProvider>
+                <AppRoutes />
+              </OtaProvider>
             </BrowserRouter>
           </AuthProvider>
         </QueryClientProvider>

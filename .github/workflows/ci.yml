@@ -75,6 +75,11 @@ jobs:
       - name: Run @erve/client tests
         run: pnpm --filter @erve/client test
 
+      # Mobile OTA updater: service state machine, safety guards, native
+      # fingerprint, and publisher <-> app signature/crypto compatibility.
+      - name: Run @erve/mobile OTA tests
+        run: pnpm --filter @erve/mobile exec vitest run src/ota scripts/ota
+
       - name: Verify native PR8 CDP driver contracts
         run: node --test tools/pr8/*.test.mjs
 

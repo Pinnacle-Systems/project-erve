@@ -1,29 +1,20 @@
 import type { CapacitorConfig } from '@capacitor/cli';
+import baseConfig from './capacitor.base-config.mjs';
+import { loadOtaBuildConfig, resolveNativeIdentity } from './scripts/ota/ota-config.mjs';
 
-const config: CapacitorConfig = {
-  appId: 'com.erve.mobile',
-  appName: 'Erve',
-  webDir: 'dist',
-  loggingBehavior: 'none',
+// Over-the-air updates (see OTA_UPDATES.md). The native updater runs in manual
+// mode; its config — including the public key bundles must be signed for and
+// the native fingerprint reported as the plugin's builtin `version` — is
+// derived here so the APK and the web bundle can never disagree.
+const ota = loadOtaBuildConfig();
+const { config, builtinVersion } = resolveNativeIdentity({ baseConfig, ota });
+
+const capacitorConfig: CapacitorConfig = {
+  ...config,
   plugins: {
-    SplashScreen: {
-      // The native Android 12 Splash Screen API theme (see
-      // native/android-template/res/values{,-night}/styles.xml) already
-      // paints the correct light/dark background before any JS runs.
-      // launchAutoHide is disabled so the plugin defers to explicit
-      // SplashScreen.hide() (see src/theme/NativeThemeSurfaces.tsx), which
-      // only fires once React has mounted and applied the resolved theme —
-      // that is what stops the splash from ever dismissing onto a
-      // not-yet-themed WebView frame.
-      launchAutoHide: false,
-      androidScaleType: 'CENTER',
-      splashFullScreen: true,
-      splashImmersive: false,
-    },
-    StatusBar: {
-      overlaysWebView: false,
-    },
+    ...config.plugins,
+    CapacitorUpdater: { ...config.plugins.CapacitorUpdater, version: builtinVersion },
   },
 };
 
-export default config;
+export default capacitorConfig;

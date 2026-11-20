@@ -39,3 +39,18 @@ apps/mobile/ios/
 .agents/
 .claude/
 .codex/
+
+# OTA update signing. ONLY the public key is committed (it is compiled into the
+# APK); the private key lives outside the repository. See
+# apps/mobile/OTA_RELEASE_RUNBOOK.md.
+!apps/mobile/ota/ota-public-key.pem
+ota-private*
+*-ota-private*
+
+# Android signing material is never committed: APKs are signed outside the repository
+# (see apps/mobile/OTA_RELEASE_RUNBOOK.md section 2). A committed keystore cannot be un-leaked.
+*.jks
+*.keystore
+*.p12
+keystore.properties
+signing.properties

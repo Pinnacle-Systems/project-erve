@@ -48,7 +48,9 @@ export function AuthenticatedShell() {
         </div>
         <AccountMenu />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+      {/* The OTA update banner floats over the bottom of the screen; it publishes its height
+          here so the last control on a page (e.g. a Submit button) can scroll clear of it. */}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[var(--ota-banner-height,0px)]">
         <Outlet />
       </div>
     </div>
