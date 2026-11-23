@@ -53,7 +53,7 @@ Add these **Environment variables** (public/non-secret):
 
 | Name | Value |
 | --- | --- |
-| ANDROID_SIGNER_SHA256 | Expected 64-character SHA-256 of the Android signing certificate |
+| ANDROID_SIGNER_SHA256 | Expected 64-character SHA-256 of the Android signing certificate (remove the colons from keytool output) |
 | ERVE_OTA_BASE_URL | https://YOUR_HOST/mobile-updates/bundles |
 | VITE_API_URL | The actual HTTPS API base URL the Erve mobile app should use |
 
