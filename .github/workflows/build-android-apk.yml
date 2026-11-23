@@ -1,0 +1,167 @@
+name: Build signed Erve Android APK
+
+# Manual APK production only; no PR/push trigger and no server deployment.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: OTA update channel baked into the APK
+        type: choice
+        required: true
+        options: [testing, production]
+      previous_version_code:
+        description: Highest versionCode already distributed (0 only for the first signing identity)
+        type: number
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: erve-android-apk-release
+  cancel-in-progress: false
+
+jobs:
+  verify-source:
+    name: Require reviewed main commit
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require successful main push CI for this exact SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/verify-main-ci-success.mjs
+
+  build-and-sign:
+    name: Build and sign ${{ inputs.channel }} APK
+    needs: verify-source
+    environment: android-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android build tools
+        run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Activate repository pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          PNPM_VERSION="$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")"
+          corepack prepare "pnpm@$PNPM_VERSION" --activate
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate OTA public key and HTTPS configuration
+        shell: bash
+        env:
+          ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          set -euo pipefail
+          test -s apps/mobile/ota/ota-public-key.pem || { echo '::error::Commit the OTA public key before building a release APK'; exit 1; }
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { normalisePublicKey } from './apps/mobile/scripts/ota/ota-config.mjs';
+          normalisePublicKey(readFileSync('apps/mobile/ota/ota-public-key.pem', 'utf8'));
+          for (const key of ['ERVE_OTA_BASE_URL', 'VITE_API_URL']) {
+            if (!process.env[key]) throw new Error('Missing environment variable: ' + key);
+            const url = new URL(process.env[key]);
+            if (url.protocol !== 'https:' || url.username || url.password ||
+                /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|.*\.(local|test|invalid))$/i.test(url.hostname)) {
+              throw new Error(key + ' must be a public HTTPS URL without credentials');
+            }
+            if (key === 'ERVE_OTA_BASE_URL' && !url.pathname.replace(/\/$/, '').endsWith('/mobile-updates/bundles')) {
+              throw new Error('ERVE_OTA_BASE_URL must end with /mobile-updates/bundles');
+            }
+          }
+          console.log('OTA signing public key and HTTPS URLs configured');
+          NODE
+      - name: Build React bundle and generate Android project
+        shell: bash
+        env:
+          ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }}
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          ERVE_OTA_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          pnpm --filter @erve/mobile build
+          pnpm --filter @erve/mobile cap:add:android
+          (cd apps/mobile/android && ./gradlew --no-daemon assembleRelease)
+      - name: Sign, inspect and gate release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNER_SHA256: ${{ vars.ANDROID_SIGNER_SHA256 }}
+          PREVIOUS_VERSION_CODE: ${{ inputs.previous_version_code }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY_DIR="$(mktemp -d "$RUNNER_TEMP/erve-sign.XXXXXX")"
+          trap 'rm -rf -- "$KEY_DIR"' EXIT
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_SIGNER_SHA256; do
+            if [ -z "$(printenv "$name")" ]; then echo "::error::Missing release secret/variable: $name"; exit 1; fi
+          done
+          if ! [[ "$ANDROID_SIGNER_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo '::error::Invalid signing certificate SHA-256'; exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEY_DIR/key.jks"
+          test -s "$KEY_DIR/key.jks"
+          printf '%s' "$ANDROID_KEYSTORE_PASSWORD" > "$KEY_DIR/store-pass"
+          printf '%s' "$ANDROID_KEY_PASSWORD" > "$KEY_DIR/key-pass"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { resolveAndroidVersion } from './apps/mobile/scripts/ota/android-version.mjs';
+          const version = JSON.parse(readFileSync('apps/mobile/package.json', 'utf8')).version;
+          const { code } = resolveAndroidVersion({ packageVersion: version });
+          const previous = Number(process.env.PREVIOUS_VERSION_CODE);
+          if (!Number.isSafeInteger(previous) || previous < 0 || code <= previous) {
+            throw new Error('APK versionCode ' + code + ' must exceed last distributed ' + previous);
+          }
+          console.log('Android versionCode gate passed: ' + code + ' > ' + previous);
+          NODE
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          UNSIGNED='apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk'
+          test -s "$UNSIGNED" || { echo '::error::Unsigned release APK missing'; exit 1; }
+          mkdir -p release-apk
+          VERSION="$(node -p "require('./apps/mobile/package.json').version")"
+          SHORT_SHA="$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
+          OUT="$GITHUB_WORKSPACE/release-apk/erve-$VERSION-$CHANNEL-$SHORT_SHA.apk"
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" "$KEY_DIR/aligned.apk"
+          "$BT/apksigner" sign --ks "$KEY_DIR/key.jks" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass "file:$KEY_DIR/store-pass" \
+            --key-pass "file:$KEY_DIR/key-pass" \
+            --out "$OUT" "$KEY_DIR/aligned.apk"
+          "$BT/apksigner" verify --print-certs "$OUT"
+          pnpm --filter @erve/mobile apk:check -- "$OUT" \
+            --expected-sha256 "$ANDROID_SIGNER_SHA256" \
+            --channel "$CHANNEL" --ota-public-key ota/ota-public-key.pem
+          (cd release-apk && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
+      - name: Retain signed APK as temporary Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: erve-android-${{ inputs.channel }}-${{ github.run_number }}
+          path: release-apk/
+          if-no-files-found: error
+          retention-days: 14
