@@ -180,12 +180,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: android-apk-signing
+    environment: android-release
     env:
       RELEASE_CHANNEL: ${{ inputs.channel }}
       APP_VERSION: ${{ needs.build.outputs.app_version }}
       VERSION_CODE: ${{ needs.build.outputs.version_code }}
-      EXPECTED_SIGNER_SHA256: ${{ vars.ANDROID_EXPECTED_SIGNER_SHA256 }}
+      EXPECTED_SIGNER_SHA256: ${{ vars.ANDROID_SIGNER_SHA256 }}
       LAST_PRODUCTION_CODE: ${{ vars.ERVE_ANDROID_LAST_PRODUCTION_VERSION_CODE }}
       LAST_TESTING_CODE: ${{ vars.ERVE_ANDROID_LAST_TESTING_VERSION_CODE }}
       RELEASE_GUARD: ${{ vars.ANDROID_APK_SIGNING_READY }}
@@ -206,11 +206,11 @@ jobs:
             exit 1
           fi
           if [ "$RELEASE_GUARD" != enabled ]; then
-            echo "::error::Configure the protected android-apk-signing environment and ANDROID_APK_SIGNING_READY=enabled."
+            echo "::error::Configure the protected android-release environment and ANDROID_APK_SIGNING_READY=enabled."
             exit 1
           fi
           if ! [[ "$EXPECTED_SIGNER_SHA256" =~ ^([0-9a-fA-F]{2}:?){31}[0-9a-fA-F]{2}$ ]]; then
-            echo "::error::Set ANDROID_EXPECTED_SIGNER_SHA256 to the approved 64-hex signing certificate fingerprint."
+            echo "::error::Set ANDROID_SIGNER_SHA256 to the approved 64-hex signing certificate fingerprint."
             exit 1
           fi
           case "$RELEASE_CHANNEL" in
