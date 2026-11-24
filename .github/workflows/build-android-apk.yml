@@ -172,7 +172,7 @@ jobs:
           name: erve-unsigned-${{ github.run_id }}
           path: release-unsigned/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
 
   sign:
@@ -200,6 +200,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          latest="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
+          if [ -z "$latest" ] || [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved while waiting for approval; dispatch a new APK build."
+            exit 1
+          fi
           if [ "$RELEASE_GUARD" != enabled ]; then
             echo "::error::Configure the protected android-apk-signing environment and ANDROID_APK_SIGNING_READY=enabled."
             exit 1
