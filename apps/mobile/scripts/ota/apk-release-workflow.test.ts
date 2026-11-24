@@ -31,7 +31,7 @@ describe('manual Android APK release workflow policy', () => {
     const signPart = workflow.slice(sign);
     expect(buildPart).toContain('Build unsigned APK (no signing secrets)');
     expect(buildPart).not.toContain('secrets.');
-    expect(signPart).toContain('environment: android-apk-signing');
+    expect(signPart).toContain('environment: android-release');
     expect(signPart).toContain('needs: build');
     expect(signPart).toContain('ANDROID_APK_SIGNING_READY');
   });
@@ -40,7 +40,7 @@ describe('manual Android APK release workflow policy', () => {
     expect(workflow).toContain('apps/mobile/ota/ota-public-key.pem');
     expect(workflow).toContain('loadOtaBuildConfig');
     expect(workflow).toContain('!ota.enabled || ota.allowInsecureHttp');
-    expect(workflow).toContain('ANDROID_EXPECTED_SIGNER_SHA256');
+    expect(workflow).toContain('ANDROID_SIGNER_SHA256');
     expect(workflow).toContain('--expected-sha256');
     expect(workflow).toContain('--ota-public-key');
     expect(workflow).toContain('VERSION_CODE <= last');
