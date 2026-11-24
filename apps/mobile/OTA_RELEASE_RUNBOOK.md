@@ -117,6 +117,15 @@ the list in the project's access register; remove access when someone leaves.
 
 ## 2. APK builds and signing (once per native layer)
 
+> **GitHub Actions alternative for Android APKs:** Once configured and reviewed,
+> use the manual `Build signed Erve Android APK` workflow, described in
+> [`ANDROID_APK_GITHUB_ACTIONS.md`](ANDROID_APK_GITHUB_ACTIONS.md). It
+> uses an approval-protected Android keystore and uploads a verified APK
+> artifact. It does **not** handle the *OTA private key*, publish OTA bundles,
+> or distribute the APK. The local build/signing procedure below remains
+> available as an alternative.
+
+
 An APK follows one channel. Build both from the same commit. Every APK that is
 distributed needs a **higher version than the one it replaces**:
 
