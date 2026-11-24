@@ -113,7 +113,7 @@ unprotected variables.
 7. Download the resulting `erve-android-<channel>-<version>-<run-id>` ZIP
    from the **signed artifact** section. It contains the signed APK and
    its `.sha256` digest. The signed artifact is retained for **14 days**;
-   the intermediate unsigned artifact for **1 day**.
+   the intermediate unsigned artifact for **7 days**.
 8. Independently record the APK SHA-256, certificate SHA-256,
    `versionCode`, channel, commit SHA and device-test results. Archive
    approved production APKs in a separate controlled storage location.
