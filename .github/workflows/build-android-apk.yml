@@ -284,6 +284,11 @@ jobs:
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "release-signed/$output"
           (cd release-signed && sha256sum "$output" > "$output.sha256")
 
+      - name: Set up Node.js 24 for the APK verification CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Install tooling without executing dependency install scripts
         shell: bash
         run: |
