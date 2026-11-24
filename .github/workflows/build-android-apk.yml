@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: erve-android-apk-setup-${{ inputs.channel }}
@@ -75,6 +76,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Require successful main-push CI for this exact SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/verify-main-ci-success.mjs
 
       - name: Activate repository pnpm version
         shell: bash
