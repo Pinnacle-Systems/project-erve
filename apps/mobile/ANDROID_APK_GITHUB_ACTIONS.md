@@ -48,18 +48,18 @@ unencrypted keystore to an issue, PR, chat or a workflow artifact.
 | `ERVE_ANDROID_VERSION_CODE` | Optional override; normally leave unset and use `apps/mobile/package.json` version |
 
 **Repository → Settings → Environments → New environment**:
-create `android-apk-signing`. Restrict deployment branches to **`main`**,
+create `android-release`. Restrict deployment branches to **`main`**,
 and add **required reviewers**. If there are at least two authorized maintainers,
 enable prevention of self-review. The job cannot access protected secrets until
 an authorized reviewer approves. Do not use ordinary PR or repository secrets
 as a substitute for the protected environment.
 
-In `android-apk-signing`, add these *environment variables*:
+In `android-release`, add these *environment variables*:
 
 | Variable | Meaning |
 | --- | --- |
 | `ANDROID_APK_SIGNING_READY` | Exactly `enabled` after the environment protections are configured |
-| `ANDROID_EXPECTED_SIGNER_SHA256` | Approved release-certificate SHA-256 (64 hex digits; colons accepted) |
+| `ANDROID_SIGNER_SHA256` | Approved release-certificate SHA-256 (64 hex digits; colons accepted) |
 | `ERVE_ANDROID_LAST_TESTING_VERSION_CODE` | Highest `versionCode` **already distributed to testing devices**; `0` for a first release |
 | `ERVE_ANDROID_LAST_PRODUCTION_VERSION_CODE` | Highest `versionCode` **already distributed to production users**; `0` for a first release |
 
