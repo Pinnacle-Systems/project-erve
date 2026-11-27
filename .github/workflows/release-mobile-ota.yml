@@ -151,10 +151,12 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > "$dir/deploy-key"
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$dir/known_hosts"
           chmod 600 "$dir/"*
-          echo "ERVE_OTA_PRIVATE_KEY_FILE=$dir/ota-private.pem" >> "$GITHUB_ENV"
-          echo "ERVE_OTA_RELEASE_TREE=$RUNNER_TEMP/erve-ota-tree" >> "$GITHUB_ENV"
-          echo "OTA_REMOTE=$DEPLOY_USER@$DEPLOY_HOST:${DEPLOY_ROOT%/}/shared/mobile-updates/bundles" >> "$GITHUB_ENV"
-          echo "OTA_SSH=ssh -i $dir/deploy-key -p $port -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$dir/known_hosts" >> "$GITHUB_ENV"
+          {
+            echo "ERVE_OTA_PRIVATE_KEY_FILE=$dir/ota-private.pem"
+            echo "ERVE_OTA_RELEASE_TREE=$RUNNER_TEMP/erve-ota-tree"
+            echo "OTA_REMOTE=$DEPLOY_USER@$DEPLOY_HOST:${DEPLOY_ROOT%/}/shared/mobile-updates/bundles"
+            echo "OTA_SSH=ssh -i $dir/deploy-key -p $port -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$dir/known_hosts"
+          } >> "$GITHUB_ENV"
 
       - name: Pull the current signed release history
         shell: bash
