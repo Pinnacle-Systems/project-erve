@@ -110,10 +110,11 @@ the list in the project's access register; remove access when someone leaves.
   `dist/`, in an APK, in a release tree, or in a deployment artifact. Release
   trees contain only signatures, never the key; `ota:publish` also refuses a
   `dist/` that contains private-key material.
-- **CI is not a signing location in this design.** If the organisation later
-  decides to sign in GitHub Actions, that is a separate, reviewed decision
-  (protected environment with required reviewers, manual trigger only); it is not
-  set up here and no secret has been requested.
+- **GitHub Actions OTA signing is supported:** the manual workflow in
+  [`OTA_GITHUB_ACTIONS.md`](OTA_GITHUB_ACTIONS.md) reads the private PEM from
+  the protected `production` environment secret `ERVE_OTA_PRIVATE_KEY_PEM`,
+  writes it temporarily outside the repository, and removes it after the job.
+  The key must still never be logged, checked in, or uploaded as an artifact.
 
 ## 2. APK builds and signing (once per native layer)
 
@@ -268,6 +269,11 @@ a real SSH server, see the readiness report):
   SSH key for the site user is separate from the OTA signing key.
 
 ## 4. Publish to **testing**
+
+**Preferred: run GitHub Actions** `Release Erve mobile OTA update` →
+`publish-testing`; promote or roll back using the same workflow. See
+[`OTA_GITHUB_ACTIONS.md`](OTA_GITHUB_ACTIONS.md). The commands below remain
+available as a manual fallback.
 
 ```sh
 # build with the SAME environment as the APKs (key, base URL). The channel is not
