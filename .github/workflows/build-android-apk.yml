@@ -1,0 +1,330 @@
+name: Build signed Erve Android APK
+
+# Deliberately manual. This workflow does not deploy, publish a GitHub Release,
+# generate signing keys, or push changes to the OTA update server.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: APK update channel (testing devices or production users)
+        required: true
+        default: testing
+        type: choice
+        options:
+          - testing
+          - production
+      confirm_production_release:
+        description: I intend to create a production-channel APK (no automatic distribution)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: erve-android-apk-setup-${{ inputs.channel }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build unsigned APK (no signing secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      app_version: ${{ steps.version.outputs.name }}
+      version_code: ${{ steps.version.outputs.code }}
+    env:
+      VITE_API_URL: ${{ vars.ERVE_ANDROID_API_URL }}
+      ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }}
+      ERVE_OTA_CHANNEL: ${{ inputs.channel }}
+      ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }}
+      ERVE_ANDROID_VERSION_CODE: ${{ vars.ERVE_ANDROID_VERSION_CODE }}
+      RELEASE_REF: ${{ github.ref }}
+      PRODUCTION_CONFIRMED: ${{ inputs.confirm_production_release }}
+    steps:
+      - name: Checkout the exact requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Enforce main-only manual release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_REF" != "refs/heads/main" ]; then
+            echo "::error::Signed APKs may only be built by dispatching main."
+            exit 1
+          fi
+          if [ "$ERVE_OTA_CHANNEL" = production ] && [ "$PRODUCTION_CONFIRMED" != true ]; then
+            echo "::error::Select the production confirmation checkbox."
+            exit 1
+          fi
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "::error::Checkout does not match the dispatched commit."
+            exit 1
+          fi
+          latest="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
+          if [ -z "$latest" ] || [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved since this workflow started; dispatch it again."
+            exit 1
+          fi
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Require successful main-push CI for this exact SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/deployment/verify-main-ci-success.mjs
+
+      - name: Activate repository pnpm version
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm_version="$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")"
+          corepack prepare "pnpm@$pnpm_version" --activate
+
+      - name: Check public OTA configuration before building
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { loadOtaBuildConfig } from './apps/mobile/scripts/ota/ota-config.mjs';
+          import { existsSync } from 'node:fs';
+          const pubkey = 'apps/mobile/ota/ota-public-key.pem';
+          if (!existsSync(pubkey)) {
+            throw new Error('Committed OTA public key missing: set up the signing identity first.');
+          }
+          const ota = loadOtaBuildConfig();
+          if (!ota.enabled || ota.allowInsecureHttp) {
+            throw new Error('OTA must be enabled with a signed public key and HTTPS: ' + ota.disabledReason);
+          }
+          for (const [name, value, path] of [
+            ['VITE_API_URL', process.env.VITE_API_URL, '/api'],
+            ['ERVE_OTA_BASE_URL', ota.baseUrl, '/mobile-updates/bundles'],
+          ]) {
+            let url;
+            try { url = new URL(value); } catch { throw new Error(name + ' must be a valid HTTPS URL.'); }
+            if (url.protocol !== 'https:' || url.pathname.replace(/\/+$/, '') !== path ||
+                url.username || url.password || url.search || url.hash ||
+                /^(localhost|127\.|10\.0\.2\.2|0\.0\.0\.0)/i.test(url.hostname) ||
+                /\.(local|test|invalid)$/i.test(url.hostname)) {
+              throw new Error(name + ' must be a public HTTPS URL ending in ' + path + '.');
+            }
+          }
+          console.log('Production-style HTTPS API and signed OTA configuration validated.');
+          NODE
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and build mobile web bundle
+        run: pnpm --filter @erve/mobile build
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Generate clean Capacitor Android project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e apps/mobile/android
+          pnpm --filter @erve/mobile cap:add:android
+          pnpm --filter @erve/mobile cap:sync
+          pnpm --filter @erve/mobile ota:fingerprint
+
+      - name: Build unsigned Android release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/mobile/android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Record version and stage unsigned APK
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./apps/mobile/package.json').version")"
+          code="$(node --input-type=module -e "import { resolveAndroidVersion } from './apps/mobile/scripts/ota/android-version.mjs'; console.log(resolveAndroidVersion({ packageVersion: process.argv[1] }).code)" "$name")"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          mkdir -p release-unsigned
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk release-unsigned/erve-unsigned.apk
+          (cd release-unsigned && sha256sum erve-unsigned.apk > SHA256SUMS)
+          printf 'commit=%s\nchannel=%s\nversionName=%s\nversionCode=%s\n' \
+            "$GITHUB_SHA" "$ERVE_OTA_CHANNEL" "$name" "$code" > release-unsigned/build-info.txt
+
+      - name: Upload unsigned APK for signing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: erve-unsigned-${{ github.run_id }}
+          path: release-unsigned/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  sign:
+    name: Sign, verify and archive APK (approval protected)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: android-release
+    env:
+      RELEASE_CHANNEL: ${{ inputs.channel }}
+      APP_VERSION: ${{ needs.build.outputs.app_version }}
+      VERSION_CODE: ${{ needs.build.outputs.version_code }}
+      EXPECTED_SIGNER_SHA256: ${{ vars.ANDROID_SIGNER_SHA256 }}
+      LAST_PRODUCTION_CODE: ${{ vars.ERVE_ANDROID_LAST_PRODUCTION_VERSION_CODE }}
+      LAST_TESTING_CODE: ${{ vars.ERVE_ANDROID_LAST_TESTING_VERSION_CODE }}
+      RELEASE_GUARD: ${{ vars.ANDROID_APK_SIGNING_READY }}
+    steps:
+      - name: Checkout audited source for release gate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify environment approval and version policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
+          if [ -z "$latest" ] || [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "::error::main moved while waiting for approval; dispatch a new APK build."
+            exit 1
+          fi
+          if [ "$RELEASE_GUARD" != enabled ]; then
+            echo "::error::Configure the protected android-release environment and ANDROID_APK_SIGNING_READY=enabled."
+            exit 1
+          fi
+          if ! [[ "$EXPECTED_SIGNER_SHA256" =~ ^([0-9a-fA-F]{2}:?){31}[0-9a-fA-F]{2}$ ]]; then
+            echo "::error::Set ANDROID_SIGNER_SHA256 to the approved 64-hex signing certificate fingerprint."
+            exit 1
+          fi
+          case "$RELEASE_CHANNEL" in
+            production) last="$LAST_PRODUCTION_CODE" ;;
+            testing) last="$LAST_TESTING_CODE" ;;
+            *) echo "::error::Unexpected channel."; exit 1 ;;
+          esac
+          if ! [[ "$last" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Set the last distributed versionCode for this channel (0 for first release)."
+            exit 1
+          fi
+          if (( VERSION_CODE <= last )); then
+            echo "::error::Android versionCode $VERSION_CODE must exceed previously distributed $last."
+            exit 1
+          fi
+
+      - name: Download the unsigned APK from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: erve-unsigned-${{ github.run_id }}
+          path: release-unsigned
+
+      - name: Verify unsigned APK integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd release-unsigned && sha256sum -c SHA256SUMS)
+          grep -Fx "commit=$GITHUB_SHA" release-unsigned/build-info.txt
+          grep -Fx "channel=$RELEASE_CHANNEL" release-unsigned/build-info.txt
+          grep -Fx "versionName=$APP_VERSION" release-unsigned/build-info.txt
+          grep -Fx "versionCode=$VERSION_CODE" release-unsigned/build-info.txt
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Locate Android build tools
+        id: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+          test -n "$version"
+          test -x "$ANDROID_HOME/build-tools/$version/apksigner"
+          test -x "$ANDROID_HOME/build-tools/$version/zipalign"
+          test -x "$ANDROID_HOME/build-tools/$version/aapt2"
+          echo "path=$ANDROID_HOME/build-tools/$version" >> "$GITHUB_OUTPUT"
+
+      - name: Sign APK with environment-protected credentials
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          BUILD_TOOLS: ${{ steps.tools.outputs.path }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for name in KEYSTORE_B64 STORE_PASS KEY_PASS KEY_ALIAS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing $name protected secret."
+              exit 1
+            fi
+          done
+          keydir="$(mktemp -d "$RUNNER_TEMP/erve-signing.XXXXXX")"
+          trap 'rm -rf "$keydir"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keydir/release.jks"
+          test -s "$keydir/release.jks"
+          mkdir -p release-signed
+          output="erve-$APP_VERSION-$RELEASE_CHANNEL-${GITHUB_SHA:0:8}.apk"
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            release-unsigned/erve-unsigned.apk "$keydir/aligned.apk"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$keydir/release.jks" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:STORE_PASS \
+            --key-pass env:KEY_PASS \
+            --out "release-signed/$output" "$keydir/aligned.apk"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "release-signed/$output"
+          (cd release-signed && sha256sum "$output" > "$output.sha256")
+
+      - name: Set up Node.js 24 for the APK verification CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install tooling without executing dependency install scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm_version="$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")"
+          corepack prepare "pnpm@$pnpm_version" --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Gate signed APK against identity, channel and test remnants
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="release-signed/erve-$APP_VERSION-$RELEASE_CHANNEL-${GITHUB_SHA:0:8}.apk"
+          node apps/mobile/scripts/apk-check.mjs check "$apk" \
+            --expected-sha256 "$EXPECTED_SIGNER_SHA256" \
+            --channel "$RELEASE_CHANNEL" \
+            --ota-public-key apps/mobile/ota/ota-public-key.pem
+          echo "Validated: correct signer, package, version, channel, OTA key and network security."
+
+      - name: Upload approved signed APK (no public GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: erve-android-${{ inputs.channel }}-${{ needs.build.outputs.app_version }}-${{ github.run_id }}
+          path: release-signed/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
