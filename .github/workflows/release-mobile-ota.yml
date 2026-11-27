@@ -44,29 +44,29 @@ concurrency:
 
 jobs:
   ota:
-    name: OTA ${{ inputs.operation }
+    name: OTA ${{ inputs.operation }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
     env:
-      VITE_API_URL: ${{ vars.ERVE_ANDROID_API_URL }
-      ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }
-      ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }
-      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }
-      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }
-      DEPLOY_USER: ${{ vars.DEPLOY_USER }
-      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }
-      OPERATION: ${{ inputs.operation }
-      BUILD_NUMBER: ${{ inputs.build_number }
-      TO_BUILD: ${{ inputs.to_build }
-      ROLLBACK_REASON: ${{ inputs.reason }
-      TARGET_FINGERPRINT: ${{ inputs.fingerprint }
-      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }
+      VITE_API_URL: ${{ vars.ERVE_ANDROID_API_URL }}
+      ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }}
+      ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+      OPERATION: ${{ inputs.operation }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      TO_BUILD: ${{ inputs.to_build }}
+      ROLLBACK_REASON: ${{ inputs.reason }}
+      TARGET_FINGERPRINT: ${{ inputs.fingerprint }}
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up Node.js 24
@@ -77,7 +77,7 @@ jobs:
       - name: Verify main CI and selected action
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           node scripts/deployment/verify-main-ci-success.mjs
@@ -130,9 +130,9 @@ jobs:
       - name: Prepare temporary OTA key and SSH credentials
         shell: bash
         env:
-          OTA_PRIVATE_KEY: ${{ secrets.ERVE_OTA_PRIVATE_KEY_PEM }
-          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }
-          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }
+          OTA_PRIVATE_KEY: ${{ secrets.ERVE_OTA_PRIVATE_KEY_PEM }}
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           umask 077
