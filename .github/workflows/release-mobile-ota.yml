@@ -1,0 +1,195 @@
+name: Release Erve mobile OTA update
+
+# Updates the React bundle used by installed Capacitor APKs; does not build APKs.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: OTA action
+        required: true
+        type: choice
+        options:
+          - publish-testing
+          - promote-production
+          - rollback-production
+      build_number:
+        description: Testing build number to promote
+        required: false
+        type: string
+      to_build:
+        description: Previous production build number for rollback
+        required: false
+        type: string
+      reason:
+        description: Reason for rollback
+        required: false
+        type: string
+      fingerprint:
+        description: Optional native fingerprint (older APK generation)
+        required: false
+        type: string
+      confirm_production:
+        description: Confirm production promotion or rollback
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: erve-mobile-ota-release
+  cancel-in-progress: false
+
+jobs:
+  ota:
+    name: OTA ${{ inputs.operation }
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VITE_API_URL: ${{ vars.ERVE_ANDROID_API_URL }
+      ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }
+      ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }
+      OPERATION: ${{ inputs.operation }
+      BUILD_NUMBER: ${{ inputs.build_number }
+      TO_BUILD: ${{ inputs.to_build }
+      ROLLBACK_REASON: ${{ inputs.reason }
+      TARGET_FINGERPRINT: ${{ inputs.fingerprint }
+      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify main CI and selected action
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }
+        run: |
+          set -euo pipefail
+          node scripts/deployment/verify-main-ci-success.mjs
+          if [ "$OPERATION" != publish-testing ] && [ "$CONFIRM_PRODUCTION" != true ]; then
+            echo "::error::Confirm the production operation before starting."
+            exit 1
+          fi
+          case "$OPERATION" in
+            publish-testing) ;;
+            promote-production)
+              [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Enter a testing build number."; exit 1; } ;;
+            rollback-production)
+              [[ "$TO_BUILD" =~ ^[1-9][0-9]*$ ]] && [ -n "$ROLLBACK_REASON" ] || {
+                echo "::error::Enter a previous build number and reason."; exit 1;
+              } ;;
+            *) exit 1 ;;
+          esac
+          if [ -n "$TARGET_FINGERPRINT" ] && ! [[ "$TARGET_FINGERPRINT" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::Native fingerprint must be 32 lowercase hex characters."
+            exit 1
+          fi
+          test -s apps/mobile/ota/ota-public-key.pem || {
+            echo "::error::Commit apps/mobile/ota/ota-public-key.pem first."; exit 1;
+          }
+          node --input-type=module <<'NODE'
+          import { loadOtaBuildConfig } from './apps/mobile/scripts/ota/ota-config.mjs';
+          const config = loadOtaBuildConfig();
+          if (!config.enabled || config.allowInsecureHttp) {
+            throw new Error('The OTA public key and HTTPS URL must be configured: ' + config.disabledReason);
+          }
+          const api = new URL(process.env.VITE_API_URL);
+          if (api.protocol !== 'https:' || api.pathname.replace(/\/+$/, '') !== '/api') {
+            throw new Error('ERVE_ANDROID_API_URL must end with /api and use HTTPS.');
+          }
+          NODE
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          version="$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")"
+          corepack prepare "pnpm@$version" --activate
+          pnpm install --frozen-lockfile
+
+      - name: Build the web update
+        if: inputs.operation == 'publish-testing'
+        run: pnpm --filter @erve/mobile build
+
+      - name: Prepare temporary OTA key and SSH credentials
+        shell: bash
+        env:
+          OTA_PRIVATE_KEY: ${{ secrets.ERVE_OTA_PRIVATE_KEY_PEM }
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ -z "$OTA_PRIVATE_KEY" ] || [ -z "$SSH_PRIVATE_KEY" ] || [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "::error::Missing OTA signing key or existing production SSH secrets."; exit 1
+          fi
+          port="${DEPLOY_PORT:-22}"
+          if [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ] || ! [[ "$port" =~ ^[0-9]{1,5}$ ]] ||
+             ! [[ "$DEPLOY_ROOT" == /* ]] || [[ "$DEPLOY_ROOT" =~ [[:space:]] ]]; then
+            echo "::error::Check production DEPLOY_HOST, DEPLOY_USER, DEPLOY_PORT and DEPLOY_ROOT."; exit 1
+          fi
+          dir="$RUNNER_TEMP/erve-ota-secrets"
+          mkdir -p "$dir"
+          chmod 700 "$dir"
+          printf '%s\n' "$OTA_PRIVATE_KEY" > "$dir/ota-private.pem"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$dir/deploy-key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$dir/known_hosts"
+          chmod 600 "$dir/"*
+          echo "ERVE_OTA_PRIVATE_KEY_FILE=$dir/ota-private.pem" >> "$GITHUB_ENV"
+          echo "ERVE_OTA_RELEASE_TREE=$RUNNER_TEMP/erve-ota-tree" >> "$GITHUB_ENV"
+          echo "OTA_REMOTE=$DEPLOY_USER@$DEPLOY_HOST:${DEPLOY_ROOT%/}/shared/mobile-updates/bundles" >> "$GITHUB_ENV"
+          echo "OTA_SSH=ssh -i $dir/deploy-key -p $port -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$dir/known_hosts" >> "$GITHUB_ENV"
+
+      - name: Pull the current signed release history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ERVE_OTA_RELEASE_TREE"
+          pnpm --filter @erve/mobile ota:sync -- --from "$OTA_REMOTE" --to "$ERVE_OTA_RELEASE_TREE" --ssh "$OTA_SSH"
+          pnpm --filter @erve/mobile ota:status -- --tree "$ERVE_OTA_RELEASE_TREE"
+
+      - name: Create signed update
+        shell: bash
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ -n "$TARGET_FINGERPRINT" ]; then extra+=(--fingerprint "$TARGET_FINGERPRINT"); fi
+          case "$OPERATION" in
+            publish-testing)
+              pnpm --filter @erve/mobile ota:publish -- --tree "$ERVE_OTA_RELEASE_TREE" ;;
+            promote-production)
+              pnpm --filter @erve/mobile ota:promote -- --tree "$ERVE_OTA_RELEASE_TREE" --build "$BUILD_NUMBER" "${extra[@]}" ;;
+            rollback-production)
+              pnpm --filter @erve/mobile ota:rollback -- --tree "$ERVE_OTA_RELEASE_TREE" --channel production --to-build "$TO_BUILD" --reason "$ROLLBACK_REASON" "${extra[@]}" ;;
+          esac
+
+      - name: Deploy OTA bundle and verify HTTPS endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @erve/mobile ota:verify -- --tree "$ERVE_OTA_RELEASE_TREE"
+          pnpm --filter @erve/mobile ota:sync -- --from "$ERVE_OTA_RELEASE_TREE" --to "$OTA_REMOTE" --ssh "$OTA_SSH"
+          if [ "$OPERATION" = publish-testing ]; then channel=testing; else channel=production; fi
+          pnpm --filter @erve/mobile ota:verify -- --url "$ERVE_OTA_BASE_URL" --channel "$channel"
+          pnpm --filter @erve/mobile ota:status -- --tree "$ERVE_OTA_RELEASE_TREE"
+
+      - name: Remove temporary credentials
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/erve-ota-secrets"
