@@ -112,7 +112,7 @@ const manifestOf = (root: string, channel: string) =>
   );
 const verify = (root: string) => verifyReleaseTree(root, pair.publicKeyPem);
 
-describe('publish (testing only)', () => {
+describe('publish to the selected channel', () => {
   it('publishes to testing and nothing else', () => {
     const root = dir('tree');
     const result = publish(root, 'one');
@@ -124,12 +124,17 @@ describe('publish (testing only)', () => {
     expect(verify(root).testing.releases[FP_A].files).toBe(3);
   });
 
-  it('can never publish a build straight into production', () => {
+  it('publishes directly to production and can roll back a bad update', () => {
     const root = dir('tree');
-    expect(() => publish(root, 'one', { channel: 'production' })).toThrow(
-      /only be published to the "testing"/,
-    );
-    expect(existsSync(join(root, 'production'))).toBe(false);
+    const good = publish(root, 'good', { channel: 'production' });
+    const bad = publish(root, 'bad', { channel: 'production' });
+    expect(good.channel).toBe('production');
+    expect(bad.buildNumber).toBeGreaterThan(good.buildNumber);
+    expect(existsSync(join(root, 'testing'))).toBe(false);
+    expect(verify(root).production.releases[FP_A].files).toBe(3);
+    const restored = rollback(root, 'production', good.buildNumber);
+    expect(restored.buildNumber).toBeGreaterThan(bad.buildNumber);
+    expect(verify(root).production.releases[FP_A]).toBeDefined();
   });
 
   it('refuses unknown channels', () => {

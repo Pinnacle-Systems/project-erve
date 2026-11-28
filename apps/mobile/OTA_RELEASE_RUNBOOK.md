@@ -1,13 +1,14 @@
 # OTA release runbook (self-hosted)
 
-How to generate the signing key, publish a web update to **testing**, promote it
-to **production**, and roll back in an emergency. Architecture and the security
-model are in [`OTA_UPDATES.md`](OTA_UPDATES.md); this file is the procedure.
+**Current Erve India process:** There is **one APK, one active OTA channel
+(production), and one direct GitHub Actions OTA release action**. Follow the
+short [GitHub OTA guide](OTA_GITHUB_ACTIONS.md) for publishing or rolling
+back. A manual `publish-production` release is available to all installed
+apps; no testing-channel APK or promotion step is required.
 
-**Nothing in this repository publishes automatically.** No workflow runs these
-commands, deployments never touch the release directory, and production only
-receives a build through an explicit `ota:promote` (enforced by
-`scripts/ota/release-policy.test.ts`).
+The sections below document the original optional two-channel/workstation
+release process. They are **not the current GitHub release instructions**.
+Updates are still triggered manually; no push automatically deploys an OTA update.
 
 ## 0. Vocabulary
 

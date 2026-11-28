@@ -2,7 +2,7 @@
 /**
  * Release tooling for self-hosted OTA updates. See OTA_RELEASE_RUNBOOK.md.
  *
- *   publish   build -> TESTING channel                     (needs the private key)
+ *   publish   build -> selected OTA channel                (needs the private key)
  *   promote   TESTING -> PRODUCTION, same bytes            (needs the private key)
  *   rollback  re-release an earlier build, higher number   (needs the private key)
  *   retire    withdraw web updates for an APK generation   (needs the private key)
@@ -161,8 +161,8 @@ function printStatus(report) {
 async function main() {
   switch (command) {
     case 'publish': {
-      if (values.channel && values.channel !== 'testing') {
-        fail('Builds are published to "testing" only. Use `promote` to release to production.');
+      if (values.channel && !CHANNELS.includes(values.channel)) {
+        fail('--channel must be testing or production.');
       }
       const ota = loadConfig();
       if (!ota.enabled) fail(`OTA is not configured: ${ota.disabledReason}`);
@@ -171,6 +171,7 @@ async function main() {
       const result = publishRelease({
         distDir: dist,
         root: treeDir(),
+        channel: values.channel ?? 'testing',
         fingerprint: currentFingerprint(ota),
         appVersion: readMobilePackageVersion(mobileRoot),
         publicKeyPem: ota.publicKey,

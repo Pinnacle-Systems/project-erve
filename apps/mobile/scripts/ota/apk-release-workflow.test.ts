@@ -12,6 +12,8 @@ describe('manual Android APK release workflow policy', () => {
     expect(workflow).toMatch(/^on:\s*\n\s+workflow_dispatch:/m);
     expect(workflow).not.toMatch(/^\s+(push|pull_request|schedule|workflow_run):/m);
     expect(workflow).not.toContain('confirm_production_release');
+    expect(workflow).toContain('ERVE_OTA_CHANNEL: production');
+    expect(workflow).not.toContain('inputs.channel');
   });
 
   it('does not give the workflow repository write rights', () => {

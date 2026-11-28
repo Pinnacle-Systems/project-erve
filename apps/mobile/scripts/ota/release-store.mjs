@@ -73,20 +73,6 @@ export function assertChannel(channel) {
   }
 }
 
-/**
- * Production releases are only ever created by promoting a tested testing
- * release or by rolling back to an earlier production release. Building and
- * publishing straight into production is not possible through this module.
- */
-function assertTesting(channel) {
-  if (channel !== 'testing') {
-    throw new Error(
-      'New builds can only be published to the "testing" channel. Use `promote` to release a ' +
-        'tested build to production, or `rollback` to re-release an earlier production build.',
-    );
-  }
-}
-
 function assertFingerprint(fingerprint) {
   if (!FINGERPRINT_RE.test(fingerprint ?? '')) {
     throw new Error(`"${fingerprint}" is not a native fingerprint (32 hex characters).`);
@@ -455,7 +441,7 @@ function release({
 // ---- operations ----------------------------------------------------------
 
 /**
- * Seals a built dist/ and publishes it to the TESTING channel.
+ * Seals a built dist/ and publishes it to the selected OTA channel.
  *
  * @param {object} o
  * @param {string} o.distDir
@@ -464,7 +450,7 @@ function release({
  * @param {string} o.appVersion
  * @param {string} o.publicKeyPem
  * @param {string} o.privateKeyPem
- * @param {string} [o.channel]            must be "testing" (default)
+ * @param {string} [o.channel]            "testing" (default) or "production"
  * @param {number} [o.buildNumber]
  * @param {boolean} [o.latestNative]
  * @param {number} [o.retention]
@@ -472,7 +458,7 @@ function release({
  */
 export function publishRelease(o) {
   const channel = o.channel ?? 'testing';
-  assertTesting(channel);
+  assertChannel(channel);
   const info = readBuildInfo(o.distDir);
   if (info.nativeFingerprint !== o.fingerprint) {
     throw new Error(
