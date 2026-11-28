@@ -3,23 +3,14 @@ name: Build signed Erve Android APK
 # Deliberately manual. This workflow does not deploy, publish a GitHub Release,
 # generate signing keys, or push changes to the OTA update server.
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: APK update channel (testing devices or production users)
-        required: true
-        default: testing
-        type: choice
-        options:
-          - testing
-          - production
+  workflow_dispatch: {}
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: erve-android-apk-setup-${{ inputs.channel }}
+  group: erve-android-apk-release
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +24,7 @@ jobs:
     env:
       VITE_API_URL: ${{ vars.ERVE_ANDROID_API_URL }}
       ERVE_OTA_BASE_URL: ${{ vars.ERVE_OTA_BASE_URL }}
-      ERVE_OTA_CHANNEL: ${{ inputs.channel }}
+      ERVE_OTA_CHANNEL: production
       ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }}
       ERVE_ANDROID_VERSION_CODE: ${{ vars.ERVE_ANDROID_VERSION_CODE }}
     steps:
@@ -153,12 +144,11 @@ jobs:
     timeout-minutes: 20
     environment: android-release
     env:
-      RELEASE_CHANNEL: ${{ inputs.channel }}
+      RELEASE_CHANNEL: production
       APP_VERSION: ${{ needs.build.outputs.app_version }}
       VERSION_CODE: ${{ needs.build.outputs.version_code }}
       EXPECTED_SIGNER_SHA256: ${{ vars.ANDROID_SIGNER_SHA256 }}
       LAST_PRODUCTION_CODE: ${{ vars.ERVE_ANDROID_LAST_PRODUCTION_VERSION_CODE }}
-      LAST_TESTING_CODE: ${{ vars.ERVE_ANDROID_LAST_TESTING_VERSION_CODE }}
       RELEASE_GUARD: ${{ vars.ANDROID_APK_SIGNING_READY }}
     steps:
       - name: Checkout audited source for release gate
@@ -179,11 +169,7 @@ jobs:
             echo "::error::Set ANDROID_SIGNER_SHA256 to the approved 64-hex signing certificate fingerprint."
             exit 1
           fi
-          case "$RELEASE_CHANNEL" in
-            production) last="$LAST_PRODUCTION_CODE" ;;
-            testing) last="$LAST_TESTING_CODE" ;;
-            *) echo "::error::Unexpected channel."; exit 1 ;;
-          esac
+          last="$LAST_PRODUCTION_CODE"
           if ! [[ "$last" =~ ^(0|[1-9][0-9]*)$ ]]; then
             echo "::error::Set the last distributed versionCode for this channel (0 for first release)."
             exit 1
@@ -289,7 +275,7 @@ jobs:
       - name: Upload approved signed APK (no public GitHub Release)
         uses: actions/upload-artifact@v4
         with:
-          name: erve-android-${{ inputs.channel }}-${{ needs.build.outputs.app_version }}-${{ github.run_id }}
+          name: erve-android-${{ needs.build.outputs.app_version }}-${{ github.run_id }}
           path: release-signed/
           if-no-files-found: error
           retention-days: 14
