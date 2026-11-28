@@ -6,6 +6,7 @@ import { hashPassword } from '../../auth/password.js';
 import { recordAuditLog } from '../../audit/audit.service.js';
 import type { CurrentUser } from '../../auth/current-user.js';
 import { listAllOrPage, type OptionalPageQuery } from '../../utils/pagination.js';
+import { revokeTrustedDevicesForUser } from '../auth/trusted-device.service.js';
 
 const userWithRelationsInclude = {
   userRoles: { include: { role: true } },
@@ -300,6 +301,8 @@ export async function updateUserStatus(
         where: { userId, revokedAt: null },
         data: { revokedAt: now },
       });
+      // Biometric device authorizations end with the account's access.
+      await revokeTrustedDevicesForUser(tx, actor.id, userId, 'USER_DEACTIVATED', now);
     }
   });
 
@@ -343,6 +346,9 @@ export async function resetPassword(
       where: { userId, revokedAt: null },
       data: { revokedAt: now },
     });
+    // A new password invalidates biometric device authorizations too (they
+    // are also tied to the pre-reset authVersion, so this is belt and braces).
+    await revokeTrustedDevicesForUser(tx, actor.id, userId, 'PASSWORD_RESET', now);
 
     await recordAuditLog(
       {

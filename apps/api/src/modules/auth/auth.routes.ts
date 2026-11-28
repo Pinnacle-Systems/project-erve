@@ -3,10 +3,26 @@ import { requireAuth } from '../../auth/auth.middleware.js';
 import { HttpError } from '../../errors/http-error.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { successResponse } from '../../utils/response.js';
-import { loginSchema, mobileRefreshSchema, refreshSchema } from './auth.validation.js';
+import {
+  loginSchema,
+  mobileRefreshSchema,
+  refreshSchema,
+  registerTrustedDeviceSchema,
+  revokeTrustedDeviceQuerySchema,
+  trustedDeviceChallengeSchema,
+  trustedDeviceSignInSchema,
+} from './auth.validation.js';
 import { env } from '../../config/env.js';
 import { getMe, login } from './auth.service.js';
 import { refreshSession, revokeRefreshSession } from './refresh-session.service.js';
+import {
+  issueRegistrationChallenge,
+  issueSignInChallenge,
+  listTrustedDevices,
+  registerTrustedDevice,
+  revokeTrustedDevice,
+  signInWithTrustedDevice,
+} from './trusted-device.service.js';
 import {
   clearRefreshTokenCookie,
   getRefreshTokenFromCookie,
@@ -109,5 +125,85 @@ authRouter.get(
   asyncHandler(async (req, res) => {
     const me = await getMe(req.user!.id);
     res.status(200).json(successResponse(me));
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Trusted-device (biometric) sign-in. Independent of refresh sessions: logging
+// out never touches these. See trusted-device.service.ts.
+// ---------------------------------------------------------------------------
+
+function requestContext(req: { ip?: string | undefined }) {
+  return { ip: req.ip ?? 'unknown' };
+}
+
+// Registration and management require an ordinary access token. Registration
+// additionally requires that the session was started with a password.
+authRouter.post(
+  '/trusted-devices/challenge',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const challenge = await issueRegistrationChallenge(
+      req.user!,
+      req.authMethod ?? 'pwd',
+      requestContext(req),
+    );
+    res.status(200).json(successResponse(challenge));
+  }),
+);
+
+authRouter.post(
+  '/trusted-devices',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const input = registerTrustedDeviceSchema.parse(req.body);
+    const result = await registerTrustedDevice(
+      req.user!,
+      req.authMethod ?? 'pwd',
+      input,
+      requestContext(req),
+    );
+    res.status(201).json(successResponse(result));
+  }),
+);
+
+authRouter.get(
+  '/trusted-devices',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    res.status(200).json(successResponse({ devices: await listTrustedDevices(req.user!) }));
+  }),
+);
+
+authRouter.delete(
+  '/trusted-devices/:deviceId',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { revokeSessions } = revokeTrustedDeviceQuerySchema.parse(req.query);
+    await revokeTrustedDevice(
+      req.user!,
+      String(req.params.deviceId),
+      { revokeSessions },
+      requestContext(req),
+    );
+    res.status(200).json(successResponse({}));
+  }),
+);
+
+authRouter.post(
+  '/mobile/trusted-device/challenge',
+  asyncHandler(async (req, res) => {
+    requireSecureMobileTransport(req);
+    const { deviceId } = trustedDeviceChallengeSchema.parse(req.body);
+    res.status(200).json(successResponse(await issueSignInChallenge(deviceId, requestContext(req))));
+  }),
+);
+
+authRouter.post(
+  '/mobile/trusted-device/sign-in',
+  asyncHandler(async (req, res) => {
+    requireSecureMobileTransport(req);
+    const input = trustedDeviceSignInSchema.parse(req.body);
+    res.status(200).json(successResponse(await signInWithTrustedDevice(input, requestContext(req))));
   }),
 );

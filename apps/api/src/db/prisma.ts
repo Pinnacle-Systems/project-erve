@@ -30,6 +30,7 @@ export type {
   QualityFormStatus,
   QualityFormVersionStatus,
   RecordOrigin,
+  RefreshSessionAuthMethod,
   RoleName,
   SaleOrderStatus,
   SellerRegistrationStatus,
@@ -39,6 +40,7 @@ export type {
   StockAllocationStatus,
   StyleStatus,
   TaxInvoiceStatus,
+  TrustedDeviceChallengePurpose,
   UserStatus,
 } from '../generated/prisma/client.js';
 

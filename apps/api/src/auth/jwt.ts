@@ -3,10 +3,18 @@ import jwt from 'jsonwebtoken';
 import type { Role } from '@erve/types';
 import { env } from '../config/env.js';
 
+/**
+ * How the session behind a token was established: `pwd` = password sign-in,
+ * `device` = biometric trusted-device sign-in. Tokens issued before this claim
+ * existed were all password sessions, so absence means `pwd`.
+ */
+export type AuthenticationMethod = 'pwd' | 'device';
+
 export interface AccessTokenPayload {
   sub: string;
   roles: Role[];
   authVersion: number;
+  amr?: AuthenticationMethod;
 }
 
 export interface RefreshTokenPayload {

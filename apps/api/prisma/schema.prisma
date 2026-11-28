@@ -29,6 +29,19 @@ enum UserStatus {
   SUSPENDED
 }
 
+// How a refresh session was established. Only PASSWORD sessions may register
+// a trusted device, so device authorization can never be renewed or extended
+// by biometric sign-ins alone.
+enum RefreshSessionAuthMethod {
+  PASSWORD
+  TRUSTED_DEVICE
+}
+
+enum TrustedDeviceChallengePurpose {
+  REGISTRATION
+  SIGN_IN
+}
+
 enum DistributorStatus {
   ACTIVE
   INACTIVE
@@ -320,6 +333,8 @@ model User {
   uploadedFiles                        File[]                      @relation("FileUploadedBy")
   auditLogs                            AuditLog[]                  @relation("AuditLogActor")
   refreshSessions                      RefreshSession[]
+  trustedDevices                       TrustedDevice[]
+  trustedDeviceChallenges              TrustedDeviceChallenge[]
   createdPurchaseOrders                DistributorPurchaseOrder[]  @relation("POCreator")
   merchandisedPurchaseOrders           DistributorPurchaseOrder[]  @relation("POMerchandiser")
   createdJobOrders                     JobOrder[]                  @relation("JobOrderCreator")
@@ -380,16 +395,87 @@ model RefreshSession {
   idleExpiresAt     DateTime  @map("idle_expires_at")
   absoluteExpiresAt DateTime  @map("absolute_expires_at")
   revokedAt         DateTime? @map("revoked_at")
+  // Existing rows were all created by password login.
+  authMethod        RefreshSessionAuthMethod @default(PASSWORD) @map("auth_method")
+  // Set when the session was established by a biometric device sign-in.
+  trustedDeviceId   String?   @map("trusted_device_id")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trustedDevice TrustedDevice? @relation(fields: [trustedDeviceId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([trustedDeviceId])
   @@index([idleExpiresAt])
   @@index([absoluteExpiresAt])
   @@index([revokedAt])
   @@map("refresh_sessions")
+}
+
+// A phone the user authorized, after a password sign-in, to establish new
+// sessions by signing a server challenge with a Keystore-held private key that
+// needs a strong biometric for every use. Independent of refresh sessions:
+// logging out ends the session and leaves this row intact. Only the public key
+// is stored. Revoked rows are kept for audit.
+model TrustedDevice {
+  id                 String    @id
+  userId             String    @map("user_id")
+  platform           String    @default("ANDROID")
+  label              String
+  appVersion         String?   @map("app_version")
+  // SPKI DER, base64. EC P-256.
+  publicKey          String    @map("public_key")
+  // SHA-256 of the SPKI DER, hex. One registration per key.
+  publicKeyFingerprint String  @unique @map("public_key_fingerprint")
+  // User.authVersion at registration: a credential reset invalidates the device.
+  authVersion        Int       @map("auth_version")
+  // Absolute, fixed at registration; never extended by use.
+  expiresAt          DateTime  @map("expires_at")
+  lastUsedAt         DateTime? @map("last_used_at")
+  revokedAt          DateTime? @map("revoked_at")
+  revokedReason      String?   @map("revoked_reason")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user       User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenges TrustedDeviceChallenge[]
+  sessions   RefreshSession[]
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("trusted_devices")
+}
+
+// Single-use, short-lived server challenge. REGISTRATION challenges belong to
+// the authenticated user (no device yet); SIGN_IN challenges to one device.
+model TrustedDeviceChallenge {
+  id         String                        @id
+  purpose    TrustedDeviceChallengePurpose
+  userId     String                        @map("user_id")
+  deviceId   String?                       @map("device_id")
+  nonce      String
+  expiresAt  DateTime                      @map("expires_at")
+  consumedAt DateTime?                     @map("consumed_at")
+  createdAt  DateTime                      @default(now()) @map("created_at")
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device TrustedDevice? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([deviceId])
+  @@index([userId])
+  @@map("trusted_device_challenges")
+}
+
+// Fixed-window counters for unauthenticated/security-sensitive endpoints,
+// shared across API instances.
+model AuthRateLimitBucket {
+  key         String   @id
+  windowStart DateTime @map("window_start")
+  requests    Int
+
+  @@map("auth_rate_limit_buckets")
 }
 
 model Role {

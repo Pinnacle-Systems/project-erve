@@ -26,7 +26,7 @@ describe('Android secure session bridge template', () => {
     expect(configureScript).toContain('SecureSessionBridgePlugin.java');
   });
 
-  describe('biometric login', () => {
+  describe('biometric trusted-device login', () => {
     const source = readFileSync(
       resolve(templateRoot, 'java/SecureSessionBridgePlugin.java'),
       'utf8',
@@ -37,8 +37,12 @@ describe('Android secure session bridge template', () => {
       const next = source.indexOf('@PluginMethod', start);
       return source.slice(start, next === -1 ? undefined : next);
     };
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
-    it('binds the stored credential to a Keystore key that needs a strong biometric for every use', () => {
+    it('generates a non-exportable P-256 signing key that needs a strong biometric for every use', () => {
+      expect(source).toContain('KeyProperties.KEY_ALGORITHM_EC');
+      expect(source).toContain('new ECGenParameterSpec("secp256r1")');
+      expect(source).toContain('KeyProperties.PURPOSE_SIGN');
       expect(source).toContain('setUserAuthenticationRequired(true)');
       expect(source).toContain('setInvalidatedByBiometricEnrollment(true)');
       expect(source).toContain(
@@ -49,63 +53,84 @@ describe('Android secure session bridge template', () => {
       expect(source).not.toContain('Authenticators.DEVICE_CREDENTIAL');
     });
 
-    it('decrypts only through a BiometricPrompt CryptoObject', () => {
-      expect(source).toContain('new BiometricPrompt.CryptoObject(cipher)');
-      expect(source).toContain('authentication.getCryptoObject().getCipher()');
+    it('only ever exposes the public key and never the private key', () => {
+      const create = method('createDeviceKey');
+      expect(create).toContain('generateDeviceKey()');
+      expect(source).toContain('pair.getPublic().getEncoded()');
+      expect(code).not.toContain('getPrivate()');
     });
 
-    it('has no unprotected way to read the credential while biometric login is on', () => {
-      const get = method('getRefreshToken');
-      const enabledBranch = get.slice(
-        get.indexOf('isBiometricEnabled()'),
-        get.indexOf('String token = readLegacy()'),
-      );
-      expect(enabledBranch).toContain('BIOMETRIC_LOCKED');
-      expect(enabledBranch).toContain('return;');
-      expect(enabledBranch).not.toContain('readLegacy');
+    it('signs only through a BiometricPrompt CryptoObject bound to the key', () => {
+      const sign = method('signWithDeviceKey');
+      expect(sign).toContain('new BiometricPrompt.CryptoObject(signature)');
+      expect(sign).toContain('authenticated.getSignature()');
+      expect(sign).toContain('authenticate(');
+      expect(source).toContain('"SHA256withECDSA"');
     });
 
-    it('re-wraps rotated credentials with the public key instead of writing the unprotected store', () => {
-      const set = method('setRefreshToken');
-      const enabledBranch = set.slice(
-        set.indexOf('if (isBiometricEnabled())'),
-        set.indexOf('} else {'),
-      );
-      expect(enabledBranch).toContain('wrap(token)');
-      expect(enabledBranch).not.toContain('storeLegacy');
-    });
-
-    it('empties the unprotected store only after the enrolment prompt succeeds', () => {
-      const enable = method('enableBiometric');
-      expect(enable.indexOf('authenticate(')).toBeGreaterThan(-1);
-      expect(enable.indexOf('clearLegacy()')).toBeGreaterThan(enable.indexOf('authenticate('));
-    });
-
-    it('wipes every credential, key and flag on clear (logout, expiry, revocation)', () => {
+    it('keeps the registration through logout: clearing the session never touches the device key', () => {
       const clear = method('clearRefreshToken');
-      expect(clear).toContain('clearLegacy()');
-      expect(clear).toContain('wipeBiometric()');
-      expect(clear).toContain('unlockedToken = null');
+      expect(clear).toContain('clearPersisted()');
+      expect(clear).toContain('memoryToken = null');
+      expect(clear).not.toContain('dropRegistration');
+      expect(clear).not.toContain('deleteDeviceKey');
+      expect(clear).not.toContain('DEV_');
     });
 
-    it('requires the password when the key is invalidated or the envelope is unreadable', () => {
+    it('deletes the key and metadata, and remembers a pending revocation, when turned off', () => {
+      expect(method('removeDeviceAuthorization')).toContain('dropRegistration(');
+      const drop = source.slice(source.indexOf('private void dropRegistration('));
+      expect(drop).toContain('deleteDeviceKey()');
+      expect(drop).toContain('DEV_PENDING_ID');
+      expect(drop).toContain('.remove(DEV_REGISTERED)');
+    });
+
+    it('treats a missing, unrecoverable or invalidated key as a lost registration', () => {
       expect(source).toContain('BIOMETRIC_KEY_INVALIDATED');
-      expect(method('unlockBiometric')).toContain('wipeBiometric()');
+      expect(source).toContain('catch (UnrecoverableKeyException');
+      expect(method('getBiometricStatus')).toContain('probeDeviceKey() == PROBE_INVALID');
+      expect(method('getBiometricStatus')).toContain('dropRegistration(true, "key-invalidated")');
+      expect(method('signWithDeviceKey')).toContain('dropRegistration(true, "key-invalidated")');
     });
 
-    it('keeps the decrypted credential in memory only and drops it when the activity is destroyed', () => {
-      expect(source).toContain('private static String unlockedToken');
+    it('holds the session in memory only while registered, and drops it when the activity is destroyed', () => {
+      const set = method('setRefreshToken');
+      const registered = set.slice(set.indexOf('if (isDeviceRegistered())'), set.indexOf('} else {'));
+      expect(registered).toContain('memoryToken = token');
+      expect(registered).not.toContain('storePersisted');
+      const get = method('getRefreshToken');
+      const registeredRead = get.slice(
+        get.indexOf('if (isDeviceRegistered())'),
+        get.indexOf('if (isLegacyPresent())'),
+      );
+      expect(registeredRead).toContain('BIOMETRIC_LOCKED');
+      expect(registeredRead).not.toContain('readPersisted');
+      expect(source).toContain('private static String memoryToken');
       expect(source).toContain('protected void handleOnDestroy()');
-      expect(source).not.toMatch(/putString\([^)]*unlockedToken/);
+      expect(source).not.toMatch(/putString\([^)]*memoryToken/);
+    });
+
+    it('moves a persisted session into memory only after the registration is committed', () => {
+      const commit = method('commitDeviceRegistration');
+      expect(commit).toContain('DEV_REGISTERED, true');
+      expect(commit.indexOf('readPersisted()')).toBeGreaterThan(commit.indexOf('DEV_REGISTERED, true'));
+      expect(commit.indexOf('clearPersisted()')).toBeGreaterThan(commit.indexOf('readPersisted()'));
+    });
+
+    it('can no longer create the v0.2.0 biometric envelope, only migrate it out', () => {
+      for (const removed of ['enableBiometric', 'unlockBiometric', 'disableBiometric', 'writeEnvelope']) {
+        expect(source).not.toContain(removed);
+      }
+      const unlock = method('unlockLegacyBiometric');
+      expect(unlock).toContain('storePersisted(token)');
+      expect(unlock).toContain('wipeLegacyBiometric()');
+      // A fresh password sign-in supersedes a stale v0.2.0 lock instead of being blocked by it.
+      expect(method('setRefreshToken')).toContain('wipeLegacyBiometric()');
     });
 
     it('never stores a password', () => {
-      // Comments and the prompt's "Use password" button label are the only mentions.
-      const code = source
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/\/\/.*$/gm, '')
-        .replace('setNegativeButtonText("Use password")', '');
-      expect(code.toLowerCase()).not.toContain('password');
+      // Comments and the prompts' "Use password" button label are the only mentions.
+      expect(code.split('"Use password"').join('').toLowerCase()).not.toContain('password');
     });
 
     it('receives its androidx.biometric dependency whenever the platform is generated', () => {

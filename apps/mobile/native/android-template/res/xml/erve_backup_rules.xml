@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android Auto Backup (Android 6-11). Nothing that holds or describes a sign-in is backed up:
+  a restored backup must never carry the biometric registration or a session onto another
+  device or install. The Keystore keys are not restorable anyway, so this only keeps stale
+  metadata out; the server authorization is separately revoked by the user, by expiry, or by
+  a password reset.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="erve_trusted_device.xml" />
+    <exclude domain="sharedpref" path="erve_secure_session.xml" />
+    <exclude domain="sharedpref" path="erve_biometric_session.xml" />
+</full-backup-content>

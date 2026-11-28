@@ -18,7 +18,11 @@ import type { AuthUser } from '@erve/types';
 
 const biometric = vi.hoisted(() => ({
   status: vi.fn(),
-  unlock: vi.fn(),
+  unlockLegacy: vi.fn(),
+  acknowledgeInvalidation: vi.fn(),
+  signIn: vi.fn(),
+  flush: vi.fn(),
+  logoutSession: vi.fn(),
 }));
 
 vi.mock('./secure-session.js', async () => {
@@ -29,9 +33,31 @@ vi.mock('./secure-session.js', async () => {
   }
   return {
     BiometricError,
-    nativeBiometric: { status: biometric.status, unlock: biometric.unlock },
+    nativeBiometric: {
+      status: biometric.status,
+      unlockLegacy: biometric.unlockLegacy,
+      acknowledgeInvalidation: biometric.acknowledgeInvalidation,
+    },
     nativeSecureSession: { isAvailable: () => false },
   };
+});
+
+vi.mock('./trusted-device.js', async () => {
+  class TrustedDeviceError extends Error {
+    constructor(public readonly code: string) {
+      super(code);
+    }
+  }
+  return {
+    TrustedDeviceError,
+    signInWithTrustedDevice: biometric.signIn,
+    flushPendingRevocation: biometric.flush,
+  };
+});
+
+vi.mock('../lib/api-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/api-client.js')>();
+  return { ...actual, logoutSession: biometric.logoutSession };
 });
 
 import {
@@ -41,6 +67,9 @@ import {
   useAuth,
 } from './AuthContext.js';
 import { BiometricError } from './secure-session.js';
+import { TrustedDeviceError } from './trusted-device.js';
+import { DEVICE_AUTHORIZATION_ENDED_NOTICE } from './biometric-messages.js';
+import { AUTH_EXPIRED_EVENT } from '../lib/api-client.js';
 
 const USER: AuthUser = {
   id: 'user-1',
@@ -76,7 +105,11 @@ beforeEach(() => {
   sessionStorage.clear();
   configureRefreshCredentialProvider(null);
   biometric.status.mockReset();
-  biometric.unlock.mockReset();
+  biometric.unlockLegacy.mockReset();
+  biometric.acknowledgeInvalidation.mockReset().mockResolvedValue(undefined);
+  biometric.signIn.mockReset();
+  biometric.flush.mockReset().mockResolvedValue(true);
+  biometric.logoutSession.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -114,12 +147,44 @@ async function renderAuth(): Promise<() => Captured> {
   return () => captured!;
 }
 
-const LOCKED = { availability: 'available', enabled: true, locked: true, userId: USER.id };
-const UNLOCKED = { ...LOCKED, locked: false };
+const REGISTERED = {
+  availability: 'available',
+  enabled: true,
+  locked: true,
+  userId: USER.id,
+  deviceId: 'device-1',
+  expiresAt: '2026-12-28T00:00:00.000Z',
+  legacy: false,
+  invalidatedReason: null,
+  pendingRevocation: null,
+};
+const NOT_REGISTERED = {
+  ...REGISTERED,
+  enabled: false,
+  locked: false,
+  userId: null,
+  deviceId: null,
+  expiresAt: null,
+};
+const LEGACY = { ...NOT_REGISTERED, legacy: true };
+const UNSUPPORTED = { ...NOT_REGISTERED, availability: 'unsupported' };
 
-describe('mobile AuthContext — biometric login', () => {
-  it('stays locked at launch without touching the credential or the API', async () => {
-    biometric.status.mockResolvedValue(LOCKED);
+/** No stored credential and no session: the refresh the app tries at launch is rejected. */
+function serveNoSession() {
+  apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+    reject(config, 401),
+  ) satisfies AxiosAdapter;
+}
+
+function serveUser() {
+  apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
+    ok(config, { success: true, data: USER }),
+  ) satisfies AxiosAdapter;
+}
+
+describe('mobile AuthContext — biometric trusted-device sign-in', () => {
+  it('is locked at launch without touching the credential or the API', async () => {
+    biometric.status.mockResolvedValue(REGISTERED);
     const provider = {
       get: vi.fn(async () => 'must-not-be-read'),
       set: vi.fn(async () => {}),
@@ -135,6 +200,8 @@ describe('mobile AuthContext — biometric login', () => {
     const latest = await renderAuth();
 
     expect(latest().status).toBe('locked');
+    expect(latest().biometricLock).toBe('device');
+    expect(latest().autoPromptBiometric).toBe(true);
     expect(latest().user).toBeNull();
     expect(provider.get).not.toHaveBeenCalled();
     expect(provider.clear).not.toHaveBeenCalled();
@@ -142,65 +209,152 @@ describe('mobile AuthContext — biometric login', () => {
     expect(getStoredToken()).toBeNull();
   });
 
-  it('unlocks, refreshes through the server and loads the user', async () => {
-    biometric.status.mockResolvedValueOnce(LOCKED).mockResolvedValue(UNLOCKED);
-    biometric.unlock.mockResolvedValue(undefined);
-    configureRefreshCredentialProvider({
-      get: vi.fn(async () => 'native-refresh'),
-      set: vi.fn(async () => {}),
-      clear: vi.fn(async () => {}),
-    });
-    const urls: string[] = [];
-    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
-      urls.push(config.url ?? '');
-      if (config.url === '/auth/mobile/refresh') {
-        return ok(config, { success: true, data: { accessToken: 'fresh', refreshToken: 'next' } });
-      }
-      return ok(config, { success: true, data: USER });
+  it('signs in with the device: a fresh session, no password, no extra refresh', async () => {
+    biometric.status.mockResolvedValue(REGISTERED);
+    biometric.signIn.mockResolvedValue({ accessToken: 'new-access', user: USER });
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('Signing in must not refresh or call /auth/me');
     }) satisfies AxiosAdapter;
-
     const latest = await renderAuth();
-    expect(latest().status).toBe('locked');
 
     await act(async () => {
-      await latest().unlockWithBiometrics();
+      await latest().signInWithBiometrics();
+    });
+
+    expect(biometric.signIn).toHaveBeenCalledWith('device-1');
+    expect(latest().status).toBe('authenticated');
+    expect(latest().user).toEqual(USER);
+    expect(getStoredToken()).toBe('new-access');
+    // Signed in by biometrics: nothing to enrol, so no offer.
+    expect(latest().biometricOfferPending).toBe(false);
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('after an explicit logout returns to the biometric screen, registration intact, without auto-prompting', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    serveUser();
+    setStoredToken('access');
+    const latest = await renderAuth();
+    expect(latest().status).toBe('authenticated');
+
+    // The phone is registered, and once the session is cleared it is locked.
+    biometric.status.mockResolvedValue(REGISTERED);
+    await act(async () => {
+      await latest().logout();
+    });
+
+    expect(biometric.logoutSession).toHaveBeenCalledTimes(1);
+    expect(latest().status).toBe('locked');
+    expect(latest().user).toBeNull();
+    expect(latest().autoPromptBiometric).toBe(false);
+
+    // And it signs back in: the mandatory acceptance path.
+    biometric.signIn.mockResolvedValue({ accessToken: 'second-access', user: USER });
+    await act(async () => {
+      await latest().signInWithBiometrics();
+    });
+    expect(latest().status).toBe('authenticated');
+    expect(getStoredToken()).toBe('second-access');
+    expect(latest().autoPromptBiometric).toBe(true);
+  });
+
+  it('logout without a registration goes to the password form as before', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    serveUser();
+    setStoredToken('access');
+    const latest = await renderAuth();
+
+    await act(async () => {
+      await latest().logout();
+    });
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().biometricLock).toBeNull();
+  });
+
+  it('still ends the local session when the logout request fails, and offers biometrics', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    serveUser();
+    setStoredToken('access');
+    const latest = await renderAuth();
+    biometric.status.mockResolvedValue(REGISTERED);
+    biometric.logoutSession.mockRejectedValue(new Error('offline'));
+
+    await act(async () => {
+      await expect(latest().logout()).rejects.toThrow('offline');
+    });
+
+    expect(latest().status).toBe('locked');
+    expect(latest().user).toBeNull();
+  });
+
+  it('offers biometric sign-in again when the session ends mid-use (expired or revoked)', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    serveUser();
+    setStoredToken('access');
+    const latest = await renderAuth();
+    biometric.status.mockResolvedValue(REGISTERED);
+
+    await act(async () => {
+      window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
       await settle();
     });
 
-    expect(urls).toEqual(['/auth/mobile/refresh', '/auth/me']);
-    expect(latest().status).toBe('authenticated');
-    expect(latest().user).toEqual(USER);
+    expect(latest().status).toBe('locked');
+    expect(latest().autoPromptBiometric).toBe(false);
   });
 
   it('keeps the locked screen (and its retry/password choices) when the prompt is cancelled', async () => {
-    biometric.status.mockResolvedValue(LOCKED);
-    biometric.unlock.mockRejectedValue(new BiometricError('cancelled'));
+    biometric.status.mockResolvedValue(REGISTERED);
+    biometric.signIn.mockRejectedValue(new BiometricError('cancelled'));
     const latest = await renderAuth();
 
     await act(async () => {
-      await expect(latest().unlockWithBiometrics()).rejects.toMatchObject({ code: 'cancelled' });
+      await expect(latest().signInWithBiometrics()).rejects.toMatchObject({ code: 'cancelled' });
     });
 
     expect(latest().status).toBe('locked');
+    expect(latest().biometricLock).toBe('device');
   });
 
-  it('offers the password form without disabling biometric login', async () => {
-    biometric.status.mockResolvedValue(LOCKED);
-    const latest = await renderAuth();
+  it.each(['offline', 'server', 'rate-limited'])(
+    'stays locked, with the registration, on a transient failure (%s)',
+    async (code) => {
+      biometric.status.mockResolvedValue(REGISTERED);
+      biometric.signIn.mockRejectedValue(new TrustedDeviceError(code as never));
+      const latest = await renderAuth();
 
-    act(() => latest().switchToPassword());
+      await act(async () => {
+        await expect(latest().signInWithBiometrics()).rejects.toMatchObject({ code });
+      });
 
-    expect(latest().status).toBe('unauthenticated');
-    expect(biometric.unlock).not.toHaveBeenCalled();
-  });
+      expect(latest().status).toBe('locked');
+    },
+  );
 
-  it('requires the password, with an explanation, when the biometric key was invalidated', async () => {
-    biometric.status.mockResolvedValue(LOCKED);
-    biometric.unlock.mockRejectedValue(new BiometricError('key-invalidated'));
+  it('moves to the password form with an explanation when the device authorization is gone', async () => {
+    biometric.status.mockResolvedValue(REGISTERED);
+    biometric.signIn.mockRejectedValue(new TrustedDeviceError('device-invalid'));
     const latest = await renderAuth();
 
     await act(async () => {
-      await expect(latest().unlockWithBiometrics()).rejects.toMatchObject({
+      await expect(latest().signInWithBiometrics()).rejects.toMatchObject({
+        code: 'device-invalid',
+      });
+    });
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().loginNotice).toBe(DEVICE_AUTHORIZATION_ENDED_NOTICE);
+    expect(latest().biometricLock).toBeNull();
+  });
+
+  it('requires the password, with an explanation, when the biometric key was invalidated', async () => {
+    biometric.status.mockResolvedValue(REGISTERED);
+    biometric.signIn.mockRejectedValue(new BiometricError('key-invalidated'));
+    const latest = await renderAuth();
+
+    await act(async () => {
+      await expect(latest().signInWithBiometrics()).rejects.toMatchObject({
         code: 'key-invalidated',
       });
     });
@@ -209,67 +363,148 @@ describe('mobile AuthContext — biometric login', () => {
     expect(latest().loginNotice).toBe(BIOMETRIC_CHANGED_NOTICE);
   });
 
-  it.each([401, 403])(
-    'requires the password, with a notice, when the server rejects the session (%i)',
-    async (status) => {
-      biometric.status.mockResolvedValueOnce(LOCKED).mockResolvedValue(UNLOCKED);
-      biometric.unlock.mockResolvedValue(undefined);
-      const provider = {
+  it('explains on the password form when the phone dropped biometric login while the app was closed', async () => {
+    biometric.status.mockResolvedValue({ ...NOT_REGISTERED, invalidatedReason: 'key-invalidated' });
+    serveNoSession();
+    const latest = await renderAuth();
+
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().loginNotice).toBe(BIOMETRIC_CHANGED_NOTICE);
+
+    // A password sign-in clears the notice and the native one-time marker.
+    act(() => latest().login('access', USER));
+    expect(latest().loginNotice).toBeNull();
+    expect(biometric.acknowledgeInvalidation).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the password form, and the way back, without disabling biometric login', async () => {
+    biometric.status.mockResolvedValue(REGISTERED);
+    const latest = await renderAuth();
+
+    act(() => latest().switchToPassword());
+    expect(latest().status).toBe('unauthenticated');
+    expect(latest().biometricLock).toBe('device');
+    expect(biometric.signIn).not.toHaveBeenCalled();
+
+    act(() => latest().switchToBiometrics());
+    expect(latest().status).toBe('locked');
+  });
+
+  it('does not offer the way back when nothing is registered', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    serveNoSession();
+    const latest = await renderAuth();
+    expect(latest().status).toBe('unauthenticated');
+    act(() => latest().switchToBiometrics());
+    expect(latest().status).toBe('unauthenticated');
+  });
+
+  it('completes a pending server revocation once that user is signed in', async () => {
+    biometric.status.mockResolvedValue(NOT_REGISTERED);
+    const latest = await renderAuth();
+    expect(biometric.flush).not.toHaveBeenCalled();
+
+    act(() => latest().login('access', USER));
+    await act(async () => {
+      await settle();
+    });
+
+    expect(biometric.flush).toHaveBeenCalledWith(USER.id);
+  });
+
+  describe('upgrade from v0.2.0', () => {
+    it('shows the locked screen for a leftover biometric-protected credential', async () => {
+      biometric.status.mockResolvedValue(LEGACY);
+      const latest = await renderAuth();
+      expect(latest().status).toBe('locked');
+      expect(latest().biometricLock).toBe('legacy');
+    });
+
+    it('keeps the working session after one prompt, then offers (never forces) the upgrade', async () => {
+      biometric.status.mockResolvedValueOnce(LEGACY).mockResolvedValue(NOT_REGISTERED);
+      biometric.unlockLegacy.mockResolvedValue(undefined);
+      configureRefreshCredentialProvider({
+        get: vi.fn(async () => 'native-refresh'),
+        set: vi.fn(async () => {}),
+        clear: vi.fn(async () => {}),
+      });
+      const urls: string[] = [];
+      apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) => {
+        urls.push(config.url ?? '');
+        if (config.url === '/auth/mobile/refresh') {
+          return ok(config, { success: true, data: { accessToken: 'fresh', refreshToken: 'next' } });
+        }
+        return ok(config, { success: true, data: USER });
+      }) satisfies AxiosAdapter;
+
+      const latest = await renderAuth();
+      await act(async () => {
+        await latest().signInWithBiometrics();
+        await settle();
+      });
+
+      expect(urls).toEqual(['/auth/mobile/refresh', '/auth/me']);
+      expect(latest().status).toBe('authenticated');
+      expect(latest().biometricOfferPending).toBe(true);
+      expect(latest().biometricOfferMigration).toBe(true);
+      // Nothing was registered by itself.
+      expect(biometric.signIn).not.toHaveBeenCalled();
+
+      act(() => latest().dismissBiometricOffer());
+      expect(latest().biometricOfferPending).toBe(false);
+      expect(latest().biometricOfferMigration).toBe(false);
+    });
+
+    it('requires the password, with a notice, when the upgraded session was already rejected', async () => {
+      biometric.status.mockResolvedValueOnce(LEGACY).mockResolvedValue(NOT_REGISTERED);
+      biometric.unlockLegacy.mockResolvedValue(undefined);
+      configureRefreshCredentialProvider({
         get: vi.fn(async () => 'revoked-refresh'),
         set: vi.fn(async () => {}),
         clear: vi.fn(async () => {}),
-      };
-      configureRefreshCredentialProvider(provider);
+      });
       apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
-        reject(config, status),
+        reject(config, 401),
       ) satisfies AxiosAdapter;
 
       const latest = await renderAuth();
       await act(async () => {
-        await latest().unlockWithBiometrics();
+        await latest().signInWithBiometrics();
         await settle();
       });
 
       expect(latest().status).toBe('unauthenticated');
       expect(latest().loginNotice).toBe(BIOMETRIC_SESSION_ENDED_NOTICE);
-      // A rejected refresh drops the credential (and with it biometric login) natively.
-      expect(provider.clear).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it('keeps the session (retryable) when the server is unavailable after unlock', async () => {
-    biometric.status.mockResolvedValueOnce(LOCKED).mockResolvedValue(UNLOCKED);
-    biometric.unlock.mockResolvedValue(undefined);
-    const provider = {
-      get: vi.fn(async () => 'native-refresh'),
-      set: vi.fn(async () => {}),
-      clear: vi.fn(async () => {}),
-    };
-    configureRefreshCredentialProvider(provider);
-    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
-      reject(config, 503),
-    ) satisfies AxiosAdapter;
-
-    const latest = await renderAuth();
-    await act(async () => {
-      await latest().unlockWithBiometrics();
-      await settle();
     });
 
-    expect(latest().status).toBe('unavailable');
-    expect(provider.clear).not.toHaveBeenCalled();
+    it('lets the password through when the old biometric key was invalidated', async () => {
+      biometric.status.mockResolvedValue(LEGACY);
+      biometric.unlockLegacy.mockRejectedValue(new BiometricError('key-invalidated'));
+      const latest = await renderAuth();
+
+      await act(async () => {
+        await expect(latest().signInWithBiometrics()).rejects.toMatchObject({
+          code: 'key-invalidated',
+        });
+      });
+
+      expect(latest().status).toBe('unauthenticated');
+      expect(latest().loginNotice).toBe(BIOMETRIC_CHANGED_NOTICE);
+      expect(latest().biometricLock).toBeNull();
+    });
+
+    it('lets the password form be used without unlocking the old credential', async () => {
+      biometric.status.mockResolvedValue(LEGACY);
+      const latest = await renderAuth();
+      act(() => latest().switchToPassword());
+      expect(latest().status).toBe('unauthenticated');
+      expect(biometric.unlockLegacy).not.toHaveBeenCalled();
+    });
   });
 
-  it('is unaffected when biometric login is off or unsupported', async () => {
-    biometric.status.mockResolvedValue({
-      availability: 'unsupported',
-      enabled: false,
-      locked: false,
-      userId: null,
-    });
-    apiClient.defaults.adapter = vi.fn(async (config: InternalAxiosRequestConfig) =>
-      ok(config, { success: true, data: USER }),
-    ) satisfies AxiosAdapter;
+  it('is unaffected when biometric login is unsupported', async () => {
+    biometric.status.mockResolvedValue(UNSUPPORTED);
+    serveUser();
     setStoredToken('access');
 
     const latest = await renderAuth();
@@ -278,17 +513,13 @@ describe('mobile AuthContext — biometric login', () => {
   });
 
   it('offers biometric enrolment right after a password sign-in until it is answered', async () => {
-    biometric.status.mockResolvedValue({
-      availability: 'unsupported',
-      enabled: false,
-      locked: false,
-      userId: null,
-    });
+    biometric.status.mockResolvedValue(UNSUPPORTED);
     const latest = await renderAuth();
     expect(latest().biometricOfferPending).toBe(false);
 
     act(() => latest().login('access', USER));
     expect(latest().biometricOfferPending).toBe(true);
+    expect(latest().biometricOfferMigration).toBe(false);
 
     act(() => latest().dismissBiometricOffer());
     expect(latest().biometricOfferPending).toBe(false);

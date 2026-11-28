@@ -1,8 +1,11 @@
 import { prisma } from '../../db/prisma.js';
 import { currentUserSelect } from '../../auth/current-user.js';
+import type { RefreshSessionAuthMethod } from '../../db/prisma.js';
 
 export interface CreateRefreshSessionRecordInput {
   id: string;
+  authMethod?: RefreshSessionAuthMethod;
+  trustedDeviceId?: string | null;
   userId: string;
   refreshTokenHash: string;
   now: Date;
@@ -21,6 +24,8 @@ export async function createRefreshSessionRecord(
       lastUsedAt: input.now,
       idleExpiresAt: input.idleExpiresAt,
       absoluteExpiresAt: input.absoluteExpiresAt,
+      authMethod: input.authMethod ?? 'PASSWORD',
+      trustedDeviceId: input.trustedDeviceId ?? null,
     },
   });
 }
@@ -51,6 +56,7 @@ export async function findRefreshSessionById(sessionId: string) {
     select: {
       id: true,
       userId: true,
+      authMethod: true,
       refreshTokenHash: true,
       lastUsedAt: true,
       idleExpiresAt: true,

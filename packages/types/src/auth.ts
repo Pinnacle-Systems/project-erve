@@ -44,3 +44,38 @@ export interface RefreshResponse {
   accessToken: string;
   session?: SessionInfo;
 }
+
+/** A phone authorized for biometric sign-in (never includes key material). */
+export interface TrustedDevice {
+  id: string;
+  label: string;
+  platform: string;
+  appVersion: string | null;
+  createdAt: string;
+  /** Absolute end of the authorization; after it the user signs in with a password again. */
+  expiresAt: string;
+  lastUsedAt: string | null;
+}
+
+/** A single-use server challenge; the device signs `message` exactly as given. */
+export interface TrustedDeviceChallenge {
+  challengeId: string;
+  message: string;
+  expiresAt: string;
+}
+
+export interface RegisterTrustedDeviceRequest {
+  challengeId: string;
+  /** Base64 SPKI DER of the device's EC P-256 public key. */
+  publicKey: string;
+  /** Base64 DER ECDSA-SHA256 signature of the challenge message. */
+  signature: string;
+  label: string;
+  appVersion?: string;
+}
+
+export interface TrustedDeviceSignInRequest {
+  deviceId: string;
+  challengeId: string;
+  signature: string;
+}

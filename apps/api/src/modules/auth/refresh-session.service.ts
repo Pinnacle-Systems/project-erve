@@ -8,6 +8,7 @@ import {
   signRefreshToken,
   signRotatedRefreshToken,
   verifyRefreshToken,
+  type AuthenticationMethod,
 } from '../../auth/jwt.js';
 import { hashToken } from '../../auth/token-hash.js';
 import { toCurrentUser, type CurrentUser } from '../../auth/current-user.js';
@@ -76,6 +77,12 @@ export interface CreatedRefreshSession {
   refreshToken: string;
   lastUsedAt: Date;
   absoluteExpiresAt: Date;
+  authMethod: AuthenticationMethod;
+}
+
+/** Establishes a session through the biometric trusted-device sign-in instead of a password. */
+export interface RefreshSessionOrigin {
+  trustedDeviceId: string;
 }
 
 function addMinutes(date: Date, minutes: number): Date {
@@ -143,6 +150,7 @@ export async function createRefreshSession(
   userId: string,
   authVersion: number,
   now = new Date(),
+  origin?: RefreshSessionOrigin,
 ): Promise<CreatedRefreshSession> {
   const sessionId = createId();
   const refreshToken = signSessionRefreshToken(userId, sessionId, authVersion);
@@ -155,9 +163,16 @@ export async function createRefreshSession(
     now,
     idleExpiresAt: expiry.idleExpiresAt,
     absoluteExpiresAt: expiry.absoluteExpiresAt,
+    authMethod: origin ? 'TRUSTED_DEVICE' : 'PASSWORD',
+    trustedDeviceId: origin?.trustedDeviceId ?? null,
   });
 
-  return { refreshToken, lastUsedAt: now, absoluteExpiresAt: expiry.absoluteExpiresAt };
+  return {
+    refreshToken,
+    lastUsedAt: now,
+    absoluteExpiresAt: expiry.absoluteExpiresAt,
+    authMethod: origin ? 'device' : 'pwd',
+  };
 }
 
 function successorRefreshToken(
@@ -180,16 +195,29 @@ function isWithinRotationGrace(session: RefreshSessionRecord, now: Date): boolea
   return elapsedMs >= 0 && elapsedMs <= REFRESH_ROTATION_GRACE_SECONDS * 1000;
 }
 
+function sessionAuthMethod(session: { authMethod: string }): AuthenticationMethod {
+  return session.authMethod === 'TRUSTED_DEVICE' ? 'device' : 'pwd';
+}
+
+function sessionState(session: RefreshSessionRecord) {
+  return {
+    lastUsedAt: session.lastUsedAt,
+    absoluteExpiresAt: session.absoluteExpiresAt,
+    authMethod: sessionAuthMethod(session),
+  };
+}
+
 function sessionTokenResponse(
   currentUser: CurrentUser,
   refreshToken: string,
-  state: { lastUsedAt: Date; absoluteExpiresAt: Date },
+  state: { lastUsedAt: Date; absoluteExpiresAt: Date; authMethod: AuthenticationMethod },
   now: Date,
 ): RefreshTokenResponse {
   const accessToken = signAccessToken({
     sub: currentUser.id,
     roles: currentUser.roles,
     authVersion: currentUser.authVersion,
+    amr: state.authMethod,
   });
   return {
     accessToken,
@@ -250,7 +278,7 @@ export async function refreshSession(
     // mutation, so this can never slide the session). Everything else is
     // refresh-token reuse and revokes the session.
     if (session.refreshTokenHash === successorHash && isWithinRotationGrace(session, now)) {
-      return sessionTokenResponse(currentUser, successor, session, now);
+      return sessionTokenResponse(currentUser, successor, sessionState(session), now);
     }
 
     await revokeRefreshSessionById(session.id, now);
@@ -274,7 +302,7 @@ export async function refreshSession(
     // credential). Anything else means the session was revoked meanwhile.
     const latest = await findRefreshSessionById(session.id);
     if (latest && !latest.revokedAt && latest.refreshTokenHash === successorHash) {
-      return sessionTokenResponse(currentUser, successor, latest, now);
+      return sessionTokenResponse(currentUser, successor, sessionState(latest), now);
     }
     throw HttpError.unauthorized(INVALID_REFRESH_SESSION_MESSAGE);
   }
@@ -285,6 +313,7 @@ export async function refreshSession(
     {
       lastUsedAt: activity ? now : session.lastUsedAt,
       absoluteExpiresAt: session.absoluteExpiresAt,
+      authMethod: sessionAuthMethod(session),
     },
     now,
   );

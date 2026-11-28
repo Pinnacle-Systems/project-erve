@@ -13,6 +13,12 @@ server reports.
 | `JWT_REFRESH_IDLE_TIMEOUT_MINUTES`   | `20`           | **User inactivity** allowed before the session ends. Slides only on genuine user activity (see below).              |
 | `JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS` | `8`            | Hard cap from sign-in. Activity and "Continue Session" never extend a session past it; the user must sign in again. |
 
+The packaged Android app can additionally sign in with a registered phone and a
+biometric. That is a separate, longer-lived authorization (not a longer session):
+see [apps/mobile/SESSION_LIFECYCLE.md](../apps/mobile/SESSION_LIFECYCLE.md) and
+`TRUSTED_DEVICE_LIFETIME_DAYS` (default 30). Sessions it starts obey the same
+idle and absolute timeouts as any other.
+
 Changing `JWT_REFRESH_IDLE_TIMEOUT_MINUTES` applies to existing sessions
 immediately (idle expiry is computed from the last activity and the current
 setting). For example `JWT_REFRESH_IDLE_TIMEOUT_MINUTES=240` means a session
