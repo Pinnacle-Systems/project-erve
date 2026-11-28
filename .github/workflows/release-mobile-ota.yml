@@ -9,13 +9,8 @@ on:
         required: true
         type: choice
         options:
-          - publish-testing
-          - promote-production
+          - publish-production
           - rollback-production
-      build_number:
-        description: Testing build number to promote
-        required: false
-        type: string
       to_build:
         description: Previous production build number for rollback
         required: false
@@ -28,11 +23,6 @@ on:
         description: Optional native fingerprint (older APK generation)
         required: false
         type: string
-      confirm_production:
-        description: Confirm production promotion or rollback
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -57,11 +47,9 @@ jobs:
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
       DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
       OPERATION: ${{ inputs.operation }}
-      BUILD_NUMBER: ${{ inputs.build_number }}
       TO_BUILD: ${{ inputs.to_build }}
       ROLLBACK_REASON: ${{ inputs.reason }}
       TARGET_FINGERPRINT: ${{ inputs.fingerprint }}
-      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -81,14 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/deployment/verify-main-ci-success.mjs
-          if [ "$OPERATION" != publish-testing ] && [ "$CONFIRM_PRODUCTION" != true ]; then
-            echo "::error::Confirm the production operation before starting."
-            exit 1
-          fi
           case "$OPERATION" in
-            publish-testing) ;;
-            promote-production)
-              [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Enter a testing build number."; exit 1; } ;;
+            publish-production) ;;
             rollback-production)
               [[ "$TO_BUILD" =~ ^[1-9][0-9]*$ ]] && [ -n "$ROLLBACK_REASON" ] || {
                 echo "::error::Enter a previous build number and reason."; exit 1;
@@ -124,7 +106,7 @@ jobs:
           pnpm install --frozen-lockfile
 
       - name: Build the web update
-        if: inputs.operation == 'publish-testing'
+        if: inputs.operation == 'publish-production'
         run: pnpm --filter @erve/mobile build
 
       - name: Prepare temporary OTA key and SSH credentials
@@ -173,10 +155,8 @@ jobs:
           extra=()
           if [ -n "$TARGET_FINGERPRINT" ]; then extra+=(--fingerprint "$TARGET_FINGERPRINT"); fi
           case "$OPERATION" in
-            publish-testing)
-              pnpm --filter @erve/mobile ota:publish -- --tree "$ERVE_OTA_RELEASE_TREE" ;;
-            promote-production)
-              pnpm --filter @erve/mobile ota:promote -- --tree "$ERVE_OTA_RELEASE_TREE" --build "$BUILD_NUMBER" "${extra[@]}" ;;
+            publish-production)
+              pnpm --filter @erve/mobile ota:publish -- --tree "$ERVE_OTA_RELEASE_TREE" --channel production ;;
             rollback-production)
               pnpm --filter @erve/mobile ota:rollback -- --tree "$ERVE_OTA_RELEASE_TREE" --channel production --to-build "$TO_BUILD" --reason "$ROLLBACK_REASON" "${extra[@]}" ;;
           esac
@@ -187,8 +167,7 @@ jobs:
           set -euo pipefail
           pnpm --filter @erve/mobile ota:verify -- --tree "$ERVE_OTA_RELEASE_TREE"
           pnpm --filter @erve/mobile ota:sync -- --from "$ERVE_OTA_RELEASE_TREE" --to "$OTA_REMOTE" --ssh "$OTA_SSH"
-          if [ "$OPERATION" = publish-testing ]; then channel=testing; else channel=production; fi
-          pnpm --filter @erve/mobile ota:verify -- --url "$ERVE_OTA_BASE_URL" --channel "$channel"
+          pnpm --filter @erve/mobile ota:verify -- --url "$ERVE_OTA_BASE_URL" --channel production
           pnpm --filter @erve/mobile ota:status -- --tree "$ERVE_OTA_RELEASE_TREE"
 
       - name: Remove temporary credentials
