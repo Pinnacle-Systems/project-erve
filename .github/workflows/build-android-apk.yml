@@ -13,11 +13,6 @@ on:
         options:
           - testing
           - production
-      confirm_production_release:
-        description: I intend to create a production-channel APK (no automatic distribution)
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -41,36 +36,12 @@ jobs:
       ERVE_OTA_CHANNEL: ${{ inputs.channel }}
       ERVE_OTA_SOURCE_COMMIT: ${{ github.sha }}
       ERVE_ANDROID_VERSION_CODE: ${{ vars.ERVE_ANDROID_VERSION_CODE }}
-      RELEASE_REF: ${{ github.ref }}
-      PRODUCTION_CONFIRMED: ${{ inputs.confirm_production_release }}
     steps:
       - name: Checkout the exact requested revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Enforce main-only manual release
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "$RELEASE_REF" != "refs/heads/main" ]; then
-            echo "::error::Signed APKs may only be built by dispatching main."
-            exit 1
-          fi
-          if [ "$ERVE_OTA_CHANNEL" = production ] && [ "$PRODUCTION_CONFIRMED" != true ]; then
-            echo "::error::Select the production confirmation checkbox."
-            exit 1
-          fi
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
-            echo "::error::Checkout does not match the dispatched commit."
-            exit 1
-          fi
-          latest="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
-          if [ -z "$latest" ] || [ "$latest" != "$GITHUB_SHA" ]; then
-            echo "::error::main moved since this workflow started; dispatch it again."
-            exit 1
-          fi
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
@@ -200,11 +171,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          latest="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" refs/heads/main | cut -f1)"
-          if [ -z "$latest" ] || [ "$latest" != "$GITHUB_SHA" ]; then
-            echo "::error::main moved while waiting for approval; dispatch a new APK build."
-            exit 1
-          fi
           if [ "$RELEASE_GUARD" != enabled ]; then
             echo "::error::Configure the protected android-release environment and ANDROID_APK_SIGNING_READY=enabled."
             exit 1

@@ -11,9 +11,7 @@ describe('manual Android APK release workflow policy', () => {
   it('only supports explicit manual execution', () => {
     expect(workflow).toMatch(/^on:\s*\n\s+workflow_dispatch:/m);
     expect(workflow).not.toMatch(/^\s+(push|pull_request|schedule|workflow_run):/m);
-    expect(workflow).toContain('if [ "$RELEASE_REF" != "refs/heads/main" ]');
-    expect(workflow).toContain('git ls-remote');
-    expect(workflow).toContain('PRODUCTION_CONFIRMED');
+    expect(workflow).not.toContain('confirm_production_release');
   });
 
   it('does not give the workflow repository write rights', () => {

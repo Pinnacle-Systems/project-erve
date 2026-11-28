@@ -105,8 +105,8 @@ unprotected variables.
    `versionCode` exceeds that of any APK being replaced (or set the approved
    override). For example, `0.1.1` derives `101`.
 5. Open **Actions → Build signed Erve Android APK → Run workflow**,
-   choose branch `main` and channel **testing**. For production, choose
-   **production** and check the explicit confirmation box.
+   choose branch `main` and channel **testing** or **production**. No extra
+   production confirmation checkbox is required.
 6. An authorized environment reviewer approves the signing job. The
    compilation/build job runs *before* access to signing secrets; the
    signing job downloads the unsigned APK from that same workflow run.
@@ -126,7 +126,7 @@ the Actions download URL.
 
 ## D. What the workflow enforces
 
-- **Manual, main-only**, pinned-to-commit build; no PR secrets, no push-based
+- **Manual**, pinned-to-commit build (still requires successful main CI); no PR secrets, no push-based
   signing, no automatic publishing or deployment.
 - Builds the **existing React + Capacitor Android app** from a clean generated
   Android project on Ubuntu with Node 24, pnpm from the root lockfile and
