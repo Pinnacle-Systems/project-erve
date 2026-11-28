@@ -131,6 +131,82 @@ describe('Android adaptive launcher icon resources', () => {
   });
 });
 
+/** Bounding box of the opaque (or, for flattened icons, the red) mark pixels. */
+async function markBounds(file: string, flattened: boolean) {
+  const { data, info } = await sharp(file).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  let left = info.width;
+  let right = -1;
+  let top = info.height;
+  let bottom = -1;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      const i = (y * info.width + x) * 4;
+      const isMark = flattened ? data[i] > 150 && data[i + 1] < 120 : data[i + 3] > 128;
+      if (!isMark) continue;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+  }
+  return {
+    canvas: info.width,
+    width: right - left + 1,
+    left,
+    right: info.width - 1 - right,
+    top,
+    bottom: info.height - 1 - bottom,
+  };
+}
+
+describe('launcher icon logo size and centering', () => {
+  // The mark used to fill 60% of the canvas, which looked cramped under launcher masks.
+  const PREVIOUS_SCALE = 0.6;
+
+  const variants = [
+    ['ic_launcher_foreground.png (adaptive)', 'ic_launcher_foreground.png', false],
+    ['ic_launcher_monochrome.png (themed)', 'ic_launcher_monochrome.png', false],
+    ['ic_launcher.png (legacy)', 'ic_launcher.png', true],
+    ['ic_launcher_round.png (round)', 'ic_launcher_round.png', true],
+  ] as const;
+
+  it('generate-branding uses a launcher scale 20-25% smaller than before', () => {
+    const script = readFileSync(path.join(MOBILE_ROOT, 'scripts', 'generate-branding.mjs'), 'utf8');
+    const scale = Number(/const SAFE_ZONE_SCALE = ([0-9.]+);/.exec(script)?.[1]);
+    expect(scale).toBeGreaterThanOrEqual(0.45);
+    expect(scale).toBeLessThanOrEqual(0.48);
+    expect(scale / PREVIOUS_SCALE).toBeLessThanOrEqual(0.8);
+    expect(scale / PREVIOUS_SCALE).toBeGreaterThanOrEqual(0.74);
+  });
+
+  it.each(variants)(
+    '%s has a smaller mark that is centered with balanced margins',
+    async (_label, file, flattened) => {
+      for (const density of Object.keys(DENSITIES)) {
+        const bounds = await markBounds(path.join(TEMPLATE_RES, `mipmap-${density}`, file), flattened);
+        const ratio = bounds.width / bounds.canvas;
+        expect(ratio, `${density} ${file} mark/canvas`).toBeGreaterThan(0.43);
+        expect(ratio, `${density} ${file} mark/canvas`).toBeLessThan(0.49);
+        // Centered to within rounding at the smallest density.
+        expect(Math.abs(bounds.left - bounds.right), `${density} ${file} horizontal`).toBeLessThanOrEqual(2);
+        expect(Math.abs(bounds.top - bounds.bottom), `${density} ${file} vertical`).toBeLessThanOrEqual(2);
+      }
+    },
+  );
+
+  it('keeps the launcher background color and leaves the splash mark scale unchanged', async () => {
+    const colors = readFileSync(path.join(TEMPLATE_RES, 'values', 'colors.xml'), 'utf8');
+    expect(colors).toMatch(/<color name="erve_launcher_background">#FBFCFE<\/color>/i);
+    const script = readFileSync(path.join(MOBILE_ROOT, 'scripts', 'generate-branding.mjs'), 'utf8');
+    expect(script).toContain('const SPLASH_MARK_SCALE = 0.42;');
+    const bounds = await markBounds(
+      path.join(TEMPLATE_RES, 'drawable-nodpi', 'erve_splash_icon.png'),
+      false,
+    );
+    expect(bounds.width / bounds.canvas).toBeCloseTo(0.42, 1);
+  });
+});
+
 describe('Android splash icon resources', () => {
   it('drawable-nodpi/erve_splash_icon.png exists, is transparent, and is distinct from the launcher foreground', async () => {
     const splashPath = path.join(TEMPLATE_RES, 'drawable-nodpi', 'erve_splash_icon.png');

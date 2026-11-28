@@ -1,7 +1,7 @@
 {
   "name": "@erve/mobile",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,10 +9,11 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "cap:sync": "cap sync && npm run native:theme:android && npm run native:version:android",
-    "cap:add:android": "cap add android && npm run native:theme:android && npm run native:version:android",
+    "cap:sync": "cap sync && npm run native:theme:android && npm run native:version:android && npm run native:dependencies:android",
+    "cap:add:android": "cap add android && npm run native:theme:android && npm run native:version:android && npm run native:dependencies:android",
     "native:theme:android": "node scripts/configure-android-theme.mjs",
     "native:version:android": "node scripts/configure-android-version.mjs",
+    "native:dependencies:android": "node scripts/configure-android-dependencies.mjs",
     "branding:generate": "node scripts/generate-branding.mjs",
     "cap:run:android": "cap run android",
     "cap:run:android:live": "node scripts/run-android-live.mjs",

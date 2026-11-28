@@ -48,6 +48,18 @@ export class RefreshCredentialError extends Error {
 }
 
 /**
+ * The refresh credential exists but is protected by biometric authentication
+ * that has not been completed in this app process. Not a failure: the stored
+ * credential must NOT be cleared, and no refresh may be attempted.
+ */
+export class RefreshCredentialLockedError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('Refresh credential is locked behind biometric authentication', options);
+    this.name = 'RefreshCredentialLockedError';
+  }
+}
+
+/**
  * The browser's refresh session now belongs to a different user than the
  * one this tab is showing (another tab signed in as someone else). The
  * refreshed access token is discarded, never used for a request.
@@ -208,6 +220,7 @@ async function performRefresh(
   try {
     refreshToken = await refreshCredentialProvider?.get();
   } catch (cause) {
+    if (cause instanceof RefreshCredentialLockedError) throw cause;
     await refreshCredentialProvider?.clear().catch(() => undefined);
     throw new RefreshCredentialError('unreadable', { cause });
   }
@@ -358,7 +371,11 @@ export async function logoutSession(): Promise<void> {
       ]);
       clearTimeout(timer);
     }
-    const refreshToken = await refreshCredentialProvider?.get();
+    // A locked credential cannot be sent; the clear below still ends the local session.
+    const refreshToken = await refreshCredentialProvider?.get().catch((error: unknown) => {
+      if (error instanceof RefreshCredentialLockedError) return null;
+      throw error;
+    });
     await apiClient.post(
       refreshCredentialProvider ? '/auth/mobile/logout' : '/auth/logout',
       refreshCredentialProvider ? { refreshToken } : undefined,

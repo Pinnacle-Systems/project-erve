@@ -5,7 +5,12 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const auth = vi.hoisted(() => ({
-  status: 'unauthenticated' as 'loading' | 'authenticated' | 'unauthenticated' | 'unavailable',
+  status: 'unauthenticated' as
+    | 'loading'
+    | 'authenticated'
+    | 'unauthenticated'
+    | 'unavailable'
+    | 'locked',
   retrySession: vi.fn(),
 }));
 
@@ -15,6 +20,10 @@ vi.mock('../auth/AuthContext.js', () => ({
 
 vi.mock('../pages/LoginPage.js', () => ({
   LoginPage: () => <div>Login form</div>,
+}));
+
+vi.mock('../auth/BiometricUnlockScreen.js', () => ({
+  BiometricUnlockScreen: () => <div>Unlock screen</div>,
 }));
 
 import { LoginRoute } from './LoginRoute.js';
@@ -53,6 +62,12 @@ describe('LoginRoute', () => {
     auth.status = 'authenticated';
     renderRoute();
     expect(container.textContent).toBe('Dashboard');
+  });
+
+  it('shows the biometric unlock screen, not the password form, while locked', () => {
+    auth.status = 'locked';
+    renderRoute();
+    expect(container.textContent).toBe('Unlock screen');
   });
 
   it('preserves an offline session and offers a retry instead of showing login', () => {

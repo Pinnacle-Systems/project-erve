@@ -70,10 +70,18 @@ writes every Android launcher-icon and splash-icon resource into
 
 | Output | Source | Notes |
 | --- | --- | --- |
-| `mipmap-*/ic_launcher_foreground.png` | `erve-mark-source.png`, resized to 60% of the 108dp adaptive-icon canvas, centered on transparent | Adaptive icon foreground layer |
+| `mipmap-*/ic_launcher_foreground.png` | `erve-mark-source.png`, resized to 46% of the 108dp adaptive-icon canvas (about 50dp wide), centered on transparent | Adaptive icon foreground layer |
 | `mipmap-*/ic_launcher_monochrome.png` | Same mark, recolored to solid white (alpha preserved) | Android 13+ themed-icon layer |
 | `mipmap-*/ic_launcher.png`, `ic_launcher_round.png` | Mark composited over `@color/erve_launcher_background` (`#FBFCFE`) at 48dp legacy canvas | Pre-API-26 fallback / round-icon fallback |
 | `drawable-nodpi/erve_splash_icon.png` | Mark resized to 42% of a 480px transparent canvas | Purpose-built splash asset — deliberately NOT the launcher foreground (reusing the foreground here was the cause of the earlier white/plate-look splash bug) |
+
+The launcher scale (`SAFE_ZONE_SCALE` in the generator) is 0.46. It was 0.60,
+which filled the icon so tightly that the circular launcher mask clipped the
+top-right bar. 0.46 is a 23% reduction that keeps balanced white space under
+circle, squircle and rounded-square masks; the legacy, round and monochrome
+variants use the same ratio, and the splash icon has its own scale (42%) and is
+unaffected. `branding-assets.test.ts` checks the size and centering of every
+variant.
 
 Run via `pnpm --filter @erve/mobile branding:generate`. The script is
 deterministic: same input + same constants always produce byte-identical
