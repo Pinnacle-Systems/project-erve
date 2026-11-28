@@ -3,6 +3,7 @@ import { AccountMenu } from './AccountMenu.js';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext.js';
 import { QA_OPERATION_ROLES } from '@erve/shared';
+import { BiometricEnrollmentOffer } from './BiometricEnrollmentOffer.js';
 
 const QA_ROUTE_ROLES = [...QA_OPERATION_ROLES, 'MERCHANDISER'] as const;
 
@@ -48,6 +49,7 @@ export function AuthenticatedShell() {
         </div>
         <AccountMenu />
       </header>
+      <BiometricEnrollmentOffer />
       {/* The OTA update banner floats over the bottom of the screen; it publishes its height
           here so the last control on a page (e.g. a Submit button) can scroll clear of it. */}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pb-[var(--ota-banner-height,0px)]">

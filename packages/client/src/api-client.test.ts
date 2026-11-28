@@ -10,6 +10,7 @@ import {
   AUTH_EXPIRED_EVENT,
   configureRefreshCredentialProvider,
   logoutSession,
+  RefreshCredentialLockedError,
   refreshAccessToken,
 } from './api-client.js';
 import { clearStoredToken, getStoredToken, setStoredToken } from './token-storage.js';
@@ -250,6 +251,24 @@ describe('apiClient refresh session integration', () => {
       reason: 'unreadable',
     });
     expect(provider.clear).toHaveBeenCalledTimes(1);
+    expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
+  });
+
+  it('keeps a biometric-locked native credential and does not call the API', async () => {
+    const provider = {
+      get: vi.fn(async () => {
+        throw new RefreshCredentialLockedError();
+      }),
+      set: vi.fn(async () => {}),
+      clear: vi.fn(async () => {}),
+    };
+    configureRefreshCredentialProvider(provider);
+    apiClient.defaults.adapter = vi.fn(async () => {
+      throw new Error('The API must not be called while the credential is locked');
+    }) satisfies AxiosAdapter;
+
+    await expect(refreshAccessToken()).rejects.toBeInstanceOf(RefreshCredentialLockedError);
+    expect(provider.clear).not.toHaveBeenCalled();
     expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
   });
 

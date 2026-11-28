@@ -8,11 +8,11 @@ import { useAuth } from '../auth/AuthContext.js';
 import { LoginForm, type LoginFormValues } from '../components/LoginForm.js';
 import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding.js';
 import erveLogo from '../../branding/erve-logo.png';
-import { nativeSecureSession } from '../auth/secure-session.js';
+import { nativeBiometric, nativeSecureSession } from '../auth/secure-session.js';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, loginNotice } = useAuth();
 
   const mutation = useMutation({
     mutationFn: async (values: LoginFormValues) => {
@@ -24,6 +24,12 @@ export function LoginPage() {
       if (nativeSecureSession.isAvailable()) {
         if (!response.data.data.refreshToken) {
           throw new Error('Mobile refresh session was not returned');
+        }
+        // Biometric login belongs to one user on this device. Signing in as someone else
+        // (e.g. by the password fallback) must not inherit it.
+        const biometric = await nativeBiometric.status();
+        if (biometric.enabled && biometric.userId !== response.data.data.user.id) {
+          await nativeSecureSession.clear();
         }
         await nativeSecureSession.set(response.data.data.refreshToken);
       }
@@ -53,6 +59,11 @@ export function LoginPage() {
       </header>
       <main className="login-main">
         <Card className="login-card">
+          {loginNotice && (
+            <p role="status" className="mb-4 text-sm text-muted-foreground">
+              {loginNotice}
+            </p>
+          )}
           <LoginForm
             onSubmit={(values) => mutation.mutate(values)}
             isSubmitting={mutation.isPending}
