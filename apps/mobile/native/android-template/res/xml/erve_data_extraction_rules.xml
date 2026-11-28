@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same policy as erve_backup_rules.xml for Android 12+ (cloud backup and device-to-device transfer). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="erve_trusted_device.xml" />
+        <exclude domain="sharedpref" path="erve_secure_session.xml" />
+        <exclude domain="sharedpref" path="erve_biometric_session.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="erve_trusted_device.xml" />
+        <exclude domain="sharedpref" path="erve_secure_session.xml" />
+        <exclude domain="sharedpref" path="erve_biometric_session.xml" />
+    </device-transfer>
+</data-extraction-rules>

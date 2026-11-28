@@ -23,15 +23,21 @@ function rememberDeclined(): void {
 
 /**
  * Offered once, right after a password sign-in, when strong biometrics are
- * available and not yet enabled. "Not now" is remembered on this device; the
- * Account menu still offers it.
+ * available and biometric sign-in is not registered on this phone. A phone that
+ * already has a valid registration is never asked again. "Not now" is
+ * remembered on this device; the Account menu still offers it. After an upgrade
+ * from v0.2.0 the same dialog explains the upgrade.
  */
 export function BiometricEnrollmentOffer() {
-  const { biometricOfferPending, dismissBiometricOffer } = useAuth();
+  const { biometricOfferPending, biometricOfferMigration, dismissBiometricOffer } = useAuth();
   const { status, busy, error, enable } = useBiometricLogin();
   const [declinedBefore] = useState(wasDeclined);
 
-  const eligible = status?.availability === 'available' && !status.enabled && !declinedBefore;
+  // An upgrading user is asked again even if they once said "Not now": it is a different feature now.
+  const eligible =
+    status?.availability === 'available' &&
+    !status.enabled &&
+    (biometricOfferMigration || !declinedBefore);
 
   useEffect(() => {
     // Nothing to offer: not packaged Android, no strong biometric, already on, or declined earlier.
@@ -43,10 +49,14 @@ export function BiometricEnrollmentOffer() {
   return (
     <Dialog open={open} onOpenChange={(next) => !next && !busy && dismissBiometricOffer()}>
       <DialogContent variant="bottom-sheet" aria-describedby={undefined}>
-        <DialogTitle>Use biometric login?</DialogTitle>
+        <DialogTitle>
+          {biometricOfferMigration ? 'Upgrade biometric login?' : 'Use biometric login?'}
+        </DialogTitle>
         <p className="mt-2 text-sm text-muted-foreground">
-          Unlock Erve with your fingerprint or face the next time you open the app. Your password is
-          never stored, and you can turn this off in the Account menu.
+          {biometricOfferMigration
+            ? 'Biometric login now works even after you log out. Turn it on again to authorize this phone. '
+            : 'Sign in with your fingerprint or face instead of your password, even after you log out. '}
+          Your password is never stored, and you can turn this off in the Account menu.
         </p>
         {error ? (
           <p role="alert" className="mt-2 text-sm text-danger">

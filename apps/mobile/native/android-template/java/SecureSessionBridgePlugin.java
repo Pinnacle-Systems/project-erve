@@ -20,14 +20,14 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.nio.charset.StandardCharsets;
-import java.security.KeyFactory;
+import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.PrivateKey;
-import java.security.PublicKey;
-import java.security.cert.Certificate;
+import java.security.Signature;
+import java.security.UnrecoverableKeyException;
+import java.security.spec.ECGenParameterSpec;
 import java.security.spec.MGF1ParameterSpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -38,43 +38,47 @@ import javax.crypto.spec.PSource;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Holds the rotating refresh credential for the packaged app.
+ * Holds the rotating refresh credential and the biometric trusted-device key.
  *
- * Two mutually exclusive storage modes:
+ * Two independent things live here, on purpose:
  *
- * 1. Default: AES/GCM with a non-authenticated Android Keystore key
- *    (erve_refresh_session_key). The credential is readable without any user
- *    interaction, exactly as before biometric login existed.
+ * 1. The SESSION credential (refresh token). Not registered: AES/GCM with a
+ *    non-authenticated Android Keystore key (erve_refresh_session_key),
+ *    readable without user interaction, exactly as before biometric login
+ *    existed. Registered (see 2): held in process memory only, never at rest,
+ *    because every cold start signs in with the biometric anyway. Clearing it
+ *    (logout, rejected or expired session) ends the session and nothing else.
  *
- * 2. Biometric login enabled: the credential is stored only as an
- *    envelope. A fresh AES-256 data key encrypts it, and that data key is
- *    wrapped with an RSA public key whose private half lives in the Keystore
- *    and requires a strong biometric for every use (erve_biometric_session_key;
- *    invalidated when biometrics are enrolled or removed). The credential
- *    rotates on every refresh, so it must be re-stored while the app runs; the
- *    public key allows that without a prompt, but reading it back requires a
- *    BiometricPrompt that returns a Cipher bound to the private key. The
- *    unprotected store is emptied when this mode is entered and is never
- *    consulted while it is active, so there is no way to read the credential
- *    at rest without biometric authentication. After a successful unlock the
- *    credential is held in process memory only, and dropped when the activity
- *    is destroyed.
+ * 2. The TRUSTED-DEVICE key (erve_trusted_device_key). An EC P-256 signing key
+ *    generated in the Keystore, non-exportable, that requires a strong
+ *    (Class 3) biometric for every single signature and is invalidated when
+ *    biometrics are enrolled/removed or the screen lock is removed. Only its
+ *    public half ever leaves the device (it is registered with the server
+ *    after a password sign-in). The server issues a one-time challenge; the
+ *    app signs it through a BiometricPrompt bound to this key and the server
+ *    mints a brand-new session. The key and its small metadata (device id,
+ *    user id, expiry hint) survive logout; only "Turn off", an invalidated key,
+ *    an unauthorized device or a different account's sign-in remove them.
  *
- * The user's password is never stored.
+ * The user's password is never stored. The v0.2.0 "biometric-protected refresh
+ * credential" envelope is kept only so an upgrading user's working session can
+ * be moved out of it once, after a biometric prompt (see unlockLegacyBiometric);
+ * it can no longer be created.
  */
 @CapacitorPlugin(name = "SecureSessionBridge")
 public class SecureSessionBridgePlugin extends Plugin {
     private static final String KEYSTORE = "AndroidKeyStore";
 
+    // --- session credential (unprotected-by-biometric, Keystore-encrypted) ---
     private static final String KEY_ALIAS = "erve_refresh_session_key";
     private static final String STORE = "erve_secure_session";
     private static final String CIPHERTEXT = "refresh_ciphertext";
     private static final String IV = "refresh_iv";
 
+    // --- v0.2.0 biometric envelope (read-only, for migration) ---
     private static final String BIO_KEY_ALIAS = "erve_biometric_session_key";
     private static final String BIO_STORE = "erve_biometric_session";
     private static final String BIO_ENABLED = "enabled";
-    private static final String BIO_USER_ID = "user_id";
     private static final String BIO_WRAPPED_KEY = "wrapped_key";
     private static final String BIO_IV = "iv";
     private static final String BIO_CIPHERTEXT = "ciphertext";
@@ -84,12 +88,31 @@ public class SecureSessionBridgePlugin extends Plugin {
     private static final OAEPParameterSpec OAEP = new OAEPParameterSpec(
         "SHA-256", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT);
 
+    // --- trusted device ---
+    private static final String DEVICE_KEY_ALIAS = "erve_trusted_device_key";
+    private static final String DEVICE_STORE = "erve_trusted_device";
+    private static final String DEV_REGISTERED = "registered";
+    private static final String DEV_ID = "device_id";
+    private static final String DEV_USER_ID = "user_id";
+    private static final String DEV_EXPIRES_AT = "expires_at";
+    /** A registration this phone dropped but has not yet been able to revoke on the server. */
+    private static final String DEV_PENDING_ID = "pending_revoke_device_id";
+    private static final String DEV_PENDING_USER = "pending_revoke_user_id";
+    /** Why the phone itself turned biometric login off ("key-invalidated"); shown once to the user. */
+    private static final String DEV_INVALIDATED = "invalidated_reason";
+    private static final String SIGNATURE_ALGORITHM = "SHA256withECDSA";
+    private static final int MAX_MESSAGE_LENGTH = 2048;
+
+    private static final int PROBE_OK = 0;
+    private static final int PROBE_INVALID = 1;
+    private static final int PROBE_ERROR = 2;
+
     private static final int AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG;
 
-    /** Guards every read and write of both stores and of {@link #unlockedToken}. */
+    /** Guards every read and write of the stores and of {@link #memoryToken}. */
     private static final Object LOCK = new Object();
-    /** The decrypted credential while biometric login is enabled and unlocked. Memory only. */
-    private static String unlockedToken;
+    /** The refresh credential while a trusted device is registered. Memory only. */
+    private static String memoryToken;
     private static final AtomicBoolean PROMPT_ACTIVE = new AtomicBoolean(false);
 
     // ------------------------------------------------------------------ storage
@@ -98,12 +121,12 @@ public class SecureSessionBridgePlugin extends Plugin {
         return getContext().getSharedPreferences(STORE, Context.MODE_PRIVATE);
     }
 
-    private SharedPreferences biometricPreferences() {
+    private SharedPreferences legacyBiometricPreferences() {
         return getContext().getSharedPreferences(BIO_STORE, Context.MODE_PRIVATE);
     }
 
-    private boolean isBiometricEnabled() {
-        return biometricPreferences().getBoolean(BIO_ENABLED, false);
+    private SharedPreferences devicePreferences() {
+        return getContext().getSharedPreferences(DEVICE_STORE, Context.MODE_PRIVATE);
     }
 
     private SecretKey key() throws Exception {
@@ -122,7 +145,7 @@ public class SecureSessionBridgePlugin extends Plugin {
         return generator.generateKey();
     }
 
-    private void storeLegacy(String token) throws Exception {
+    private void storePersisted(String token) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key());
         byte[] encrypted = cipher.doFinal(token.getBytes(StandardCharsets.UTF_8));
@@ -133,8 +156,8 @@ public class SecureSessionBridgePlugin extends Plugin {
         if (!saved) throw new IllegalStateException("Preferences write failed");
     }
 
-    /** Returns the legacy credential, or null if none (or if it was unreadable and has been dropped). */
-    private String readLegacy() {
+    /** Returns the persisted credential, or null if none (or if it was unreadable and has been dropped). */
+    private String readPersisted() {
         String encrypted = preferences().getString(CIPHERTEXT, null);
         String iv = preferences().getString(IV, null);
         if (encrypted == null || iv == null) return null;
@@ -149,90 +172,45 @@ public class SecureSessionBridgePlugin extends Plugin {
         }
     }
 
-    private void clearLegacy() {
+    private void clearPersisted() {
         preferences().edit().clear().commit();
     }
 
-    // ------------------------------------------------------- biometric envelope
+    // ------------------------------------------------ v0.2.0 envelope (migration)
 
-    private static final class Envelope {
-        String wrappedKey;
-        String iv;
-        String ciphertext;
+    private boolean isLegacyPresent() {
+        return legacyBiometricPreferences().getBoolean(BIO_ENABLED, false);
     }
 
-    private void generateBiometricKey() throws Exception {
-        deleteBiometricKey();
-        KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, KEYSTORE);
-        KeyGenParameterSpec.Builder spec = new KeyGenParameterSpec.Builder(BIO_KEY_ALIAS, KeyProperties.PURPOSE_DECRYPT)
-            .setKeySize(2048)
-            .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA1)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_OAEP)
-            .setUserAuthenticationRequired(true)
-            .setInvalidatedByBiometricEnrollment(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Timeout 0 = authenticate for every single use of the private key.
-            spec.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG);
-        } else {
-            // -1 = fingerprint (per-use, CryptoObject-bound) on API 24-29.
-            spec.setUserAuthenticationValidityDurationSeconds(-1);
-        }
-        generator.initialize(spec.build());
-        generator.generateKeyPair();
-    }
-
-    private void deleteBiometricKey() {
+    private void deleteLegacyKey() {
         try {
             KeyStore store = KeyStore.getInstance(KEYSTORE);
             store.load(null);
             if (store.containsAlias(BIO_KEY_ALIAS)) store.deleteEntry(BIO_KEY_ALIAS);
         } catch (Exception ignored) {
-            // Nothing useful to do; the stored envelope is removed separately.
+            // Nothing useful to do; the envelope is removed separately.
         }
     }
 
-    private PublicKey biometricPublicKey() throws Exception {
-        KeyStore store = KeyStore.getInstance(KEYSTORE);
-        store.load(null);
-        Certificate certificate = store.getCertificate(BIO_KEY_ALIAS);
-        if (certificate == null) throw new IllegalStateException("Biometric key is missing");
-        PublicKey key = certificate.getPublicKey();
-        // Re-create the key outside the Keystore provider so OAEP encryption does not need authentication.
-        return KeyFactory.getInstance(key.getAlgorithm()).generatePublic(new X509EncodedKeySpec(key.getEncoded()));
+    /** Removes the v0.2.0 key and envelope. Touches nothing else. Caller holds LOCK. */
+    private void wipeLegacyBiometric() {
+        legacyBiometricPreferences().edit().clear().commit();
+        deleteLegacyKey();
     }
 
     /** Throws KeyPermanentlyInvalidatedException when the key was invalidated by a biometric change. */
-    private Cipher biometricUnwrapCipher() throws Exception {
+    private Cipher legacyUnwrapCipher() throws Exception {
         KeyStore store = KeyStore.getInstance(KEYSTORE);
         store.load(null);
         PrivateKey key = (PrivateKey) store.getKey(BIO_KEY_ALIAS, null);
-        if (key == null) throw new IllegalStateException("Biometric key is missing");
+        if (key == null) throw new KeyPermanentlyInvalidatedException("Biometric key is missing");
         Cipher cipher = Cipher.getInstance(RSA_TRANSFORMATION);
         cipher.init(Cipher.DECRYPT_MODE, key, OAEP);
         return cipher;
     }
 
-    private Envelope wrap(String token) throws Exception {
-        KeyGenerator generator = KeyGenerator.getInstance("AES");
-        generator.init(256);
-        SecretKey dataKey = generator.generateKey();
-
-        Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
-        aes.init(Cipher.ENCRYPT_MODE, dataKey);
-        byte[] ciphertext = aes.doFinal(token.getBytes(StandardCharsets.UTF_8));
-
-        Cipher rsa = Cipher.getInstance(RSA_TRANSFORMATION);
-        rsa.init(Cipher.ENCRYPT_MODE, biometricPublicKey(), OAEP);
-
-        Envelope envelope = new Envelope();
-        envelope.wrappedKey = Base64.encodeToString(rsa.doFinal(dataKey.getEncoded()), Base64.NO_WRAP);
-        envelope.iv = Base64.encodeToString(aes.getIV(), Base64.NO_WRAP);
-        envelope.ciphertext = Base64.encodeToString(ciphertext, Base64.NO_WRAP);
-        return envelope;
-    }
-
-    private String unwrap(Cipher authenticatedRsa) throws Exception {
-        SharedPreferences prefs = biometricPreferences();
+    private String legacyUnwrap(Cipher authenticatedRsa) throws Exception {
+        SharedPreferences prefs = legacyBiometricPreferences();
         String wrappedKey = prefs.getString(BIO_WRAPPED_KEY, null);
         String iv = prefs.getString(BIO_IV, null);
         String ciphertext = prefs.getString(BIO_CIPHERTEXT, null);
@@ -245,21 +223,124 @@ public class SecureSessionBridgePlugin extends Plugin {
         return new String(aes.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP)), StandardCharsets.UTF_8);
     }
 
-    private void writeEnvelope(Envelope envelope, String userId) {
-        boolean saved = biometricPreferences().edit()
-            .putString(BIO_WRAPPED_KEY, envelope.wrappedKey)
-            .putString(BIO_IV, envelope.iv)
-            .putString(BIO_CIPHERTEXT, envelope.ciphertext)
-            .putString(BIO_USER_ID, userId)
-            .putBoolean(BIO_ENABLED, true)
-            .commit();
-        if (!saved) throw new IllegalStateException("Preferences write failed");
+    // ------------------------------------------------------------ trusted device
+
+    private boolean isDeviceRegistered() {
+        return devicePreferences().getBoolean(DEV_REGISTERED, false);
     }
 
-    /** Removes the biometric key and envelope and leaves biometric login disabled. Caller holds LOCK. */
-    private void wipeBiometric() {
-        biometricPreferences().edit().clear().commit();
-        deleteBiometricKey();
+    private void deleteDeviceKey() {
+        try {
+            KeyStore store = KeyStore.getInstance(KEYSTORE);
+            store.load(null);
+            if (store.containsAlias(DEVICE_KEY_ALIAS)) store.deleteEntry(DEVICE_KEY_ALIAS);
+        } catch (Exception ignored) {
+            // If this fails the key is still unusable without the server's registration.
+        }
+    }
+
+    /** Generates a fresh non-exportable P-256 key that needs a strong biometric for every use. */
+    private String generateDeviceKey() throws Exception {
+        deleteDeviceKey();
+        KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE);
+        KeyGenParameterSpec.Builder spec = new KeyGenParameterSpec.Builder(DEVICE_KEY_ALIAS, KeyProperties.PURPOSE_SIGN)
+            .setAlgorithmParameterSpec(new ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .setUserAuthenticationRequired(true)
+            .setInvalidatedByBiometricEnrollment(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Timeout 0 = authenticate for every single use of the private key.
+            spec.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG);
+        } else {
+            // -1 = fingerprint (per-use, CryptoObject-bound) on API 24-29.
+            spec.setUserAuthenticationValidityDurationSeconds(-1);
+        }
+        generator.initialize(spec.build());
+        KeyPair pair = generator.generateKeyPair();
+        // X.509 SubjectPublicKeyInfo, which is what the server parses.
+        return Base64.encodeToString(pair.getPublic().getEncoded(), Base64.NO_WRAP);
+    }
+
+    /**
+     * Initialises a signature with the device key. Throws KeyPermanentlyInvalidatedException
+     * when biometrics changed, the lock screen was removed or the key is gone.
+     */
+    private Signature deviceSignature() throws Exception {
+        KeyStore store = KeyStore.getInstance(KEYSTORE);
+        store.load(null);
+        PrivateKey key;
+        try {
+            key = (PrivateKey) store.getKey(DEVICE_KEY_ALIAS, null);
+        } catch (UnrecoverableKeyException error) {
+            throw new KeyPermanentlyInvalidatedException("Device key is unrecoverable");
+        }
+        if (key == null) throw new KeyPermanentlyInvalidatedException("Device key is missing");
+        Signature signature = Signature.getInstance(SIGNATURE_ALGORITHM);
+        signature.initSign(key);
+        return signature;
+    }
+
+    /** Checks the key without showing a prompt. initSign fails for an invalidated key. */
+    private int probeDeviceKey() {
+        try {
+            deviceSignature();
+            return PROBE_OK;
+        } catch (KeyPermanentlyInvalidatedException error) {
+            return PROBE_INVALID;
+        } catch (Exception error) {
+            return PROBE_ERROR;
+        }
+    }
+
+    /**
+     * Forgets this phone's registration locally: deletes the key and metadata. With
+     * {@code keepPendingRevocation} the registration's ids are remembered so the server
+     * record can be revoked the next time that user is signed in. A live in-memory
+     * session is kept (moved to the persisted store) so turning biometric login off
+     * does not sign the user out. Caller holds LOCK.
+     */
+    private void dropRegistration(boolean keepPendingRevocation, String invalidatedReason) {
+        SharedPreferences prefs = devicePreferences();
+        SharedPreferences.Editor editor = prefs.edit();
+        if (prefs.getBoolean(DEV_REGISTERED, false) && keepPendingRevocation) {
+            String id = prefs.getString(DEV_ID, null);
+            String user = prefs.getString(DEV_USER_ID, null);
+            if (id != null && user != null) {
+                editor.putString(DEV_PENDING_ID, id).putString(DEV_PENDING_USER, user);
+            }
+        }
+        editor.remove(DEV_REGISTERED).remove(DEV_ID).remove(DEV_USER_ID).remove(DEV_EXPIRES_AT);
+        if (invalidatedReason != null) editor.putString(DEV_INVALIDATED, invalidatedReason);
+        editor.commit();
+        deleteDeviceKey();
+        if (memoryToken != null) {
+            try {
+                storePersisted(memoryToken);
+            } catch (Exception ignored) {
+                // The session simply ends; the user signs in again.
+            }
+            memoryToken = null;
+        }
+    }
+
+    private static String deviceLabel() {
+        String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.trim();
+        String model = Build.MODEL == null ? "" : Build.MODEL.trim();
+        if (!manufacturer.isEmpty() && model.toLowerCase().startsWith(manufacturer.toLowerCase())) {
+            return model;
+        }
+        String label = (manufacturer + " " + model).trim();
+        return label.isEmpty() ? "Android device" : label;
+    }
+
+    private String appVersion() {
+        try {
+            String name = getContext().getPackageManager()
+                .getPackageInfo(getContext().getPackageName(), 0).versionName;
+            return name == null ? "" : name;
+        } catch (Exception error) {
+            return "";
+        }
     }
 
     // ------------------------------------------------------------- availability
@@ -300,12 +381,19 @@ public class SecureSessionBridgePlugin extends Plugin {
     // ------------------------------------------------------------------ prompts
 
     private interface PromptResult {
-        void onSuccess(Cipher authenticated) throws Exception;
+        void onSuccess(BiometricPrompt.CryptoObject authenticated) throws Exception;
         void onFailure();
     }
 
-    /** Shows the system biometric prompt bound to {@code cipher}; rejects {@code call} on any failure. */
-    private void authenticate(PluginCall call, Cipher cipher, String title, String subtitle, PromptResult result) {
+    /** Shows the system biometric prompt bound to {@code crypto}; rejects {@code call} on any failure. */
+    private void authenticate(
+        PluginCall call,
+        BiometricPrompt.CryptoObject crypto,
+        String title,
+        String subtitle,
+        String negativeText,
+        PromptResult result
+    ) {
         if (!PROMPT_ACTIVE.compareAndSet(false, true)) {
             result.onFailure();
             call.reject("A biometric prompt is already showing", "BIOMETRIC_FAILED");
@@ -327,7 +415,7 @@ public class SecureSessionBridgePlugin extends Plugin {
                     public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult authentication) {
                         PROMPT_ACTIVE.set(false);
                         try {
-                            result.onSuccess(authentication.getCryptoObject().getCipher());
+                            result.onSuccess(authentication.getCryptoObject());
                         } catch (KeyPermanentlyInvalidatedException error) {
                             result.onFailure();
                             call.reject("Biometric settings changed", "BIOMETRIC_KEY_INVALIDATED", error);
@@ -348,12 +436,12 @@ public class SecureSessionBridgePlugin extends Plugin {
             BiometricPrompt.PromptInfo info = new BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)
                 .setSubtitle(subtitle)
-                .setNegativeButtonText("Use password")
+                .setNegativeButtonText(negativeText)
                 .setAllowedAuthenticators(AUTHENTICATORS)
                 .setConfirmationRequired(false)
                 .build();
             try {
-                prompt.authenticate(info, new BiometricPrompt.CryptoObject(cipher));
+                prompt.authenticate(info, crypto);
             } catch (Exception error) {
                 PROMPT_ACTIVE.set(false);
                 result.onFailure();
@@ -370,14 +458,16 @@ public class SecureSessionBridgePlugin extends Plugin {
         if (token == null || token.isEmpty()) { call.reject("token is required"); return; }
         synchronized (LOCK) {
             try {
-                if (isBiometricEnabled()) {
-                    // Rotation while biometric login is on: re-wrap with the public key (no prompt),
-                    // never write the unprotected store.
-                    String userId = biometricPreferences().getString(BIO_USER_ID, "");
-                    writeEnvelope(wrap(token), userId);
-                    unlockedToken = token;
+                // A fresh credential supersedes any stale v0.2.0 biometric lock, so it can never
+                // keep blocking password sign-in.
+                if (isLegacyPresent()) wipeLegacyBiometric();
+                if (isDeviceRegistered()) {
+                    // Trusted device registered: the session lives in memory only; every cold start
+                    // signs in with the biometric instead of reading a credential at rest.
+                    memoryToken = token;
+                    clearPersisted();
                 } else {
-                    storeLegacy(token);
+                    storePersisted(token);
                 }
                 call.resolve();
             } catch (Exception error) { call.reject("Unable to store secure session", error); }
@@ -388,35 +478,37 @@ public class SecureSessionBridgePlugin extends Plugin {
     public void getRefreshToken(PluginCall call) {
         synchronized (LOCK) {
             JSObject result = new JSObject();
-            if (isBiometricEnabled()) {
-                clearLegacy();
-                if (unlockedToken == null) {
-                    // Deliberately no fallback to any other store.
-                    call.reject("Biometric authentication required", "BIOMETRIC_LOCKED");
+            if (isDeviceRegistered()) {
+                if (memoryToken == null) {
+                    // No session in this process: biometric sign-in (or a password) is required.
+                    call.reject("Biometric sign-in required", "BIOMETRIC_LOCKED");
                     return;
                 }
-                result.put("token", unlockedToken);
+                result.put("token", memoryToken);
                 call.resolve(result);
                 return;
             }
-            String token = readLegacy();
-            if (token == null) {
-                result.put("token", JSObject.NULL);
-                call.resolve(result);
+            if (isLegacyPresent()) {
+                call.reject("Biometric authentication required", "BIOMETRIC_LOCKED");
                 return;
             }
-            result.put("token", token);
+            String token = readPersisted();
+            result.put("token", token == null ? JSObject.NULL : token);
             call.resolve(result);
         }
     }
 
-    /** Explicit logout, rejected/expired sessions and "unreadable" recovery all end up here. */
+    /**
+     * Ends the SESSION: logout, a rejected/expired session and "unreadable" recovery land
+     * here. It removes the credential (and any stale v0.2.0 envelope) and deliberately
+     * leaves the trusted-device key and registration alone, so biometric sign-in survives.
+     */
     @PluginMethod
     public void clearRefreshToken(PluginCall call) {
         synchronized (LOCK) {
-            clearLegacy();
-            wipeBiometric();
-            unlockedToken = null;
+            clearPersisted();
+            wipeLegacyBiometric();
+            memoryToken = null;
         }
         call.resolve();
     }
@@ -426,133 +518,258 @@ public class SecureSessionBridgePlugin extends Plugin {
     @PluginMethod
     public void getBiometricStatus(PluginCall call) {
         synchronized (LOCK) {
-            boolean enabled = isBiometricEnabled();
-            if (enabled) clearLegacy();
+            boolean registered = isDeviceRegistered();
+            if (registered && probeDeviceKey() == PROBE_INVALID) {
+                // Biometrics changed, the lock screen was removed or the key is gone (e.g. a
+                // restored backup): the registration is unusable. Drop it locally and remember
+                // to revoke it on the server after the next password sign-in.
+                dropRegistration(true, "key-invalidated");
+                registered = false;
+            }
+            SharedPreferences prefs = devicePreferences();
             JSObject result = new JSObject();
             result.put("availability", availabilityName(canAuthenticate()));
-            result.put("enabled", enabled);
-            result.put("locked", enabled && unlockedToken == null);
-            String userId = biometricPreferences().getString(BIO_USER_ID, null);
-            result.put("userId", enabled && userId != null ? userId : JSObject.NULL);
+            result.put("enabled", registered);
+            result.put("locked", registered && memoryToken == null);
+            result.put("userId", registered ? prefs.getString(DEV_USER_ID, null) : JSObject.NULL);
+            result.put("deviceId", registered ? prefs.getString(DEV_ID, null) : JSObject.NULL);
+            result.put("expiresAt", registered ? prefs.getString(DEV_EXPIRES_AT, null) : JSObject.NULL);
+            result.put("legacy", isLegacyPresent());
+            result.put("invalidatedReason", prefs.getString(DEV_INVALIDATED, null));
+            String pendingId = prefs.getString(DEV_PENDING_ID, null);
+            String pendingUser = prefs.getString(DEV_PENDING_USER, null);
+            if (pendingId != null && pendingUser != null) {
+                JSObject pending = new JSObject();
+                pending.put("deviceId", pendingId);
+                pending.put("userId", pendingUser);
+                result.put("pendingRevocation", pending);
+            } else {
+                result.put("pendingRevocation", JSObject.NULL);
+            }
             call.resolve(result);
         }
     }
 
+    /**
+     * Step 1 of enabling: creates the device key (no prompt) and returns its public half plus
+     * descriptive metadata. The key is not trusted until commitDeviceRegistration.
+     */
     @PluginMethod
-    public void enableBiometric(PluginCall call) {
-        String userId = call.getString("userId");
-        if (userId == null || userId.isEmpty()) { call.reject("userId is required"); return; }
+    public void createDeviceKey(PluginCall call) {
         if (canAuthenticate() != BiometricManager.BIOMETRIC_SUCCESS) {
             call.reject("Strong biometric authentication is not available", "BIOMETRIC_UNAVAILABLE");
             return;
         }
-
-        final Envelope probe;
-        final Cipher unwrapCipher;
         synchronized (LOCK) {
-            if (isBiometricEnabled()) { call.resolve(); return; }
-            String token = readLegacy();
-            if (token == null) { call.reject("There is no signed-in session to protect", "NO_SESSION"); return; }
+            if (isDeviceRegistered()) {
+                call.reject("Biometric login is already set up on this phone", "DEVICE_ALREADY_REGISTERED");
+                return;
+            }
             try {
-                generateBiometricKey();
-                probe = wrap(token);
-                unwrapCipher = biometricUnwrapCipher();
+                String publicKey = generateDeviceKey();
+                JSObject result = new JSObject();
+                result.put("publicKey", publicKey);
+                result.put("deviceLabel", deviceLabel());
+                result.put("appVersion", appVersion());
+                call.resolve(result);
             } catch (Exception error) {
-                deleteBiometricKey();
+                deleteDeviceKey();
                 call.reject("Unable to prepare biometric login", "BIOMETRIC_UNAVAILABLE", error);
+            }
+        }
+    }
+
+    /**
+     * Signs a server challenge with the device key after a strong-biometric prompt bound to that
+     * key. purpose "register" signs with the not-yet-committed key; "sign-in" requires a
+     * committed registration.
+     */
+    @PluginMethod
+    public void signWithDeviceKey(PluginCall call) {
+        final String message = call.getString("message");
+        final String purpose = call.getString("purpose");
+        if (message == null || message.isEmpty() || message.length() > MAX_MESSAGE_LENGTH) {
+            call.reject("message is required");
+            return;
+        }
+        final boolean registering = "register".equals(purpose);
+        if (!registering && !"sign-in".equals(purpose)) { call.reject("purpose is invalid"); return; }
+
+        final Signature signature;
+        synchronized (LOCK) {
+            if (!registering && !isDeviceRegistered()) {
+                call.reject("Biometric sign-in is not set up on this phone", "BIOMETRIC_NOT_ENABLED");
+                return;
+            }
+            try {
+                signature = deviceSignature();
+            } catch (KeyPermanentlyInvalidatedException error) {
+                if (registering) deleteDeviceKey(); else dropRegistration(true, "key-invalidated");
+                call.reject("Biometric settings changed", "BIOMETRIC_KEY_INVALIDATED", error);
+                return;
+            } catch (Exception error) {
+                call.reject("Unable to use the device key", "BIOMETRIC_UNAVAILABLE", error);
                 return;
             }
         }
 
-        // The user must prove their biometric works with the new key before the unprotected copy is removed.
-        authenticate(call, unwrapCipher, "Enable biometric login", "Confirm to use biometrics to unlock Erve", new PromptResult() {
-            @Override
-            public void onSuccess(Cipher authenticated) throws Exception {
-                byte[] dataKey = authenticated.doFinal(Base64.decode(probe.wrappedKey, Base64.NO_WRAP));
-                if (dataKey.length != 32) throw new IllegalStateException("Biometric key verification failed");
-                synchronized (LOCK) {
-                    // A refresh may have rotated the credential while the prompt was open: protect the newest one.
-                    String latest = readLegacy();
-                    if (latest == null) throw new IllegalStateException("Session ended during enrollment");
-                    writeEnvelope(wrap(latest), userId);
-                    clearLegacy();
-                    unlockedToken = latest;
+        authenticate(
+            call,
+            new BiometricPrompt.CryptoObject(signature),
+            registering ? "Turn on biometric login" : "Sign in to Erve",
+            registering ? "Confirm to sign in with biometrics on this phone" : "Use your biometrics to continue",
+            registering ? "Cancel" : "Use password",
+            new PromptResult() {
+                @Override
+                public void onSuccess(BiometricPrompt.CryptoObject authenticated) throws Exception {
+                    // Key invalidation surfaces at initSign (handled above); once the prompt has
+                    // authenticated this signature object, update/sign only fail on a hardware fault.
+                    Signature authenticatedSignature = authenticated.getSignature();
+                    authenticatedSignature.update(message.getBytes(StandardCharsets.UTF_8));
+                    byte[] signed = authenticatedSignature.sign();
+                    JSObject result = new JSObject();
+                    result.put("signature", Base64.encodeToString(signed, Base64.NO_WRAP));
+                    call.resolve(result);
                 }
-                call.resolve();
-            }
 
-            @Override
-            public void onFailure() {
-                synchronized (LOCK) {
-                    if (!isBiometricEnabled()) deleteBiometricKey();
-                }
+                @Override
+                public void onFailure() { /* nothing to undo; the key and registration are unchanged */ }
             }
-        });
+        );
+    }
+
+    /**
+     * Step 3 of enabling, after the server accepted the public key: marks this phone registered
+     * and moves any persisted session into memory so nothing is left at rest.
+     */
+    @PluginMethod
+    public void commitDeviceRegistration(PluginCall call) {
+        String deviceId = call.getString("deviceId");
+        String userId = call.getString("userId");
+        String expiresAt = call.getString("expiresAt");
+        if (deviceId == null || deviceId.isEmpty() || userId == null || userId.isEmpty() || expiresAt == null) {
+            call.reject("deviceId, userId and expiresAt are required");
+            return;
+        }
+        synchronized (LOCK) {
+            if (probeDeviceKey() != PROBE_OK) {
+                call.reject("The device key is not available", "BIOMETRIC_KEY_INVALIDATED");
+                return;
+            }
+            boolean saved = devicePreferences().edit()
+                .putBoolean(DEV_REGISTERED, true)
+                .putString(DEV_ID, deviceId)
+                .putString(DEV_USER_ID, userId)
+                .putString(DEV_EXPIRES_AT, expiresAt)
+                .remove(DEV_INVALIDATED)
+                .commit();
+            if (!saved) {
+                deleteDeviceKey();
+                call.reject("Preferences write failed");
+                return;
+            }
+            wipeLegacyBiometric();
+            String token = readPersisted();
+            if (token != null) memoryToken = token;
+            clearPersisted();
+        }
+        call.resolve();
+    }
+
+    /** Enabling failed or was abandoned before commit: removes the uncommitted key. */
+    @PluginMethod
+    public void discardDeviceKey(PluginCall call) {
+        synchronized (LOCK) {
+            if (!isDeviceRegistered()) deleteDeviceKey();
+        }
+        call.resolve();
+    }
+
+    /**
+     * Removes this phone's trusted-device key and metadata (the local half of "Turn off", an
+     * unauthorized device, or a different account signing in). With keepPendingRevocation the
+     * server revocation is remembered until it can be completed.
+     */
+    @PluginMethod
+    public void removeDeviceAuthorization(PluginCall call) {
+        boolean keepPending = Boolean.TRUE.equals(call.getBoolean("keepPendingRevocation", false));
+        synchronized (LOCK) {
+            dropRegistration(keepPending, null);
+        }
+        call.resolve();
     }
 
     @PluginMethod
-    public void unlockBiometric(PluginCall call) {
+    public void clearPendingRevocation(PluginCall call) {
+        synchronized (LOCK) {
+            devicePreferences().edit().remove(DEV_PENDING_ID).remove(DEV_PENDING_USER).commit();
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void acknowledgeInvalidation(PluginCall call) {
+        synchronized (LOCK) {
+            devicePreferences().edit().remove(DEV_INVALIDATED).commit();
+        }
+        call.resolve();
+    }
+
+    /**
+     * Upgrade from v0.2.0, where biometric login protected the refresh credential itself. One
+     * biometric prompt moves the working session out of that envelope into the ordinary store and
+     * removes the envelope and its key. It does NOT register a trusted device: the user must opt in
+     * again (from this password-established session) to get sign-in-after-logout.
+     */
+    @PluginMethod
+    public void unlockLegacyBiometric(PluginCall call) {
         final Cipher unwrapCipher;
         synchronized (LOCK) {
-            if (!isBiometricEnabled()) { call.reject("Biometric login is not enabled", "BIOMETRIC_NOT_ENABLED"); return; }
-            if (unlockedToken != null) { call.resolve(); return; }
+            if (!isLegacyPresent()) { call.resolve(); return; }
             try {
-                unwrapCipher = biometricUnwrapCipher();
+                unwrapCipher = legacyUnwrapCipher();
             } catch (Exception error) {
                 // Key invalidated (biometrics changed) or gone (e.g. restored backup): password required.
-                wipeBiometric();
+                wipeLegacyBiometric();
                 call.reject("Biometric settings changed", "BIOMETRIC_KEY_INVALIDATED", error);
                 return;
             }
         }
 
-        authenticate(call, unwrapCipher, "Unlock Erve", "Use your biometrics to continue", new PromptResult() {
-            @Override
-            public void onSuccess(Cipher authenticated) throws Exception {
-                synchronized (LOCK) {
-                    try {
-                        unlockedToken = unwrap(authenticated);
-                    } catch (KeyPermanentlyInvalidatedException error) {
-                        wipeBiometric();
-                        throw error;
-                    } catch (java.security.GeneralSecurityException | IllegalStateException error) {
-                        // Corrupt or unreadable envelope: treat like a lost credential.
-                        wipeBiometric();
-                        throw new KeyPermanentlyInvalidatedException("Biometric session unreadable");
+        authenticate(
+            call,
+            new BiometricPrompt.CryptoObject(unwrapCipher),
+            "Unlock Erve",
+            "Use your biometrics to continue",
+            "Use password",
+            new PromptResult() {
+                @Override
+                public void onSuccess(BiometricPrompt.CryptoObject authenticated) throws Exception {
+                    synchronized (LOCK) {
+                        String token;
+                        try {
+                            token = legacyUnwrap(authenticated.getCipher());
+                        } catch (java.security.GeneralSecurityException | IllegalStateException error) {
+                            // Corrupt or unreadable envelope: treat like a lost credential.
+                            wipeLegacyBiometric();
+                            throw new KeyPermanentlyInvalidatedException("Biometric session unreadable");
+                        }
+                        storePersisted(token);
+                        wipeLegacyBiometric();
                     }
+                    call.resolve();
                 }
-                call.resolve();
-            }
 
-            @Override
-            public void onFailure() { /* stays locked; nothing to undo */ }
-        });
-    }
-
-    @PluginMethod
-    public void disableBiometric(PluginCall call) {
-        synchronized (LOCK) {
-            if (!isBiometricEnabled()) { call.resolve(); return; }
-            String token = unlockedToken;
-            wipeBiometric();
-            unlockedToken = null;
-            if (token != null) {
-                try {
-                    // Disabling happens inside an unlocked session: keep the user signed in.
-                    storeLegacy(token);
-                } catch (Exception error) {
-                    call.reject("Unable to keep the session after disabling biometric login", error);
-                    return;
-                }
+                @Override
+                public void onFailure() { /* stays locked; nothing to undo */ }
             }
-        }
-        call.resolve();
+        );
     }
 
     @Override
     protected void handleOnDestroy() {
-        // The next launch must authenticate again.
-        synchronized (LOCK) { unlockedToken = null; }
+        // The next launch must sign in again.
+        synchronized (LOCK) { memoryToken = null; }
         super.handleOnDestroy();
     }
 }

@@ -7,11 +7,12 @@ import { PoweredByPinnacleBranding } from '../branding/PoweredByPinnacleBranding
 import erveLogo from '../../branding/erve-logo.png';
 
 /**
- * Shown at launch when biometric login is enabled. The system prompt opens
- * automatically once; the password form is always one tap away.
+ * Shown when biometric sign-in is registered on this phone and there is no session: at launch, after
+ * a logout, and after a session ended. At launch the system prompt opens once by itself; after a
+ * logout it waits for a tap. The password form is always one tap away.
  */
 export function BiometricUnlockScreen() {
-  const { unlockWithBiometrics, switchToPassword } = useAuth();
+  const { signInWithBiometrics, switchToPassword, autoPromptBiometric, biometricLock } = useAuth();
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const autoPrompted = useRef(false);
@@ -20,25 +21,27 @@ export function BiometricUnlockScreen() {
     setBusy(true);
     setMessage(null);
     try {
-      await unlockWithBiometrics();
+      await signInWithBiometrics();
     } catch (error) {
       setMessage(biometricErrorMessage(error));
     } finally {
       setBusy(false);
     }
-  }, [unlockWithBiometrics]);
+  }, [signInWithBiometrics]);
 
   useEffect(() => {
-    if (autoPrompted.current) return;
+    if (autoPrompted.current || !autoPromptBiometric) return;
     autoPrompted.current = true;
     void unlock();
-  }, [unlock]);
+  }, [unlock, autoPromptBiometric]);
 
   return (
     <div className="login-page bg-background">
       <header className="login-logo flex flex-col items-center gap-2 bg-surface">
         <img src={erveLogo} alt="Erve India" className="h-auto w-64 max-w-full" />
-        <p className="text-sm text-muted-foreground">Unlock to continue</p>
+        <p className="text-sm text-muted-foreground">
+          {biometricLock === 'legacy' ? 'Unlock to continue' : 'Sign in to your Erve account'}
+        </p>
       </header>
       <main className="login-main">
         <Card className="login-card">
@@ -56,7 +59,7 @@ export function BiometricUnlockScreen() {
               disabled={busy}
               onClick={() => void unlock()}
             >
-              Unlock with biometrics
+              Sign in with biometrics
             </Button>
             <Button
               type="button"
@@ -66,7 +69,7 @@ export function BiometricUnlockScreen() {
               disabled={busy}
               onClick={switchToPassword}
             >
-              Use password instead
+              Sign in with password
             </Button>
           </div>
         </Card>

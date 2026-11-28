@@ -191,6 +191,8 @@ function isAuthEndpoint(url?: string): boolean {
       '/auth/mobile/login',
       '/auth/mobile/refresh',
       '/auth/mobile/logout',
+      '/auth/mobile/trusted-device/challenge',
+      '/auth/mobile/trusted-device/sign-in',
     ].some((path) => url.endsWith(path)),
   );
 }

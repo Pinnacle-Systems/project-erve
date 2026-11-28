@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@erve/layout';
+import { Button } from '@erve/primitives';
 import type { ApiSuccessResponse, LoginResponse } from '@erve/types';
 import { apiClient } from '../lib/api-client.js';
 import { useAuth } from '../auth/AuthContext.js';
@@ -12,7 +13,7 @@ import { nativeBiometric, nativeSecureSession } from '../auth/secure-session.js'
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { login, loginNotice } = useAuth();
+  const { login, loginNotice, biometricLock, switchToBiometrics } = useAuth();
 
   const mutation = useMutation({
     mutationFn: async (values: LoginFormValues) => {
@@ -25,11 +26,12 @@ export function LoginPage() {
         if (!response.data.data.refreshToken) {
           throw new Error('Mobile refresh session was not returned');
         }
-        // Biometric login belongs to one user on this device. Signing in as someone else
-        // (e.g. by the password fallback) must not inherit it.
+        // Biometric sign-in belongs to one user on this phone. Signing in as someone else with a
+        // password must not leave the first user's key here: it is deleted, and the server record
+        // is revoked the next time that user signs in (see flushPendingRevocation).
         const biometric = await nativeBiometric.status();
         if (biometric.enabled && biometric.userId !== response.data.data.user.id) {
-          await nativeSecureSession.clear();
+          await nativeBiometric.remove({ keepPendingRevocation: true });
         }
         await nativeSecureSession.set(response.data.data.refreshToken);
       }
@@ -63,6 +65,18 @@ export function LoginPage() {
             <p role="status" className="mb-4 text-sm text-muted-foreground">
               {loginNotice}
             </p>
+          )}
+          {biometricLock === 'device' && (
+            <Button
+              type="button"
+              variant="secondary"
+              width="fill"
+              className="mb-4 w-full"
+              disabled={mutation.isPending}
+              onClick={switchToBiometrics}
+            >
+              Sign in with biometrics
+            </Button>
           )}
           <LoginForm
             onSubmit={(values) => mutation.mutate(values)}

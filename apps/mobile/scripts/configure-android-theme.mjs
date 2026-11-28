@@ -19,9 +19,10 @@
  * Run via `pnpm --filter @erve/mobile native:theme:android`, or automatically
  * as part of `cap:sync` / `cap:add:android` (see package.json).
  */
-import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
+import { existsSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { patchManifestBackupRules } from './android-manifest-backup.mjs';
 
 const MOBILE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE_ROOT = join(MOBILE_ROOT, 'native', 'android-template');
@@ -48,6 +49,8 @@ const FILES = [
   ['java/MainActivity.java', join(JAVA_ROOT, 'MainActivity.java')],
   ['java/NativeThemeBridgePlugin.java', join(JAVA_ROOT, 'NativeThemeBridgePlugin.java')],
   ['java/SecureSessionBridgePlugin.java', join(JAVA_ROOT, 'SecureSessionBridgePlugin.java')],
+  ['res/xml/erve_backup_rules.xml', join(RES_ROOT, 'xml', 'erve_backup_rules.xml')],
+  ['res/xml/erve_data_extraction_rules.xml', join(RES_ROOT, 'xml', 'erve_data_extraction_rules.xml')],
   ['res/mipmap-anydpi-v26/ic_launcher.xml', join(RES_ROOT, 'mipmap-anydpi-v26', 'ic_launcher.xml')],
   [
     'res/mipmap-anydpi-v26/ic_launcher_round.xml',
@@ -86,6 +89,14 @@ for (const [relSrc, dest] of FILES) {
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(src, dest);
   console.log(`[configure-android-theme] wrote ${dest}`);
+}
+
+// Keep sign-in material out of Android backups and device transfers (see the res/xml rules).
+const manifest = readFileSync(ANCHOR_FILE, 'utf8');
+const patchedManifest = patchManifestBackupRules(manifest);
+if (patchedManifest !== manifest) {
+  writeFileSync(ANCHOR_FILE, patchedManifest);
+  console.log(`[configure-android-theme] patched backup rules into ${ANCHOR_FILE}`);
 }
 
 console.log('[configure-android-theme] done.');

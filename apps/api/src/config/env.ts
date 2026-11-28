@@ -38,6 +38,12 @@ const envSchema = z.object({
   JWT_ACCESS_EXPIRES_IN: z.string().default('5m'),
   JWT_REFRESH_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(20),
   JWT_REFRESH_ABSOLUTE_TIMEOUT_HOURS: z.coerce.number().int().positive().default(8),
+  // Trusted-device (biometric sign-in) authorization. The lifetime is absolute,
+  // counted from registration, and never extended by use; after it the user
+  // must sign in with a password and register the device again.
+  TRUSTED_DEVICE_LIFETIME_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  TRUSTED_DEVICE_CHALLENGE_TTL_SECONDS: z.coerce.number().int().min(10).max(300).default(60),
+  TRUSTED_DEVICE_MAX_ACTIVE_PER_USER: z.coerce.number().int().min(1).max(50).default(10),
   CORS_ORIGIN: z
     .string()
     .default('http://localhost:5173')

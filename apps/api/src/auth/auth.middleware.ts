@@ -3,7 +3,7 @@ import { isValidTransporterRoleCombination } from '@erve/shared';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { asyncHandler } from '../middleware/async-handler.js';
-import { verifyAccessToken } from './jwt.js';
+import { verifyAccessToken, type AuthenticationMethod } from './jwt.js';
 import { currentUserSelect, toCurrentUser, type CurrentUser } from './current-user.js';
 
 declare global {
@@ -12,6 +12,8 @@ declare global {
   namespace Express {
     interface Request {
       user?: CurrentUser;
+      /** How the session behind this request's access token was established. */
+      authMethod?: AuthenticationMethod;
     }
   }
 }
@@ -56,6 +58,7 @@ export const requireAuth = asyncHandler(
     }
 
     req.user = toCurrentUser(record);
+    req.authMethod = payload.amr === 'device' ? 'device' : 'pwd';
     if (!isValidTransporterRoleCombination(req.user.roles)) {
       throw HttpError.forbidden('TRANSPORTER must be the only account role');
     }
