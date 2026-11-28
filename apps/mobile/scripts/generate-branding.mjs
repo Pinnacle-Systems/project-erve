@@ -36,10 +36,14 @@ const LAUNCHER_BACKGROUND_HEX = '#fbfcfe';
 
 // Adaptive icon canvas is 108dp; the guaranteed-visible "safe zone" across
 // circle/squircle/rounded-square/square launcher masks is the center 66dp.
-// Sizing the mark's longest edge to 60% of the canvas keeps it safely inside
-// that zone with a small comfort margin (legacy pre-26 icons, which are NOT
-// mask-cropped by the OS, reuse this same ratio for visual consistency).
-const SAFE_ZONE_SCALE = 0.6;
+// Sizing the mark's longest edge to 46% of the canvas (about 50dp) keeps it
+// well inside that zone and leaves generous, balanced white space around the
+// symbol. This was 0.60 originally, which filled the icon too tightly; 0.46 is
+// a ~23% reduction. Legacy pre-26 icons, which are NOT mask-cropped by the OS,
+// reuse this same ratio for visual consistency, as do the round and
+// monochrome variants. The splash icon below has its own scale and is not
+// affected.
+const SAFE_ZONE_SCALE = 0.46;
 
 const ADAPTIVE_CANVAS_DP = 108;
 const LEGACY_CANVAS_DP = 48;
